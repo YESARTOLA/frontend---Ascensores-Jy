@@ -1,0 +1,232 @@
+import { useEffect, useRef, useState } from 'react';
+import { serviciosService, archivosService } from '../../services';
+import { useAuth } from '../../features/auth/AuthContext.jsx';
+import { useToast } from '../common/Toast.jsx';
+import { FileLink } from '../common/FilePreview.jsx';
+import { formatFechaHora } from '../../utils/formatters.js';
+import { esServicioPostRevision } from '../../utils/estadoServicio.js';
+
+/**
+ * Bloque embebible en la vista detalle de un servicio.
+ *
+ * - Lista las observaciones técnicas (más recientes primero).
+ * - Si el usuario es un técnico asignado al servicio (o admin/super_admin),
+ *   muestra el formulario para registrar una nueva (texto + foto opcional).
+ * - Si el usuario es coordinador/admin/super_admin, ofrece "Marcar atendida".
+ *
+ * Cualquier rol con acceso al detalle del servicio puede ver la lista.
+ *
+ * Props:
+ *   idServicio          — id del servicio
+ *   tecnicosAsignados   — array de asignaciones [{id_tecnico, estado}] del servicio
+ *   estadoServicio      — estado_servicio actual; cierra el formulario cuando
+ *                         entra en revisión administrativa o más allá
+ */
+export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignados, estadoServicio }) {
+  const { user, esSuperAdmin, esAdmin, esCoordinador, esTecnico } = useAuth();
+  const toast = useToast();
+  const [items, setItems] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [texto, setTexto] = useState('');
+  const [archivo, setArchivo] = useState(null);
+  const [generaAlerta, setGeneraAlerta] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const guardandoRef = useRef(false);
+  const [atendiendoId, setAtendiendoId] = useState(null);
+
+  const esAdminUI = esSuperAdmin || esAdmin;
+  const tecnicoAsignado = esTecnico && Array.isArray(tecnicosAsignados)
+    && tecnicosAsignados.some(a => a.estado === 1 && a.id_tecnico === user?.id_tecnico);
+  const bloqueadoPorEstado = esServicioPostRevision(estadoServicio);
+  const puedeRegistrar = (esAdminUI || tecnicoAsignado) && !bloqueadoPorEstado;
+  const puedeAtender = esSuperAdmin || esAdmin || esCoordinador;
+
+  const cargar = () => {
+    if (!idServicio) return;
+    setCargando(true);
+    serviciosService.observaciones(idServicio)
+      .then(setItems)
+      .catch(() => setItems([]))
+      .finally(() => setCargando(false));
+  };
+
+  useEffect(cargar, [idServicio]);
+
+  const subirArchivo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSubiendo(true);
+    try {
+      const fd = new FormData();
+      fd.append('archivo', file);
+      const arch = await archivosService.upload(fd, 'observaciones');
+      setArchivo(arch);
+      toast.success('Adjunto cargado');
+    } catch {
+      toast.error('Error al subir el adjunto');
+    } finally {
+      setSubiendo(false);
+      e.target.value = '';
+    }
+  };
+
+  const quitarArchivo = () => setArchivo(null);
+
+  const guardar = async (e) => {
+    e.preventDefault();
+    if (guardandoRef.current) return;
+    if (!texto.trim()) return toast.error('El texto es obligatorio');
+    guardandoRef.current = true;
+    setGuardando(true);
+    try {
+      await serviciosService.crearObservacion(idServicio, {
+        texto: texto.trim(),
+        id_archivo: archivo?.id || null,
+        genera_alerta: generaAlerta
+      });
+      toast.success(generaAlerta
+        ? 'Observación registrada — alerta enviada a administración y contabilidad'
+        : 'Observación registrada');
+      setTexto('');
+      setArchivo(null);
+      setGeneraAlerta(false);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al registrar la observación');
+    } finally {
+      guardandoRef.current = false;
+      setGuardando(false);
+    }
+  };
+
+  const atender = async (obs) => {
+    if (atendiendoId) return;
+    setAtendiendoId(obs.id);
+    try {
+      await serviciosService.atenderObservacion(obs.id);
+      toast.success('Observación marcada como atendida');
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al atender');
+    } finally {
+      setAtendiendoId(null);
+    }
+  };
+
+  const pendientes = items.filter(o => o.atendida === 0).length;
+
+  return (
+    <div className="card">
+      <div className="card-header flex items-center justify-between gap-2">
+        <h3 className="card-title">
+          Observaciones técnicas
+          {items.length > 0 && (
+            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-100 text-orange-800 ring-1 ring-orange-200">
+              {pendientes} pendiente{pendientes === 1 ? '' : 's'} · {items.length} total
+            </span>
+          )}
+        </h3>
+      </div>
+      <div className="card-body space-y-4">
+        {puedeRegistrar && (
+          <form onSubmit={guardar} className="rounded-lg ring-1 ring-slate-200 bg-slate-50/40 p-3 space-y-2">
+            <label className="label">Registrar observación detectada durante el mantenimiento</label>
+            <textarea className="textarea" rows="3" maxLength={5000}
+              placeholder="Describe lo encontrado (ej. cable suelto en cuarto de máquinas, ruido al freno…)"
+              value={texto}
+              onChange={e => setTexto(e.target.value)} />
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="btn-ghost text-xs !py-1.5 !px-3 cursor-pointer">
+                {subiendo ? 'Subiendo…' : (archivo ? '📎 Reemplazar foto' : '+ Adjuntar foto')}
+                <input type="file" className="hidden" accept="image/*,application/pdf"
+                  disabled={subiendo || guardando} onChange={subirArchivo} />
+              </label>
+              {archivo && (
+                <div className="flex items-center gap-2 min-w-0 max-w-full">
+                  <FileLink archivo={archivo} className="text-xs text-brand-700 hover:underline truncate min-w-0">
+                    {archivo.nombre_original}
+                  </FileLink>
+                  <button type="button" onClick={quitarArchivo} className="text-xs text-red-600 hover:underline shrink-0">Quitar</button>
+                </div>
+              )}
+              <button type="submit" className="btn-primary ml-auto text-xs !py-1.5 !px-3" disabled={guardando || subiendo}>
+                {guardando ? 'Guardando…' : 'Registrar observación'}
+              </button>
+            </div>
+            <label className={`flex items-start gap-2 rounded-md p-2.5 ring-1 cursor-pointer transition ${generaAlerta ? 'bg-rose-50 ring-rose-300' : 'bg-white ring-slate-200 hover:ring-rose-200'}`}>
+              <input
+                type="checkbox"
+                checked={generaAlerta}
+                onChange={e => setGeneraAlerta(e.target.checked)}
+                className="mt-0.5"
+              />
+              <div className="text-xs leading-snug">
+                <div className={`font-medium ${generaAlerta ? 'text-rose-800' : 'text-slate-700'}`}>
+                  🔔 Enviar alerta a administración y contabilidad
+                </div>
+                <div className="text-slate-500 text-[11px]">
+                  Marca esta opción si la observación requiere atención inmediata. Llegará un aviso (popup + campana) a los roles Super Admin, Admin y Contabilidad.
+                </div>
+              </div>
+            </label>
+            <p className="text-[11px] text-slate-500">Se le envía un aviso al coordinador para seguimiento.</p>
+          </form>
+        )}
+
+        {cargando ? (
+          <p className="text-sm text-slate-500">Cargando observaciones…</p>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            {puedeRegistrar ? 'Aún no hay observaciones. Registra la primera con el formulario.' : 'Sin observaciones registradas.'}
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {items.map(o => (
+              <li key={o.id} className={`rounded-lg ring-1 p-3 ${o.atendida ? 'bg-emerald-50/30 ring-emerald-200' : 'bg-orange-50/30 ring-orange-200'}`}>
+                <div className="flex items-start justify-between gap-3 mb-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${o.atendida ? 'bg-emerald-100 text-emerald-800 ring-emerald-200' : 'bg-orange-100 text-orange-800 ring-orange-200'}`}>
+                      {o.atendida ? 'Atendida' : 'Pendiente'}
+                    </span>
+                    {o.genera_alerta === 1 && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 bg-rose-100 text-rose-800 ring-rose-200" title="Se envió alerta a administración y contabilidad">
+                        🔔 Alerta enviada
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-600">
+                      {o.registrada_por_usuario?.nombres || 'Sin autor'}
+                      {o.registrada_por_usuario?.rol?.nombre ? ` · ${o.registrada_por_usuario.rol.nombre}` : ''}
+                    </span>
+                    <span className="text-xs text-slate-400">{formatFechaHora(o.date_time_registration)}</span>
+                  </div>
+                  {!o.atendida && puedeAtender && (
+                    <button type="button" onClick={() => atender(o)} disabled={atendiendoId === o.id}
+                      className="btn-secondary text-xs !py-1 !px-2 whitespace-nowrap">
+                      {atendiendoId === o.id ? 'Atendiendo…' : 'Marcar atendida'}
+                    </button>
+                  )}
+                </div>
+                <p className="text-sm text-slate-800 whitespace-pre-wrap break-words">{o.texto}</p>
+                {o.archivo && (
+                  <div className="mt-2 min-w-0">
+                    <FileLink archivo={o.archivo} className="text-xs text-brand-700 hover:underline inline-flex items-center gap-1 max-w-full align-bottom">
+                      <span className="shrink-0">📎</span>
+                      <span className="truncate min-w-0">{o.archivo.nombre_original}</span>
+                    </FileLink>
+                  </div>
+                )}
+                {o.atendida === 1 && (
+                  <div className="mt-2 text-xs text-emerald-700">
+                    Atendida por <span className="font-medium">{o.atendida_por_usuario?.nombres || '—'}</span>
+                    {o.fecha_atendida && <> · {formatFechaHora(o.fecha_atendida)}</>}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
