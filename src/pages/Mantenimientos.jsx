@@ -6,6 +6,7 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima } from '../utils/formatters.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
@@ -34,7 +35,7 @@ export default function Mantenimientos() {
   const guardandoRef = useRef(false);
   const [instancias, setInstancias] = useState([]);
   const [cargandoInstancias, setCargandoInstancias] = useState(false);
-  const [filtroInst, setFiltroInst] = useState({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '' });
+  const [filtroInst, setFiltroInst] = useState({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '', desde: '', hasta: '' });
   const [filtroPlanes, setFiltroPlanes] = useState({ q: '' });
   const [planDetalle, setPlanDetalle] = useState(null);
   const [instanciasPlan, setInstanciasPlan] = useState([]);
@@ -70,6 +71,8 @@ export default function Mantenimientos() {
     if (filtroInst.id_cliente) params.id_cliente = filtroInst.id_cliente;
     if (filtroInst.id_ascensor) params.id_ascensor = filtroInst.id_ascensor;
     if (filtroInst.estado_ejecucion) params.estado_ejecucion = filtroInst.estado_ejecucion;
+    if (filtroInst.desde) params.desde = filtroInst.desde;
+    if (filtroInst.hasta) params.hasta = filtroInst.hasta;
     mantenimientosService.instancias(params)
       .then(setInstancias)
       .catch(() => setInstancias([]))
@@ -80,7 +83,7 @@ export default function Mantenimientos() {
     if (tabActiva !== 'mantenimientos') return;
     recargarInstancias();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabActiva, filtroInst.q, filtroInst.id_cliente, filtroInst.id_ascensor, filtroInst.estado_ejecucion]);
+  }, [tabActiva, filtroInst.q, filtroInst.id_cliente, filtroInst.id_ascensor, filtroInst.estado_ejecucion, filtroInst.desde, filtroInst.hasta]);
 
   const ascensoresFiltroInst = filtroInst.id_cliente
     ? ascensores.filter(a => String(a.id_cliente) === String(filtroInst.id_cliente))
@@ -367,7 +370,7 @@ export default function Mantenimientos() {
       {tabActiva === 'mantenimientos' ? (
         <>
           <div className="card mb-4">
-            <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
               <input className="input lg:col-span-2"
                 placeholder="Buscar por cliente, código o tipo de ascensor o código de servicio…"
                 value={filtroInst.q}
@@ -390,9 +393,15 @@ export default function Mantenimientos() {
                 <option value="Realizado">Realizado</option>
                 <option value="Cancelado">Cancelado</option>
               </select>
+              <DateRangePicker
+                desde={filtroInst.desde}
+                hasta={filtroInst.hasta}
+                onChange={({ desde, hasta }) => setFiltroInst(f => ({ ...f, desde, hasta }))}
+                placeholder="Rango de fechas (programada)"
+              />
               <button
-                onClick={() => setFiltroInst({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '' })}
-                className="btn-secondary lg:col-span-5"
+                onClick={() => setFiltroInst({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '', desde: '', hasta: '' })}
+                className="btn-secondary lg:col-span-6"
               >Limpiar filtros</button>
             </div>
           </div>

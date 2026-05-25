@@ -35,7 +35,10 @@ export const ascensoresService = {
   historial: (id) => api.get(`/ascensores/${id}/historial`).then(r => r.data?.data ?? r.data)
 };
 
-export const tecnicosService = crud('/tecnicos');
+export const tecnicosService = {
+  ...crud('/tecnicos'),
+  paginate: (params) => api.get('/tecnicos', { params }).then(r => r.data)
+};
 
 export const tiposAscensorService = {
   list: (params) => api.get('/tipos-ascensor', { params }).then(r => r.data?.data ?? r.data),
@@ -107,7 +110,9 @@ export const facturasService = {
   list: (params) => api.get('/facturas', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/facturas', { params }).then(r => r.data),
   get: (id) => api.get(`/facturas/${id}`).then(r => r.data?.data ?? r.data),
-  create: (d) => api.post('/facturas', d).then(r => r.data?.data ?? r.data)
+  create: (d) => api.post('/facturas', d).then(r => r.data?.data ?? r.data),
+  cambiarEstado: (id, estado_factura) =>
+    api.patch(`/facturas/${id}/estado`, { estado_factura }).then(r => r.data?.data ?? r.data)
 };
 
 export const emergenciasService = {
@@ -143,6 +148,7 @@ export const leadsService = {
   paginate: (params) => api.get('/leads', { params }).then(r => r.data),
   create: (d) => api.post('/leads', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/leads/${id}`, d).then(r => r.data?.data ?? r.data),
+  cambiarEstado: (id, estado_lead) => api.patch(`/leads/${id}/estado`, { estado_lead }).then(r => r.data?.data ?? r.data),
   convertir: (id, payload) => api.post(`/leads/${id}/convertir`, payload).then(r => r.data?.data ?? r.data)
 };
 
@@ -180,7 +186,7 @@ export const reportesService = {
   pendientesDeCobro: (params) => api.get('/reportes/pendientes-de-cobro', { params }).then(r => r.data?.data ?? r.data),
   cobrosVencidos: (params) => api.get('/reportes/cobros-vencidos', { params }).then(r => r.data?.data ?? r.data),
   historialTecnicoAscensor: (params) => api.get('/reportes/historial-tecnico-ascensor', { params }).then(r => r.data?.data ?? r.data),
-  mantenimientosPorCliente: () => api.get('/reportes/mantenimientos-por-cliente').then(r => r.data?.data ?? r.data),
+  mantenimientosPorCliente: (params) => api.get('/reportes/mantenimientos-por-cliente', { params }).then(r => r.data?.data ?? r.data),
   mantenimientosProgramadosSinServicio: (params) => api.get('/reportes/mantenimientos-programados-sin-servicio', { params }).then(r => r.data?.data ?? r.data),
   ingresosPorBanco: (params) => api.get('/reportes/ingresos-por-banco', { params }).then(r => r.data?.data ?? r.data)
 };
@@ -207,7 +213,8 @@ export const recordatoriosService = {
 };
 
 export const usuariosService = {
-  list: () => api.get('/usuarios').then(r => r.data?.data ?? r.data),
+  list: (params) => api.get('/usuarios', { params }).then(r => r.data?.data ?? r.data),
+  paginate: (params) => api.get('/usuarios', { params }).then(r => r.data),
   create: (d) => api.post('/usuarios', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/usuarios/${id}`, d).then(r => r.data?.data ?? r.data),
   setEstado: (id, estado) => api.patch(`/usuarios/${id}/estado`, { estado }).then(r => r.data),

@@ -3,21 +3,24 @@ import { usuariosService, tecnicosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFecha, sanearTelefono, formatTelefono } from '../utils/formatters.js';
 
 const inicial = { nombres: '', correo: '', contrasena: '', id_rol: '', id_tecnico: '', telefono: '' };
 
 export default function Usuarios() {
-  const [data, setData] = useState([]);
   const [roles, setRoles] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(inicial);
   const [editId, setEditId] = useState(null);
   const [credenciales, setCredenciales] = useState(null); // { correo, contrasena } tras crear nuevo usuario
+  const [q, setQ] = useState('');
   const toast = useToast();
+
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
+    usePaginatedList(usuariosService.paginate, { q }, { initialPageSize: 25 });
 
   const copiar = async (texto, etiqueta) => {
     try {
@@ -47,14 +50,14 @@ export default function Usuarios() {
     });
   };
 
-  const cargar = async () => {
-    setLoading(true);
-    try {
-      const [u, r, t] = await Promise.all([usuariosService.list(), usuariosService.roles(), tecnicosService.list()]);
-      setData(u); setRoles(r); setTecnicos(t);
-    } finally { setLoading(false); }
-  };
-  useEffect(() => { cargar(); }, []);
+  // Los usuarios se cargan/paginan vía usePaginatedList; roles y técnicos son
+  // catálogos para los selects del formulario y se traen una sola vez.
+  useEffect(() => {
+    Promise.all([usuariosService.roles(), tecnicosService.list()])
+      .then(([r, t]) => { setRoles(r); setTecnicos(t); })
+      .catch(() => {});
+  }, []);
+  const cargar = recargar;
 
   const abrirEdit = (u) => {
     setForm({
@@ -84,33 +87,44 @@ export default function Usuarios() {
 
   return (
     <>
-      <PageHeader title="Usuarios" subtitle={`${data.length} usuario(s)`}
+      <PageHeader title="Usuarios" subtitle={`${total} usuario(s)`}
         actions={<button onClick={() => { setForm(inicial); setEditId(null); setOpen(true); }} className="btn-primary">+ Nuevo usuario</button>} />
+      <div className="card mb-4">
+        <div className="p-3">
+          <label className="label">Buscar</label>
+          <input className="input" placeholder="Nombre o correo…" value={q} onChange={e => setQ(e.target.value)} />
+        </div>
+      </div>
       <div className="card">
         {loading ? <Loader /> : (
-          <div className="overflow-x-auto scroll-thin">
-            <table className="table-base">
-              <thead><tr>
-                <th className="table-th">Nombre</th><th className="table-th">Correo</th>
-                <th className="table-th">Rol</th><th className="table-th">Técnico</th>
-                <th className="table-th">Último login</th><th className="table-th">Estado</th>
-                <th className="table-th text-right">Acciones</th>
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {data.map(u => (
-                  <tr key={u.id} className="table-row-hover">
-                    <td className="table-td font-medium text-sm">{u.nombres}</td>
-                    <td className="table-td text-xs font-mono">{u.correo}</td>
-                    <td className="table-td text-xs">{u.rol?.nombre}</td>
-                    <td className="table-td text-xs">{u.tecnico?.nombre || '—'}</td>
-                    <td className="table-td text-xs">{formatFecha(u.ultimo_login) || '—'}</td>
-                    <td className="table-td"><span className={u.estado === 1 ? 'badge-green' : 'badge-gray'}>{u.estado === 1 ? 'Activo' : 'Inactivo'}</span></td>
-                    <td className="table-td text-right"><button onClick={() => abrirEdit(u)} className="text-xs text-brand-700">Editar</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="overflow-x-auto scroll-thin">
+              <table className="table-base">
+                <thead><tr>
+                  <th className="table-th">Nombre</th><th className="table-th">Correo</th>
+                  <th className="table-th">Rol</th><th className="table-th">Técnico</th>
+                  <th className="table-th">Último login</th><th className="table-th">Estado</th>
+                  <th className="table-th text-right">Acciones</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {data.length === 0 && <tr><td colSpan="7" className="table-td text-center text-slate-400 py-6">Sin usuarios</td></tr>}
+                  {data.map(u => (
+                    <tr key={u.id} className="table-row-hover">
+                      <td className="table-td font-medium text-sm">{u.nombres}</td>
+                      <td className="table-td text-xs font-mono">{u.correo}</td>
+                      <td className="table-td text-xs">{u.rol?.nombre}</td>
+                      <td className="table-td text-xs">{u.tecnico?.nombre || '—'}</td>
+                      <td className="table-td text-xs">{formatFecha(u.ultimo_login) || '—'}</td>
+                      <td className="table-td"><span className={u.estado === 1 ? 'badge-green' : 'badge-gray'}>{u.estado === 1 ? 'Activo' : 'Inactivo'}</span></td>
+                      <td className="table-td text-right"><button onClick={() => abrirEdit(u)} className="text-xs text-brand-700">Editar</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}
+              onPage={setPage} onPageSize={setPageSize} />
+          </>
         )}
       </div>
 

@@ -390,7 +390,7 @@ export default function Servicios() {
             <div className="hidden md:block overflow-x-auto scroll-thin">
               <table className="table-base">
                 <thead><tr>
-                  <th className="table-th">Código</th><th className="table-th">Tipo</th>
+                  <th className="table-th">Código</th><th className="table-th">Título</th><th className="table-th">Tipo</th>
                   <th className="table-th">Cliente / Ascensores</th><th className="table-th">Tipo servicio</th>
                   <th className="table-th">Fecha</th><th className="table-th">Técnicos</th>
                   <th className="table-th">Estado</th>{puedeVerPrecio && <th className="table-th text-right">Precio</th>}
@@ -406,6 +406,7 @@ export default function Servicios() {
                     return (
                       <tr key={s.id} className="table-row-hover">
                         <td className="table-td"><Link to={`/servicios/${s.id}`} className="font-mono text-xs text-brand-700 hover:underline">{s.codigo}</Link></td>
+                        <td className="table-td text-sm max-w-[240px] truncate" title={s.titulo || ''}>{s.titulo || '—'}</td>
                         <td className="table-td text-xs">{s.tipo_registro}</td>
                         <td className="table-td">
                           <div className="text-sm">{s.cliente?.nombre}</div>

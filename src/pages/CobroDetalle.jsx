@@ -8,6 +8,11 @@ import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, addMonthsYMD, toYMDLima } from '../utils/formatters.js';
+import {
+  ESTADO_FACTURA_ENVIADA,
+  esFacturaActiva,
+  puedeMarcarseEnviada
+} from '../utils/estadoFactura.js';
 
 /**
  * Una cuota está blindada (no puede modificarse) si ya tiene cualquier monto
@@ -17,7 +22,7 @@ import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, addMont
 function cuotaEstaBlindada(cu) {
   if (!cu) return false;
   if (Number(cu.monto_pagado || 0) > 0) return true;
-  if (Array.isArray(cu.facturas) && cu.facturas.some(f => f.estado_factura !== 'Anulada')) return true;
+  if (Array.isArray(cu.facturas) && cu.facturas.some(esFacturaActiva)) return true;
   return false;
 }
 
@@ -220,7 +225,7 @@ export default function CobroDetalle() {
     try { const r = await archivosService.upload(fd, 'facturas'); setFactura(f => ({ ...f, id_archivo: r.id })); toast.success('Archivo cargado'); }
     catch { toast.error('Error subiendo archivo'); }
   };
-  const facturasActivas = (data.facturas || []).filter(f => f.estado_factura !== 'Anulada');
+  const facturasActivas = (data.facturas || []).filter(esFacturaActiva);
   const hayFacturaGeneral = facturasActivas.some(f => f.id_cuota === null);
   const hayFacturaPorCuota = facturasActivas.some(f => f.id_cuota !== null);
   const cuotasNoFacturadas = (data.cuotas || []).filter(c => !facturasActivas.some(f => f.id_cuota === c.id));
@@ -268,6 +273,18 @@ export default function CobroDetalle() {
     .filter(f => f.id_cuota !== null)
     .reduce((acc, f) => acc + Number(f.monto), 0);
   const restanteServicio = Math.max(0, Number(data.monto_total) - sumaFacturasPorCuotaPrevia);
+
+  const marcarFacturaEnviada = async (factura) => {
+    if (!puedeMarcarseEnviada(factura.estado_factura)) return;
+    if (!confirm(`¿Confirmar que la factura ${factura.numero_factura} ya fue enviada al cliente?`)) return;
+    try {
+      await facturasService.cambiarEstado(factura.id, ESTADO_FACTURA_ENVIADA);
+      toast.success(`Factura ${factura.numero_factura} marcada como enviada`);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al actualizar la factura');
+    }
+  };
 
   const crearFactura = async () => {
     if (guardandoFactura) return;
@@ -419,19 +436,35 @@ export default function CobroDetalle() {
                 <th className="table-th text-right">Acción</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {data.cuotas.map(c => {
-                  const fac = facturaPorCuotaIndex.get(c.id);
-                  const saldoCuota = Math.max(0, Number(c.monto || 0) - Number(c.monto_pagado || 0));
-                  const tieneSaldo = saldoCuota > 0.005;
-                  const comentarioAprobado = (data.aprobacion_cotizacion?.plan_cuotas || [])
-                    .find(pc => Number(pc.numero_cuota) === Number(c.numero_cuota))?.observacion || '';
-                  return (
+                {(() => {
+                  // Una cotización aprobada en modo "Adelanto + saldo" (plan de
+                  // 2 cuotas) implica que la cuota 1 funciona como adelanto
+                  // requerido para iniciar el servicio. Solo es etiqueta
+                  // informativa: no cambia montos ni flujo de pagos.
+                  const planAprobado = data.aprobacion_cotizacion?.plan_cuotas;
+                  const esAdelantoRequerido = Array.isArray(planAprobado) && planAprobado.length === 2;
+                  return data.cuotas.map(c => {
+                    const fac = facturaPorCuotaIndex.get(c.id);
+                    const saldoCuota = Math.max(0, Number(c.monto || 0) - Number(c.monto_pagado || 0));
+                    const tieneSaldo = saldoCuota > 0.005;
+                    const comentarioAprobado = (data.aprobacion_cotizacion?.plan_cuotas || [])
+                      .find(pc => Number(pc.numero_cuota) === Number(c.numero_cuota))?.observacion || '';
+                    const mostrarPendienteAdelanto = esAdelantoRequerido
+                      && Number(c.numero_cuota) === 1
+                      && c.estado_cuota === 'Pendiente';
+                    const estadoLabel = mostrarPendienteAdelanto ? 'Pendiente de adelanto' : c.estado_cuota;
+                    return (
                     <tr key={c.id}>
                       <td className="table-td">{c.numero_cuota}</td>
                       <td className="table-td text-xs">{formatFecha(c.fecha_vencimiento)}</td>
                       <td className="table-td text-right font-mono">{formatMonto(c.monto, data.moneda)}</td>
                       <td className="table-td text-right font-mono">{formatMonto(c.monto_pagado, data.moneda)}</td>
-                      <td className="table-td"><span className={badgeEstado(c.estado_cuota)}>{c.estado_cuota}</span></td>
+                      <td className="table-td">
+                        <span
+                          className={badgeEstado(estadoLabel)}
+                          title={mostrarPendienteAdelanto ? 'Esta cuota debe pagarse como adelanto para iniciar el servicio' : undefined}
+                        >{estadoLabel}</span>
+                      </td>
                       <td className="table-td text-xs">{formatFecha(c.fecha_pago)}</td>
                       <td className="table-td text-xs">
                         {fac
@@ -461,7 +494,8 @@ export default function CobroDetalle() {
                       </td>
                     </tr>
                   );
-                })}
+                  });
+                })()}
               </tbody>
             </table>
           </div>
@@ -471,7 +505,15 @@ export default function CobroDetalle() {
           <div className="card lg:col-span-3">
             <div className="card-header"><h3 className="card-title">Facturas</h3></div>
             <table className="table-base">
-              <thead><tr><th className="table-th">Número</th><th className="table-th">Emisión</th><th className="table-th text-right">Monto</th><th className="table-th">Cobertura</th><th className="table-th">Estado</th><th className="table-th">Archivo</th></tr></thead>
+              <thead><tr>
+                <th className="table-th">Número</th>
+                <th className="table-th">Emisión</th>
+                <th className="table-th text-right">Monto</th>
+                <th className="table-th">Cobertura</th>
+                <th className="table-th">Estado</th>
+                <th className="table-th">Archivo</th>
+                <th className="table-th text-right">Acción</th>
+              </tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {data.facturas.map(f => (
                   <tr key={f.id}>
@@ -485,6 +527,22 @@ export default function CobroDetalle() {
                     </td>
                     <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
                     <td className="table-td">{f.archivo ? <FileLink archivo={f.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                    <td className="table-td text-right">
+                      {puedeMarcarseEnviada(f.estado_factura) ? (
+                        <button
+                          type="button"
+                          onClick={() => marcarFacturaEnviada(f)}
+                          className="btn-primary text-xs !py-1 !px-2.5"
+                          title="Marcar la factura como enviada al cliente"
+                        >
+                          Factura enviada
+                        </button>
+                      ) : f.estado_factura === ESTADO_FACTURA_ENVIADA ? (
+                        <span className="text-emerald-700 text-xs font-medium">✓ Enviada</span>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

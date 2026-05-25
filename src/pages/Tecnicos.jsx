@@ -4,6 +4,7 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
+import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, sanearTelefono, formatTelefono } from '../utils/formatters.js';
@@ -14,8 +15,6 @@ const ESTADOS = ['Disponible', 'Ocupado', 'En servicio', 'Inactivo', 'Suspendido
 const VISTA_KEY = 'tecnicos.vista';
 
 export default function Tecnicos() {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(inicial);
@@ -27,12 +26,13 @@ export default function Tecnicos() {
   const { esSuperAdmin, esAdmin } = useAuth();
   const puedeEditar = esSuperAdmin || esAdmin;
 
-  const cargar = async () => {
-    setLoading(true);
-    try { setData(await tecnicosService.list()); }
-    finally { setLoading(false); }
-  };
-  useEffect(() => { cargar(); }, []);
+  // Filtros resueltos en el servidor (el backend de /tecnicos soporta q y
+  // estado_operativo). Sin ?page= el endpoint sigue devolviendo todo para los
+  // selects de otras pantallas; aquí paginamos.
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
+    usePaginatedList(tecnicosService.paginate, { q, estado_operativo: filtroEstado }, { initialPageSize: 25 });
+  const cargar = recargar;
+
   useEffect(() => { localStorage.setItem(VISTA_KEY, vista); }, [vista]);
 
   const abrirNuevo = () => { setForm(inicial); setEditId(null); setOpen(true); };
@@ -56,16 +56,6 @@ export default function Tecnicos() {
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
     finally { setSaving(false); }
   };
-
-  const ql = q.trim().toLowerCase();
-  const filtrados = data.filter(t =>
-    (!filtroEstado || t.estado_operativo === filtroEstado) &&
-    (!ql ||
-      t.nombre.toLowerCase().includes(ql) ||
-      (t.telefono || '').toLowerCase().includes(ql) ||
-      (t.documento || '').toLowerCase().includes(ql) ||
-      (t.especialidades || '').toLowerCase().includes(ql))
-  );
 
   const iniciales = (nombre) => nombre.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
 
@@ -100,7 +90,7 @@ export default function Tecnicos() {
 
   return (
     <>
-      <PageHeader title="Técnicos" subtitle={`${filtrados.length} de ${data.length} técnico(s)`}
+      <PageHeader title="Técnicos" subtitle={`${total} técnico(s)`}
         actions={
           <>
             {ToggleVista}
@@ -124,11 +114,11 @@ export default function Tecnicos() {
         </div>
       </div>
 
-      {loading ? <Loader /> : filtrados.length === 0 ? (
+      {loading ? <Loader /> : data.length === 0 ? (
         <div className="card"><EmptyState title="Sin técnicos" subtitle={q || filtroEstado ? 'Ningún técnico coincide con los filtros' : 'Aún no hay técnicos registrados'} /></div>
       ) : vista === 'cards' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtrados.map(t => (
+          {data.map(t => (
             <div key={t.id} className="card p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -161,7 +151,7 @@ export default function Tecnicos() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtrados.map(t => (
+                {data.map(t => (
                   <tr key={t.id} className="table-row-hover">
                     <td className="table-td">
                       <div className="flex items-center gap-2.5">
@@ -186,6 +176,13 @@ export default function Tecnicos() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {!loading && data.length > 0 && (
+        <div className="card mt-4">
+          <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}
+            onPage={setPage} onPageSize={setPageSize} />
         </div>
       )}
 

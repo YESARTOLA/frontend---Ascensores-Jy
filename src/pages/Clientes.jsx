@@ -465,14 +465,14 @@ export default function Clientes() {
         }>
         <form id="cliente-form" onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
-            <label className="label">Razón social / Nombre *</label>
-            <input className="input" required value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} />
-          </div>
-          <div className="sm:col-span-2">
             <label className="label">Nombre del edificio</label>
             <input className="input" value={form.nombre_edificio}
               placeholder="Ej. Edificio Las Palmeras"
               onChange={e => setForm(f => ({ ...f, nombre_edificio: e.target.value }))} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">Razón social / Nombre *</label>
+            <input className="input" required value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} />
           </div>
           <div>
             <label className="label">Tipo de documento</label>

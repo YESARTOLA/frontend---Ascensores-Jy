@@ -188,7 +188,8 @@ export function badgeEstado(estado) {
   const e = (estado || '').toLowerCase();
   if (
     e.includes('finaliz') || e.includes('pagad') || e.includes('cerrad') ||
-    e.includes('realizad') || e === 'aprobado' || e === 'terminado'
+    e.includes('realizad') || e === 'aprobado' || e === 'terminado' ||
+    e === 'enviada' || e === 'enviado'
   ) return 'badge-green';
   if (
     e.includes('curso') || e.includes('camino') || e.includes('asignad') ||

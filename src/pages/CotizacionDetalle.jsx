@@ -695,7 +695,7 @@ export default function CotizacionDetalle() {
                     </li>
                   )}
                   {cot.ascensores?.some(a => !a.ascensor) && <li>Los ascensores marcados como "nuevos" se crearán en el sistema (estado "Por instalar")</li>}
-                  {cot.id_lead && <li>El lead asociado pasará a estado "ganado"</li>}
+                  {cot.id_lead && <li>El lead asociado pasará a estado "Ingresado"</li>}
                 </ul>
               </div>
             );

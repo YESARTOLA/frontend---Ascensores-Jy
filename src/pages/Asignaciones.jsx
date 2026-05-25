@@ -1,38 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { serviciosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
+import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, codigosAscensores, resumenAscensores } from '../utils/formatters.js';
-
-const ESTADOS_ACTIVOS = ['Borrador', 'Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida', 'En camino', 'En curso'];
+import { ESTADOS_SERVICIO_EN_GESTION } from '../utils/estadoServicio.js';
 
 export default function Asignaciones() {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [filtros, setFiltros] = useState({ estado_servicio: '', origen: '', prioridad: '' });
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esCoordinador } = useAuth();
   const puedeGestionar = esSuperAdmin || esAdmin || esCoordinador;
   const puedeCancelar = esSuperAdmin || esAdmin;
 
-  const cargar = async () => {
-    setLoading(true);
-    try {
-      const list = await serviciosService.list();
-      setData(list.filter(s => ESTADOS_ACTIVOS.includes(s.estado_servicio)));
-    } finally { setLoading(false); }
+  // Filtros resueltos en el servidor. Por defecto se pide el conjunto de estados
+  // "en gestión"; si el usuario elige un estado puntual, se envía ese único valor.
+  const filtrosServidor = {
+    ...(filtros.estado_servicio
+      ? { estado_servicio: filtros.estado_servicio }
+      : { estados: ESTADOS_SERVICIO_EN_GESTION.join(',') }),
+    origen: filtros.origen,
+    prioridad: filtros.prioridad
   };
-  useEffect(() => { cargar(); }, []);
-
-  const filtrados = data.filter(s =>
-    (!filtros.estado_servicio || s.estado_servicio === filtros.estado_servicio) &&
-    (!filtros.origen || s.origen === filtros.origen) &&
-    (!filtros.prioridad || s.prioridad === filtros.prioridad)
-  );
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
+    usePaginatedList(serviciosService.paginate, filtrosServidor, { initialPageSize: 25 });
+  const cargar = recargar;
 
   const accion = async (id, fn, mensaje, confirmacion) => {
     if (confirmacion && !confirm(confirmacion)) return;
@@ -42,7 +38,7 @@ export default function Asignaciones() {
 
   return (
     <>
-      <PageHeader title="Asignaciones" subtitle={`${filtrados.length} servicio(s) en gestión`} />
+      <PageHeader title="Asignaciones" subtitle={`${total} servicio(s) en gestión`} />
 
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -50,7 +46,7 @@ export default function Asignaciones() {
             <label className="label">Estado</label>
             <select className="select" value={filtros.estado_servicio} onChange={e => setFiltros(f => ({ ...f, estado_servicio: e.target.value }))}>
               <option value="">Todos los activos</option>
-              {ESTADOS_ACTIVOS.map(s => <option key={s}>{s}</option>)}
+              {ESTADOS_SERVICIO_EN_GESTION.map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -78,7 +74,7 @@ export default function Asignaciones() {
       </div>
 
       <div className="card">
-        {loading ? <Loader /> : filtrados.length === 0 ? <EmptyState title="Sin asignaciones" /> : (
+        {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin asignaciones" /> : (
           <div className="overflow-x-auto scroll-thin">
             <table className="table-base">
               <thead><tr>
@@ -92,7 +88,7 @@ export default function Asignaciones() {
                 <th className="table-th text-right">Acciones</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {filtrados.map(s => {
+                {data.map(s => {
                   const docu = s.asignaciones?.find(a => a.responsable_documentacion === 1);
                   const chk = s.asignaciones?.find(a => a.responsable_checklist === 1);
                   const checklist = s.checklists?.[0] || null;
@@ -143,6 +139,8 @@ export default function Asignaciones() {
                 })}
               </tbody>
             </table>
+            <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}
+              onPage={setPage} onPageSize={setPageSize} />
           </div>
         )}
       </div>

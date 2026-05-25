@@ -35,7 +35,21 @@ const FRECUENCIAS = [
   { valor: 'trimestral',label: 'Trimestral',meses: 3 }
 ];
 
+// El plan siempre se guarda en montos; el porcentaje es solo un modo de
+// captura. El "100%" representa el total de la cotización (dinámico vía prop).
+const PORCENTAJE_TOTAL = 100;
+const TOLERANCIA_SUMA = 0.01;
+
 function round2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
+
+// Conversión monto ↔ porcentaje contra un total dado. Con total 0 el
+// porcentaje no está definido, así que devuelve 0 para evitar NaN/Infinity.
+function montoAPorcentaje(monto, total) {
+  return total > 0 ? round2((Number(monto) || 0) / total * PORCENTAJE_TOTAL) : 0;
+}
+function porcentajeAMonto(pct, total) {
+  return round2((Number(pct) || 0) / PORCENTAJE_TOTAL * total);
+}
 
 function sumarFrecuencia(fechaISO, frecuencia, pasos) {
   const cfg = FRECUENCIAS.find(f => f.valor === frecuencia) || FRECUENCIAS[2];
@@ -55,6 +69,7 @@ export function planCuotasInicial() {
     tiene_cuotas: false,
     saldo_variable: false,
     modo: 'adelanto',
+    modo_captura: 'monto', // 'monto' | 'porcentaje' (solo afecta la captura)
     count: 2,
     fecha_inicial: '',
     frecuencia: 'mensual',
@@ -72,6 +87,7 @@ export function planCuotasDesdeServidor(version) {
     tiene_cuotas: true,
     saldo_variable: Boolean(version.saldo_variable),
     modo,
+    modo_captura: 'monto', // el servidor solo guarda montos; se captura en montos al reabrir
     count: version.plan_cuotas.length,
     fecha_inicial: version.plan_cuotas[0]?.fecha_vencimiento || '',
     frecuencia: 'mensual',
@@ -105,12 +121,18 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [v.modo, totalNum, v.plan?.[0]?.monto]);
 
+  const esPorcentaje = v.modo_captura === 'porcentaje';
+
   const sumaPlan = useMemo(() => {
     if (v.modo === 'adelanto') return totalNum; // suma derivada
     return round2((v.plan || []).reduce((a, c) => a + (Number(c.monto) || 0), 0));
   }, [v.plan, v.modo, totalNum]);
   const diferencia = round2(sumaPlan - totalNum);
-  const cuadra = Math.abs(diferencia) <= 0.01;
+  const cuadra = Math.abs(diferencia) <= TOLERANCIA_SUMA;
+
+  // Equivalentes en porcentaje (para la vista en modo captura por %).
+  const sumaPorcentaje = montoAPorcentaje(sumaPlan, totalNum);
+  const diferenciaPorcentaje = round2(sumaPorcentaje - PORCENTAJE_TOTAL);
 
   const cambiarModo = (modo) => {
     if (modo === 'adelanto') {
@@ -235,6 +257,25 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
             </label>
           </div>
 
+          {v.modo !== 'iguales' && (
+            <div className="flex items-center gap-3 text-sm flex-wrap">
+              <span className="text-xs font-medium text-carbon-600">Capturar montos por:</span>
+              <label className="inline-flex items-center gap-1.5">
+                <input type="radio" name="cuotas_modo_captura" checked={v.modo_captura === 'monto'}
+                  onChange={() => set({ modo_captura: 'monto' })} />
+                Monto fijo
+              </label>
+              <label className="inline-flex items-center gap-1.5">
+                <input type="radio" name="cuotas_modo_captura" checked={esPorcentaje}
+                  onChange={() => set({ modo_captura: 'porcentaje' })} />
+                Porcentaje (%)
+              </label>
+              {esPorcentaje && (
+                <span className="text-[11px] text-carbon-500">El total de las cuotas debe sumar 100% del total de la cotización.</span>
+              )}
+            </div>
+          )}
+
           <label className="flex items-start gap-2 text-sm text-carbon-700 bg-amber-50/40 ring-1 ring-amber-200 rounded-md p-2">
             <input type="checkbox" className="mt-0.5"
               checked={Boolean(v.saldo_variable)}
@@ -256,11 +297,21 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
                 <div className="text-[11px] uppercase tracking-wider text-carbon-500 font-semibold">Adelanto · Cuota 1</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div>
-                    <label className="label">Monto del adelanto *</label>
-                    <input
-                      type="number" step="0.01" min="0" className="input"
-                      value={adelanto?.monto ?? ''}
-                      onChange={e => cambiarAdelanto('monto', e.target.value)} />
+                    <label className="label">{esPorcentaje ? '% del adelanto *' : 'Monto del adelanto *'}</label>
+                    {esPorcentaje ? (
+                      <>
+                        <input
+                          type="number" step="0.01" min="0" max={PORCENTAJE_TOTAL} className="input"
+                          value={montoAPorcentaje(adelanto?.monto, totalNum) || ''}
+                          onChange={e => cambiarAdelanto('monto', porcentajeAMonto(e.target.value, totalNum))} />
+                        <p className="text-[11px] text-carbon-500 mt-0.5">= {formatMonto(round2(Number(adelanto?.monto) || 0), moneda)}</p>
+                      </>
+                    ) : (
+                      <input
+                        type="number" step="0.01" min="0" className="input"
+                        value={adelanto?.monto ?? ''}
+                        onChange={e => cambiarAdelanto('monto', e.target.value)} />
+                    )}
                   </div>
                   <div>
                     <label className="label">Fecha esperada *</label>
@@ -284,11 +335,16 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
                 <div className="text-[11px] uppercase tracking-wider text-carbon-500 font-semibold">Saldo · Cuota 2</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div>
-                    <label className="label">Monto del saldo</label>
+                    <label className="label">{esPorcentaje ? '% del saldo' : 'Monto del saldo'}</label>
                     <input
                       type="text" readOnly className="input bg-carbon-50/60 cursor-not-allowed"
                       title="Calculado automáticamente: Total − Adelanto"
-                      value={formatMonto(montoSaldoMostrado, moneda)} />
+                      value={esPorcentaje
+                        ? `${montoAPorcentaje(montoSaldoMostrado, totalNum)}%`
+                        : formatMonto(montoSaldoMostrado, moneda)} />
+                    {esPorcentaje && (
+                      <p className="text-[11px] text-carbon-500 mt-0.5">= {formatMonto(montoSaldoMostrado, moneda)}</p>
+                    )}
                   </div>
                   <div>
                     <label className="label">Fecha esperada *</label>
@@ -352,7 +408,7 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
                 <div className="col-span-2">Cuota</div>
                 <div className="col-span-3">Vencimiento</div>
                 <div className="col-span-3">Observación</div>
-                <div className="col-span-3 text-right">Monto</div>
+                <div className="col-span-3 text-right">{esPorcentaje ? 'Porcentaje (%)' : 'Monto'}</div>
                 <div className="col-span-1"></div>
               </div>
               <div className="space-y-2">
@@ -366,9 +422,20 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
                       placeholder="Opcional"
                       value={c.observacion || ''}
                       onChange={e => cambiarCuota(idx, 'observacion', e.target.value)} />
-                    <input type="number" step="0.01" min="0" className="input col-span-3 text-right"
-                      value={c.monto}
-                      onChange={e => cambiarCuota(idx, 'monto', e.target.value)} />
+                    <div className="col-span-3">
+                      {esPorcentaje ? (
+                        <>
+                          <input type="number" step="0.01" min="0" max={PORCENTAJE_TOTAL} className="input text-right w-full"
+                            value={montoAPorcentaje(c.monto, totalNum) || ''}
+                            onChange={e => cambiarCuota(idx, 'monto', porcentajeAMonto(e.target.value, totalNum))} />
+                          <p className="text-[11px] text-carbon-500 text-right mt-0.5">= {formatMonto(round2(Number(c.monto) || 0), moneda)}</p>
+                        </>
+                      ) : (
+                        <input type="number" step="0.01" min="0" className="input text-right w-full"
+                          value={c.monto}
+                          onChange={e => cambiarCuota(idx, 'monto', e.target.value)} />
+                      )}
+                    </div>
                     <button type="button" onClick={() => quitarCuota(idx)}
                       className="col-span-1 text-carbon-400 hover:text-red-600 text-lg leading-none">×</button>
                   </div>
@@ -377,13 +444,19 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
               <div className="flex items-center justify-between text-sm pt-2 border-t border-carbon-100">
                 <button type="button" onClick={agregarCuota} className="btn-ghost text-xs !py-1.5 !px-3">+ Agregar cuota</button>
                 <div className="text-right">
-                  <div className="text-xs text-carbon-500">Suma cuotas / Total cotización</div>
+                  <div className="text-xs text-carbon-500">
+                    {esPorcentaje ? 'Suma % / 100%' : 'Suma cuotas / Total cotización'}
+                  </div>
                   <div className={`font-bold ${cuadra ? 'text-emerald-700' : 'text-red-600'}`}>
-                    {formatMonto(sumaPlan, moneda)} / {formatMonto(totalNum, moneda)}
+                    {esPorcentaje
+                      ? `${sumaPorcentaje}% / ${PORCENTAJE_TOTAL}%`
+                      : `${formatMonto(sumaPlan, moneda)} / ${formatMonto(totalNum, moneda)}`}
                   </div>
                   {!cuadra && (
                     <div className="text-xs text-red-600">
-                      Diferencia: {formatMonto(diferencia, moneda)}
+                      {esPorcentaje
+                        ? `Diferencia: ${diferenciaPorcentaje}%`
+                        : `Diferencia: ${formatMonto(diferencia, moneda)}`}
                     </div>
                   )}
                 </div>
@@ -394,9 +467,13 @@ export default function CuotasEditor({ value, onChange, total, moneda }) {
           {v.modo === 'adelanto' && (
             <div className="flex items-center justify-end text-sm pt-2 border-t border-carbon-100">
               <div className="text-right">
-                <div className="text-xs text-carbon-500">Adelanto + Saldo / Total cotización</div>
+                <div className="text-xs text-carbon-500">
+                  {esPorcentaje ? 'Adelanto + Saldo / 100%' : 'Adelanto + Saldo / Total cotización'}
+                </div>
                 <div className="font-bold text-emerald-700">
-                  {formatMonto(sumaPlan, moneda)} / {formatMonto(totalNum, moneda)}
+                  {esPorcentaje
+                    ? `${sumaPorcentaje}% / ${PORCENTAJE_TOTAL}%`
+                    : `${formatMonto(sumaPlan, moneda)} / ${formatMonto(totalNum, moneda)}`}
                 </div>
               </div>
             </div>
@@ -470,7 +547,7 @@ export function planParaPayload(value, total) {
     observacion: typeof c.observacion === 'string' ? c.observacion.trim().slice(0, 200) : ''
   }));
   const suma = round2(limpio.reduce((a, c) => a + c.monto, 0));
-  if (Math.abs(suma - totalNum) > 0.01) {
+  if (Math.abs(suma - totalNum) > TOLERANCIA_SUMA) {
     throw new Error(`La suma de cuotas (${suma.toFixed(2)}) no coincide con el total (${totalNum.toFixed(2)})`);
   }
   for (const c of limpio) {

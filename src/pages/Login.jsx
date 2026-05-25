@@ -4,14 +4,6 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import Logo from '../components/common/Logo.jsx';
 
-const DEMO = [
-  { correo: 'superadmin@ascensoresjy.com', rol: 'Super Admin', tint: 'from-brand-500 to-brand-700' },
-  { correo: 'admin@ascensoresjy.com',      rol: 'Administrador', tint: 'from-brand-400 to-brand-600' },
-  { correo: 'coordinador@ascensoresjy.com',rol: 'Coordinador',   tint: 'from-ember-400 to-ember-600' },
-  { correo: 'contabilidad@ascensoresjy.com',rol: 'Contabilidad', tint: 'from-emerald-400 to-emerald-600' },
-  { correo: 'carlos@ascensoresjy.com',     rol: 'Técnico',       tint: 'from-violet-400 to-violet-600' }
-];
-
 function LogoMark({ size = 184 }) {
   return (
     <div className="relative">
@@ -145,8 +137,6 @@ export default function Login() {
       toast.error(err.response?.data?.error || 'Error al iniciar sesión');
     } finally { setLoading(false); }
   };
-
-  const fillDemo = (correo) => setForm({ correo, contrasena: 'admin123' });
 
   return (
     <div className="min-h-full grid lg:grid-cols-[1.05fr_1fr]">
@@ -314,29 +304,6 @@ export default function Login() {
               )}
             </button>
           </form>
-
-          <div className="mt-8 pt-6 border-t border-carbon-200/70">
-            <p className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] font-bold text-carbon-500 mb-3">
-              <span>Usuarios demo</span>
-              <span className="font-mono normal-case tracking-normal text-carbon-400">contraseña <span className="px-1.5 py-0.5 rounded bg-carbon-100 text-carbon-700">admin123</span></span>
-            </p>
-            <div className="grid gap-1.5">
-              {DEMO.map((u, i) => (
-                <button key={u.correo} type="button" onClick={() => fillDemo(u.correo)}
-                        className="group text-left flex items-center gap-3 px-3 py-2 rounded-xl ring-1 ring-carbon-200/70 bg-white/70 hover:bg-white hover:ring-ember-300 hover:shadow-card transition animate-rise-sm"
-                        style={{ animationDelay: `${.2 + i * .04}s` }}>
-                  <span className={`h-7 w-7 shrink-0 rounded-lg bg-gradient-to-br ${u.tint} grid place-items-center text-white text-[10px] font-bold`}>
-                    {u.rol.split(' ').map(w => w[0]).slice(0,2).join('')}
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block font-mono text-[12px] text-carbon-800 truncate">{u.correo}</span>
-                    <span className="block text-[11px] text-carbon-500">{u.rol}</span>
-                  </span>
-                  <span className="text-[10px] uppercase tracking-wider text-brand-700 opacity-0 group-hover:opacity-100 transition">Usar →</span>
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>

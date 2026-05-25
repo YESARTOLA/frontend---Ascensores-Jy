@@ -65,7 +65,8 @@ export default function Cobros() {
   const [filtros, setFiltros] = useState({
     q: '', estado_cobro: '', vencidos: '', en_mora: '', pagados: '', pendientes: '',
     id_cliente: '', id_tecnico: '', id_tipo_servicio: '', id_proyecto: '',
-    fecha_proximo_desde: '', fecha_proximo_hasta: ''
+    fecha_proximo_desde: '', fecha_proximo_hasta: '',
+    orden: '', direccion: ''
   });
   // Calendario
   const [cursor, setCursor] = useState(new Date());
@@ -88,6 +89,24 @@ export default function Cobros() {
   }, []);
 
   const cargar = recargar;
+
+  // Refresca la lista cuando el usuario vuelve a la pestaña/ventana. La
+  // aprobación de una cotización crea el cobro de forma asíncrona desde
+  // otro módulo (o incluso otra pestaña); sin este refresh la página
+  // quedaba mostrando datos viejos hasta navegar y volver. Reaccionamos
+  // tanto a `focus` (cambio de ventana) como a `visibilitychange` (cambio
+  // de tab dentro del mismo browser) para cubrir ambos casos.
+  useEffect(() => {
+    const refrescar = () => {
+      if (document.visibilityState === 'visible') recargar();
+    };
+    window.addEventListener('focus', refrescar);
+    document.addEventListener('visibilitychange', refrescar);
+    return () => {
+      window.removeEventListener('focus', refrescar);
+      document.removeEventListener('visibilitychange', refrescar);
+    };
+  }, [recargar]);
 
   // Fetch cuotas para el calendario cuando cambia cursor o se entra al modo
   useEffect(() => {
@@ -112,7 +131,15 @@ export default function Cobros() {
   const limpiar = () => setFiltros({
     q: '', estado_cobro: '', vencidos: '', en_mora: '', pagados: '', pendientes: '',
     id_cliente: '', id_tecnico: '', id_tipo_servicio: '', id_proyecto: '',
-    fecha_proximo_desde: '', fecha_proximo_hasta: ''
+    fecha_proximo_desde: '', fecha_proximo_hasta: '',
+    orden: '', direccion: ''
+  });
+
+  // Ciclo de ordenamiento por columna: asc → desc → sin orden.
+  const ordenarPor = (col) => setFiltros(f => {
+    if (f.orden !== col) return { ...f, orden: col, direccion: 'asc' };
+    if (f.direccion === 'asc') return { ...f, orden: col, direccion: 'desc' };
+    return { ...f, orden: '', direccion: '' };
   });
 
   const opcionesProyectos = useMemo(() => proyectos.map(p => ({
@@ -236,18 +263,18 @@ export default function Cobros() {
               <div className="overflow-x-auto scroll-thin">
                 <table className="table-base">
                   <thead><tr>
-                    <th className="table-th">Cliente</th>
-                    <th className="table-th">Proyecto</th>
-                    <th className="table-th">Servicio</th>
-                    <th className="table-th">OT</th>
-                    <th className="table-th text-right">Precio total</th>
-                    <th className="table-th text-right">Abonos</th>
+                    <ThOrden col="cliente" filtros={filtros} ordenarPor={ordenarPor}>Cliente</ThOrden>
+                    <ThOrden col="proyecto" filtros={filtros} ordenarPor={ordenarPor}>Proyecto</ThOrden>
+                    <ThOrden col="servicio" filtros={filtros} ordenarPor={ordenarPor}>Servicio</ThOrden>
+                    <ThOrden col="ot" filtros={filtros} ordenarPor={ordenarPor}>OT</ThOrden>
+                    <ThOrden col="precio" filtros={filtros} ordenarPor={ordenarPor} align="right">Precio total</ThOrden>
+                    <ThOrden col="abonos" filtros={filtros} ordenarPor={ordenarPor} align="right">Abonos</ThOrden>
                     <th className="table-th">Abonos por cuenta</th>
-                    <th className="table-th text-center">Cuotas (P/T)</th>
-                    <th className="table-th text-right">Saldo</th>
-                    <th className="table-th">Próximo abono</th>
-                    <th className="table-th text-center">Mora</th>
-                    <th className="table-th">Estado</th>
+                    <ThOrden col="cuotas" filtros={filtros} ordenarPor={ordenarPor} align="center">Cuotas (P/T)</ThOrden>
+                    <ThOrden col="saldo" filtros={filtros} ordenarPor={ordenarPor} align="right">Saldo</ThOrden>
+                    <ThOrden col="proximo" filtros={filtros} ordenarPor={ordenarPor}>Próximo abono</ThOrden>
+                    <ThOrden col="mora" filtros={filtros} ordenarPor={ordenarPor} align="center">Mora</ThOrden>
+                    <ThOrden col="estado" filtros={filtros} ordenarPor={ordenarPor}>Estado</ThOrden>
                     <th className="table-th text-right">Acciones</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
@@ -499,6 +526,26 @@ export default function Cobros() {
         archivo={otAbierta?.archivo}
       />
     </>
+  );
+}
+
+function ThOrden({ col, filtros, ordenarPor, align = 'left', children }) {
+  const activo = filtros.orden === col;
+  const flecha = !activo ? '↕' : filtros.direccion === 'asc' ? '↑' : '↓';
+  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  const justifyCls = align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start';
+  return (
+    <th className={`table-th ${alignCls}`}>
+      <button
+        type="button"
+        onClick={() => ordenarPor(col)}
+        className={`inline-flex items-center gap-1 w-full ${justifyCls} hover:text-carbon-800 focus:outline-none ${activo ? 'text-carbon-800' : ''}`}
+        aria-sort={!activo ? 'none' : filtros.direccion === 'asc' ? 'ascending' : 'descending'}
+      >
+        <span>{children}</span>
+        <span className={`text-[10px] ${activo ? 'opacity-100' : 'opacity-40'}`}>{flecha}</span>
+      </button>
+    </th>
   );
 }
 

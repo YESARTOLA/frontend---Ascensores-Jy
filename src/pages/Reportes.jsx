@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { reportesService, clientesService, tecnicosService, tiposServicioService, ascensoresService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
+import RangeCalendar from '../components/common/RangeCalendar.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensores, resumenAscensores, hoyISO } from '../utils/formatters.js';
 import { generarReportePDF } from '../utils/pdfReport.js';
+import { esFacturado } from '../utils/estadoFactura.js';
 
 // Categoría agrupa los reportes operativos por entidad del negocio. El selector
 // superior actúa como filtro de la lista de tabs. "todos" muestra todos.
@@ -61,7 +63,7 @@ function fetcher(codigo, params) {
     case 'atenciones_rapidas': return reportesService.atencionesRapidas(params);
     case 'mantenimientos_cumplidos': return reportesService.mantenimientosCumplidos(params);
     case 'mantenimientos_vencidos': return reportesService.mantenimientosVencidos();
-    case 'mantenimientos_por_cliente': return reportesService.mantenimientosPorCliente();
+    case 'mantenimientos_por_cliente': return reportesService.mantenimientosPorCliente(params);
     case 'mantenimientos_sin_servicio': return reportesService.mantenimientosProgramadosSinServicio(params);
     case 'pendientes_cobro': return reportesService.pendientesDeCobro(params);
     case 'cobros_vencidos': return reportesService.cobrosVencidos(params);
@@ -120,6 +122,10 @@ export default function Reportes() {
 
   const limpiarFiltros = () => setFiltros({});
   useEffect(() => { limpiarFiltros(); }, [tab.codigo]);
+
+  // Cambiar de tab limpia los datos de inmediato para evitar un render
+  // transitorio con la data del tab anterior (cada reporte tiene otro shape).
+  const seleccionarTab = (t) => { setData(null); setTab(t); };
 
   const printRef = useRef(null);
 
@@ -250,7 +256,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
                 setCategoria(c.codigo);
                 const visibles = c.codigo === 'todos' ? TABS : TABS.filter(t => t.categoria === c.codigo);
                 if (visibles.length > 0 && !visibles.some(t => t.codigo === tab.codigo)) {
-                  setTab(visibles[0]);
+                  seleccionarTab(visibles[0]);
                 }
               }}
               className={`px-3 py-1.5 text-xs uppercase tracking-wide font-semibold rounded-md whitespace-nowrap ${categoria === c.codigo ? 'bg-brand-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
@@ -265,7 +271,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
           {TABS
             .filter(t => categoria === 'todos' || t.categoria === categoria)
             .map(t => (
-              <button key={t.codigo} onClick={() => setTab(t)}
+              <button key={t.codigo} onClick={() => seleccionarTab(t)}
                 className={`px-3 py-1.5 text-sm rounded-md whitespace-nowrap ${tab.codigo === t.codigo ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-600 hover:bg-slate-100'}`}>
                 {t.key}
               </button>
@@ -392,6 +398,32 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
                 </select>
               </div>
             )}
+            <div className="flex items-end"><button onClick={limpiarFiltros} className="btn-secondary w-full">Limpiar filtros</button></div>
+          </div>
+        </div>
+      )}
+
+      {tab.codigo === 'mantenimientos_por_cliente' && (
+        // z-20: cada .card crea su propio contexto de apilado (backdrop-blur),
+        // así que elevamos el de filtros para que el popover del calendario
+        // quede por encima de la tabla (card hermana posterior).
+        <div className="card mb-4 relative z-20">
+          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className="label">Cliente</label>
+              <select className="select" value={filtros.id_cliente || ''} onChange={e => setF('id_cliente', e.target.value)}>
+                <option value="">Todos</option>
+                {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Rango de fechas (programadas)</label>
+              <RangeCalendar
+                desde={filtros.desde || ''}
+                hasta={filtros.hasta || ''}
+                onChange={({ desde, hasta }) => setFiltros(p => ({ ...p, desde: desde || undefined, hasta: hasta || undefined }))}
+              />
+            </div>
             <div className="flex items-end"><button onClick={limpiarFiltros} className="btn-secondary w-full">Limpiar filtros</button></div>
           </div>
         </div>
@@ -637,30 +669,75 @@ function TablaMantVencidos({ data }) {
 }
 
 function TablaMantPorCliente({ data }) {
-  if (data.length === 0) return <EmptyState title="Sin planes de mantenimiento" />;
+  const [expandido, setExpandido] = useState(() => new Set());
+
+  // Al cambiar el dataset (p. ej. al filtrar por cliente): si queda un solo
+  // cliente se expande automáticamente; si hay varios, todos colapsados.
+  useEffect(() => {
+    setExpandido(data.length === 1 ? new Set([data[0].id_cliente]) : new Set());
+  }, [data]);
+
+  if (data.length === 0) return <EmptyState title="Sin planes de mantenimiento" subtitle="Ajuste el cliente o el rango de fechas." />;
+
+  const toggle = (id) => setExpandido(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+
+  const etiquetaPlan = (plan) => plan.tipo_plan === 'eventual'
+    ? 'Eventual'
+    : `${plan.frecuencia || '—'} (continuo)`;
+
   return (
     <table className="table-base">
       <thead><tr>
-        <th className="table-th">Cliente</th>
-        <th className="table-th text-center">Planes</th>
-        <th className="table-th text-center">Gratuitos hechos</th>
-        <th className="table-th text-center">Pagados hechos</th>
-        <th className="table-th text-center">Cupo inicial</th>
-        <th className="table-th text-center">Adicionados</th>
-        <th className="table-th text-center">Cupo actual</th>
+        <th className="table-th">Cliente / Plan</th>
+        <th className="table-th text-center">Programados</th>
+        <th className="table-th text-center">Realizados</th>
+        <th className="table-th text-center">Faltan</th>
+        <th className="table-th text-center">En curso</th>
+        <th className="table-th text-center">Cancelados</th>
+        <th className="table-th text-center">Gratuitos</th>
       </tr></thead>
       <tbody className="divide-y divide-slate-100">
-        {data.map((c, idx) => (
-          <tr key={`${c.id_cliente ?? 'sin'}-${idx}`}>
-            <td className="table-td text-xs">{c.cliente_nombre}</td>
-            <td className="table-td text-xs text-center font-mono">{c.planes_total}</td>
-            <td className="table-td text-xs text-center font-mono text-emerald-700">{c.gratuitos_hechos}</td>
-            <td className="table-td text-xs text-center font-mono text-slate-700">{c.pagados_hechos}</td>
-            <td className="table-td text-xs text-center font-mono">{c.cupo_inicial}</td>
-            <td className="table-td text-xs text-center font-mono text-amber-700">{c.adicionados > 0 ? `+${c.adicionados}` : '0'}</td>
-            <td className="table-td text-xs text-center font-mono font-semibold">{c.cupo_actual}</td>
-          </tr>
-        ))}
+        {data.map((cli, idx) => {
+          const abierto = expandido.has(cli.id_cliente);
+          return (
+            <Fragment key={`${cli.id_cliente ?? cli.cliente_nombre}-${idx}`}>
+              <tr className="bg-slate-50 cursor-pointer table-row-hover" onClick={() => toggle(cli.id_cliente)}>
+                <td className="table-td text-xs font-medium text-slate-800">
+                  <span className="inline-block w-4 text-slate-400">{abierto ? '▾' : '▸'}</span>
+                  {cli.cliente_nombre}
+                  <span className="ml-2 font-normal text-slate-400">{cli.planes_total} plan(es)</span>
+                </td>
+                <td className="table-td text-center font-mono text-xs">{cli.programados}</td>
+                <td className="table-td text-center font-mono text-xs text-emerald-700">{cli.realizados}</td>
+                <td className="table-td text-center font-mono text-xs text-amber-700">{cli.faltan}</td>
+                <td className="table-td text-center font-mono text-xs">{cli.en_curso}</td>
+                <td className="table-td text-center font-mono text-xs text-slate-500">{cli.cancelados}</td>
+                <td className="table-td text-center text-xs text-slate-400">—</td>
+              </tr>
+              {(cli.planes || []).map(plan => (
+                <tr key={`${cli.id_cliente}-${plan.id_plan}`} className={abierto ? '' : 'hidden'}>
+                  <td className="table-td text-xs pl-8">
+                    <div className="font-mono text-slate-700">{plan.ascensor_codigo || '—'}</div>
+                    <div className="text-slate-500">
+                      {plan.tipo_servicio || '—'} · {etiquetaPlan(plan)}
+                      {plan.ascensor_ubicacion ? ` · ${plan.ascensor_ubicacion}` : ''}
+                    </div>
+                  </td>
+                  <td className="table-td text-center font-mono text-xs">{plan.programados}</td>
+                  <td className="table-td text-center font-mono text-xs text-emerald-700">{plan.realizados}</td>
+                  <td className="table-td text-center font-mono text-xs text-amber-700">{plan.faltan}</td>
+                  <td className="table-td text-center font-mono text-xs">{plan.en_curso}</td>
+                  <td className="table-td text-center font-mono text-xs text-slate-500">{plan.cancelados}</td>
+                  <td className="table-td text-center font-mono text-xs">{plan.gratuitos_ejecutados}/{plan.gratuitos_cupo}</td>
+                </tr>
+              ))}
+            </Fragment>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -1229,7 +1306,7 @@ function buildAnalitica(codigo, data, puedeVerPrecio) {
     const total = data.length;
     const porFact = groupCount(data, r => r.estado_facturacion || 'Sin estado');
     const porMes = ultimosMeses(data, r => r.fecha_realizacion);
-    const facturados = data.filter(r => /facturad/i.test(r.estado_facturacion || '')).length;
+    const facturados = data.filter(r => esFacturado(r.estado_facturacion)).length;
     const monto = puedeVerPrecio ? data.reduce((s, r) => s + (Number(r.servicio?.precio_interno) || 0), 0) : null;
     const mesPico = [...porMes].sort((a, b) => b.value - a.value)[0];
     const porTipo = topN(groupCount(data, r => r.servicio?.tipo_servicio?.nombre || 'Sin tipo'), 1);

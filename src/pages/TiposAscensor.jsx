@@ -7,7 +7,7 @@ import Modal from '../components/common/Modal.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 
-const inicial = { nombre: '', descripcion: '', orden: 0 };
+const inicial = { nombre: '', descripcion: '' };
 
 export default function TiposAscensor() {
   const [data, setData] = useState([]);
@@ -33,7 +33,7 @@ export default function TiposAscensor() {
 
   const abrirNuevo = () => { setForm(inicial); setEditId(null); setOpen(true); };
   const abrirEdit = (t) => {
-    setForm({ nombre: t.nombre, descripcion: t.descripcion || '', orden: t.orden ?? 0 });
+    setForm({ nombre: t.nombre, descripcion: t.descripcion || '' });
     setEditId(t.id);
     setOpen(true);
   };
@@ -45,8 +45,7 @@ export default function TiposAscensor() {
     try {
       const payload = {
         nombre: form.nombre.trim(),
-        descripcion: form.descripcion.trim() || null,
-        orden: Number(form.orden) || 0
+        descripcion: form.descripcion.trim() || null
       };
       if (editId) await tiposAscensorService.update(editId, payload);
       else await tiposAscensorService.create(payload);
@@ -84,7 +83,6 @@ export default function TiposAscensor() {
               <thead><tr>
                 <th className="table-th">Nombre</th>
                 <th className="table-th">Descripción</th>
-                <th className="table-th text-center">Orden</th>
                 <th className="table-th text-center">Estado</th>
                 <th className="table-th text-right">Acciones</th>
               </tr></thead>
@@ -93,7 +91,6 @@ export default function TiposAscensor() {
                   <tr key={t.id} className={`table-row-hover ${t.estado === 0 ? 'opacity-60' : ''}`}>
                     <td className="table-td font-medium">{t.nombre}</td>
                     <td className="table-td text-xs text-slate-500">{t.descripcion || '—'}</td>
-                    <td className="table-td text-center text-xs">{t.orden ?? 0}</td>
                     <td className="table-td text-center">
                       <span className={t.estado === 1 ? 'badge-green' : 'badge-gray'}>
                         {t.estado === 1 ? 'Activo' : 'Inactivo'}
@@ -149,15 +146,6 @@ export default function TiposAscensor() {
               rows="2"
               value={form.descripcion}
               onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))}
-            />
-          </div>
-          <div>
-            <label className="label">Orden (menor primero)</label>
-            <input
-              type="number"
-              className="input"
-              value={form.orden}
-              onChange={e => setForm(f => ({ ...f, orden: e.target.value }))}
             />
           </div>
         </form>

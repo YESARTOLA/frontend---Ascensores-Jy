@@ -38,6 +38,19 @@ export const ESTADOS_SERVICIO_EDITABLES = [
   'Listo para salida'
 ];
 
+// Estados "en gestión": el servicio está vivo en el flujo operativo, desde
+// que se crea hasta que el técnico lo finaliza (antes de revisión/cobro). Es el
+// universo que muestra la pantalla de Asignaciones.
+export const ESTADOS_SERVICIO_EN_GESTION = [
+  'Borrador',
+  'Pendiente',
+  'Asignado',
+  'Checklist de salida pendiente',
+  'Listo para salida',
+  'En camino',
+  'En curso'
+];
+
 // Estados post-ejecución (administrativo, contable o terminal). Mientras un
 // servicio esté aquí — o en alguno que empiece por "Finalizado" — no se deben
 // crear/modificar entregas, evidencias ni guías sobre él.

@@ -5,6 +5,7 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Modal from '../components/common/Modal.jsx';
+import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFechaHora, nowDateTimeLocalLima, isoToDateTimeLocalLima, dateTimeLocalLimaToISO } from '../utils/formatters.js';
 import { CATALOGO_TIPOS_EVENTO, colorPorTipo } from '../utils/visibilidadCalendario.js';
@@ -35,12 +36,15 @@ const ESTADOS = [
 
 function formInicial() {
   // Por defecto: hoy a las 09:00 hora Lima (no depende del huso del navegador).
-  const ymd = nowDateTimeLocalLima().slice(0, 10);
+  // Si las 09:00 ya pasaron, se usa el momento actual: la fecha de un
+  // recordatorio no puede ser anterior a ahora.
+  const ahora = nowDateTimeLocalLima();
+  const nueve = `${ahora.slice(0, 10)}T09:00`;
   return {
     titulo: '',
     descripcion: '',
     tipo: 'manual',
-    fecha_recordatorio: `${ymd}T09:00`,
+    fecha_recordatorio: nueve >= ahora ? nueve : ahora,
     prioridad: 'media'
   };
 }
@@ -85,36 +89,22 @@ function agruparPorFecha(items) {
 }
 
 export default function Recordatorios() {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [filtros, setFiltros] = useState({ tipo: '', estado_recordatorio: 'pendiente', prioridad: '', id_cliente: '', q: '' });
   const [clientes, setClientes] = useState([]);
   const [modalForm, setModalForm] = useState(null); // null | { form, editId? }
   const [saving, setSaving] = useState(false);
   const toast = useToast();
 
-  const cargar = () => {
-    setLoading(true);
-    const params = Object.fromEntries(Object.entries(filtros).filter(([, v]) => v));
-    recordatoriosService.list(params).then(setData).catch(() => setData([])).finally(() => setLoading(false));
-  };
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
+    usePaginatedList(recordatoriosService.paginate, filtros, { initialPageSize: 25 });
+  const cargar = recargar;
 
-  useEffect(() => { cargar(); /* eslint-disable-next-line */ }, [filtros.tipo, filtros.estado_recordatorio, filtros.prioridad, filtros.id_cliente]);
   useEffect(() => { clientesService.list().then(setClientes).catch(() => setClientes([])); }, []);
 
-  const dataFiltrada = useMemo(() => {
-    if (!filtros.q) return data;
-    const q = filtros.q.toLowerCase();
-    return data.filter(r =>
-      (r.titulo || '').toLowerCase().includes(q) ||
-      (r.descripcion || '').toLowerCase().includes(q) ||
-      (r.servicio?.codigo || '').toLowerCase().includes(q) ||
-      (r.servicio?.cliente?.nombre || '').toLowerCase().includes(q) ||
-      (r.cobro?.cliente?.nombre || '').toLowerCase().includes(q)
-    );
-  }, [data, filtros.q]);
-
-  const grupos = useMemo(() => agruparPorFecha(dataFiltrada), [dataFiltrada]);
+  // La búsqueda (q) y el resto de filtros se resuelven en el servidor; la
+  // agrupación por fecha se aplica a la página actual (el backend ordena por
+  // fecha_recordatorio asc, así los grupos se mantienen coherentes entre páginas).
+  const grupos = useMemo(() => agruparPorFecha(data), [data]);
 
   const setF = (k, v) => setFiltros(p => ({ ...p, [k]: v }));
 
@@ -135,6 +125,12 @@ export default function Recordatorios() {
   const guardar = async () => {
     if (!modalForm.form.titulo || !modalForm.form.fecha_recordatorio) {
       return toast.error('Título y fecha son obligatorios');
+    }
+    // La fecha no puede ser anterior al momento actual (hora Lima). Ambos valores
+    // están en el mismo formato/huso, así que la comparación de strings equivale
+    // a la cronológica, con granularidad de minuto (la del input datetime-local).
+    if (modalForm.form.fecha_recordatorio < nowDateTimeLocalLima()) {
+      return toast.error('La fecha no puede ser anterior al momento actual');
     }
     setSaving(true);
     try {
@@ -231,7 +227,7 @@ export default function Recordatorios() {
         </div>
       </div>
 
-      {loading ? <Loader /> : dataFiltrada.length === 0 ? (
+      {loading ? <Loader /> : data.length === 0 ? (
         <div className="card"><EmptyState title="Sin recordatorios" subtitle="No hay recordatorios con los filtros aplicados" /></div>
       ) : (
         <div className="space-y-4">
@@ -284,6 +280,10 @@ export default function Recordatorios() {
               </ul>
             </div>
           ))}
+          <div className="card">
+            <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}
+              onPage={setPage} onPageSize={setPageSize} />
+          </div>
         </div>
       )}
 
@@ -308,7 +308,7 @@ export default function Recordatorios() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">Fecha y hora *</label>
-                <input type="datetime-local" className="input" value={modalForm.form.fecha_recordatorio} onChange={e => setModalForm(m => ({ ...m, form: { ...m.form, fecha_recordatorio: e.target.value } }))} />
+                <input type="datetime-local" className="input" min={nowDateTimeLocalLima()} value={modalForm.form.fecha_recordatorio} onChange={e => setModalForm(m => ({ ...m, form: { ...m.form, fecha_recordatorio: e.target.value } }))} />
               </div>
               <div>
                 <label className="label">Prioridad</label>
