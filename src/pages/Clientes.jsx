@@ -313,7 +313,7 @@ export default function Clientes() {
         <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
           <input
             className="input lg:col-span-2"
-            placeholder="Buscar por nombre, RUC, teléfono…"
+            placeholder="Buscar por nombre, edificio, RUC, teléfono…"
             value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))}
           />

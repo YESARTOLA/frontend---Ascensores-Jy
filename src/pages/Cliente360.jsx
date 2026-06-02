@@ -48,7 +48,7 @@ export default function Cliente360() {
       <PageHeader
         title={
           <span className="inline-flex items-center gap-2 flex-wrap">
-            <span>{data.nombre}</span>
+            <span>{data.nombre_edificio || data.nombre}</span>
             {clasificacionActual && (
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${clasificacionActual.color}`}>
                 {clasificacionActual.etiqueta}
@@ -56,7 +56,7 @@ export default function Cliente360() {
             )}
           </span>
         }
-        subtitle={[data.nombre_edificio, `${data.tipo_documento} ${data.numero_documento || ''}`, data.distrito].filter(Boolean).join(' · ')}
+        subtitle={[data.nombre_edificio ? data.nombre : null, `${data.tipo_documento} ${data.numero_documento || ''}`, data.distrito].filter(Boolean).join(' · ')}
         actions={<Link to="/clientes" className="btn-secondary">← Clientes</Link>} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -64,6 +64,7 @@ export default function Cliente360() {
           <div className="card-header"><h3 className="card-title">Datos generales</h3></div>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
             {data.nombre_edificio && <Info label="Edificio" value={data.nombre_edificio} cols={2} />}
+            <Info label="Razón social" value={data.nombre || '—'} cols={2} />
             <Info label="Teléfono" value={formatTelefono(data.telefono) || '—'} />
             <Info label="WhatsApp" value={formatTelefono(data.whatsapp) || '—'} />
             <Info label="Correo" value={data.correo || '—'} />
