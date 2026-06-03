@@ -7,7 +7,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFechaHora, hoyISO, sanearTelefono, formatTelefono } from '../utils/formatters.js';
+import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import { badgeEstado, formatFechaHora, hoyISO, sanearTelefono, formatTelefono, labelNombreEdificio } from '../utils/formatters.js';
 import { esAtencionRapidaConvertida } from '../utils/estadoServicio.js';
 
 const FORM_ID = 'form-atencion-rapida';
@@ -16,6 +17,7 @@ const inicialConv = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', tip
 
 export default function AtencionesRapidas() {
   const [clientes, setClientes] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [open, setOpen] = useState(false);
@@ -36,8 +38,13 @@ export default function AtencionesRapidas() {
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list()])
       .then(([c, a, t]) => { setClientes(c); setAscensores(a); setTipos(t); });
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
   const ascensoresF = convForm.id_cliente ? ascensores.filter(a => String(a.id_cliente) === String(convForm.id_cliente)) : ascensores;
+  const labelCampoCliente = labelNombreEdificio(
+    clientes.find(c => String(c.id) === String(convForm.id_cliente)),
+    tiposCliente
+  );
 
   const abrirNuevo = () => {
     setEditando(null);
@@ -172,7 +179,17 @@ export default function AtencionesRapidas() {
         <form onSubmit={(e) => { e.preventDefault(); convertir(); }} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div><label className="label">Tipo de conversión</label><select className="select" value={convForm.tipo_conversion} onChange={e => setConvForm(f => ({ ...f, tipo_conversion: e.target.value }))}><option value="servicio">Servicio</option><option value="emergencia">Emergencia</option></select></div>
           <div><label className="label">Tipo de servicio *</label><select className="select" required value={convForm.id_tipo_servicio} onChange={e => setConvForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}><option value="">—</option>{tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
-          <div><label className="label">Cliente *</label><select className="select" required value={convForm.id_cliente} onChange={e => setConvForm(f => ({ ...f, id_cliente: e.target.value, id_ascensor: '' }))}><option value="">—</option>{clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
+          <div>
+            <label className="label">{labelCampoCliente} *</label>
+            <ClienteAutocomplete
+              clientes={clientes}
+              value={convForm.id_cliente}
+              onChange={(id) => setConvForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+              usarNombreEdificio
+              required
+              placeholder="Escriba para buscar por nombre de edificio / obra…"
+            />
+          </div>
           <div><label className="label">Ascensor *</label><select className="select" required value={convForm.id_ascensor} onChange={e => setConvForm(f => ({ ...f, id_ascensor: e.target.value }))}><option value="">—</option>{ascensoresF.map(a => <option key={a.id} value={a.id}>{a.codigo}</option>)}</select></div>
           <div><label className="label">Fecha</label><input type="date" className="input" value={convForm.fecha_programada} onChange={e => setConvForm(f => ({ ...f, fecha_programada: e.target.value }))} /></div>
           <div><label className="label">Hora</label><input type="time" className="input" value={convForm.hora_programada} onChange={e => setConvForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>

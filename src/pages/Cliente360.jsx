@@ -18,17 +18,26 @@ export default function Cliente360() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [clasificaciones, setClasificaciones] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const { puedeVerPrecio } = useAuth();
   const { open: abrirPreview } = useFilePreview();
 
   useEffect(() => {
     clientesService.vista360(id).then(setData).finally(() => setLoading(false));
     clientesService.clasificaciones().then(setClasificaciones).catch(() => setClasificaciones([]));
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, [id]);
 
   const clasificacionActual = useMemo(
     () => (data?.clasificacion ? clasificaciones.find(c => c.codigo === data.clasificacion) : null),
     [clasificaciones, data?.clasificacion]
+  );
+
+  // Tipo del cliente (Edificio/Obra): define el badge y las etiquetas de
+  // nombre/dirección, tomadas del catálogo para no hardcodearlas.
+  const tipoActual = useMemo(
+    () => (data?.tipo ? tiposCliente.find(t => t.codigo === data.tipo) : null),
+    [tiposCliente, data?.tipo]
   );
 
   const grupos = useMemo(() => {
@@ -49,6 +58,11 @@ export default function Cliente360() {
         title={
           <span className="inline-flex items-center gap-2 flex-wrap">
             <span>{data.nombre_edificio || data.nombre}</span>
+            {tipoActual && (
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${tipoActual.color}`}>
+                {tipoActual.etiqueta}
+              </span>
+            )}
             {clasificacionActual && (
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${clasificacionActual.color}`}>
                 {clasificacionActual.etiqueta}
@@ -63,13 +77,13 @@ export default function Cliente360() {
         <div className="card lg:col-span-1">
           <div className="card-header"><h3 className="card-title">Datos generales</h3></div>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
-            {data.nombre_edificio && <Info label="Edificio" value={data.nombre_edificio} cols={2} />}
+            {data.nombre_edificio && <Info label={tipoActual?.etiqueta || 'Edificio'} value={data.nombre_edificio} cols={2} />}
             <Info label="Razón social" value={data.nombre || '—'} cols={2} />
             <Info label="Teléfono" value={formatTelefono(data.telefono) || '—'} />
             <Info label="WhatsApp" value={formatTelefono(data.whatsapp) || '—'} />
             <Info label="Correo" value={data.correo || '—'} />
             <Info label="Distrito" value={data.distrito || '—'} />
-            <Info label="Dirección" value={data.direccion || '—'} cols={2} />
+            <Info label={tipoActual?.direccion_label || 'Dirección del edificio'} value={data.direccion || '—'} cols={2} />
             <Info label="Inicio contrato" value={formatFecha(data.contrato_inicio)} />
             <Info label="Fin contrato" value={formatFecha(data.contrato_fin)} />
             <Info

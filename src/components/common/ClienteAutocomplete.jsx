@@ -23,8 +23,15 @@ export default function ClienteAutocomplete({
   allowEmpty = false,
   emptyLabel = '— Todos —',
   required = false,
+  usarNombreEdificio = false,
+  disabled = false,
   id
 }) {
+  // Texto principal de cada cliente. En los módulos operativos se identifica por
+  // nombre de edificio / obra (cae a razón social en clientes legacy sin él);
+  // en el resto se mantiene la razón social.
+  const labelDe = (c) =>
+    (usarNombreEdificio ? (c?.nombre_edificio || c?.nombre) : c?.nombre) || '';
   const [query, setQuery] = useState('');
   const [abierto, setAbierto] = useState(false);
   const [focusIdx, setFocusIdx] = useState(0);
@@ -37,7 +44,7 @@ export default function ClienteAutocomplete({
     [clientes, value]
   );
   useEffect(() => {
-    if (!abierto) setQuery(clienteSel ? clienteSel.nombre : '');
+    if (!abierto) setQuery(clienteSel ? labelDe(clienteSel) : '');
   }, [clienteSel, abierto]);
 
   // Cerrar al hacer click fuera
@@ -46,7 +53,7 @@ export default function ClienteAutocomplete({
     const handler = (e) => {
       if (contenedorRef.current && !contenedorRef.current.contains(e.target)) {
         setAbierto(false);
-        setQuery(clienteSel ? clienteSel.nombre : '');
+        setQuery(clienteSel ? labelDe(clienteSel) : '');
       }
     };
     document.addEventListener('mousedown', handler);
@@ -68,7 +75,7 @@ export default function ClienteAutocomplete({
 
   const seleccionar = (op) => {
     onChange(op.__empty ? '' : String(op.id));
-    setQuery(op.__empty ? '' : op.nombre);
+    setQuery(op.__empty ? '' : labelDe(op));
     setAbierto(false);
     setFocusIdx(0);
     inputRef.current?.blur();
@@ -89,7 +96,7 @@ export default function ClienteAutocomplete({
       }
     } else if (e.key === 'Escape') {
       setAbierto(false);
-      setQuery(clienteSel ? clienteSel.nombre : '');
+      setQuery(clienteSel ? labelDe(clienteSel) : '');
     }
   };
 
@@ -111,14 +118,15 @@ export default function ClienteAutocomplete({
           role="combobox"
           aria-expanded={abierto}
           aria-required={required}
+          disabled={disabled}
           autoComplete="off"
           placeholder={placeholder}
           value={query}
-          onFocus={() => { setAbierto(true); setFocusIdx(0); }}
-          onChange={e => { setQuery(e.target.value); setAbierto(true); setFocusIdx(0); }}
+          onFocus={() => { if (!disabled) { setAbierto(true); setFocusIdx(0); } }}
+          onChange={e => { if (!disabled) { setQuery(e.target.value); setAbierto(true); setFocusIdx(0); } }}
           onKeyDown={onKeyDown}
         />
-        {(query || clienteSel) && (
+        {!disabled && (query || clienteSel) && (
           <button
             type="button"
             onClick={limpiar}
@@ -146,12 +154,16 @@ export default function ClienteAutocomplete({
                 <span className="italic text-carbon-500">{op.nombre}</span>
               ) : (
                 <>
-                  <div className="font-medium">{op.nombre}</div>
-                  {(op.numero_documento || op.telefono) && (
-                    <div className="text-xs text-carbon-500">
-                      {[op.numero_documento, op.telefono].filter(Boolean).join(' · ')}
-                    </div>
-                  )}
+                  <div className="font-medium">{labelDe(op)}</div>
+                  {(() => {
+                    // En modo edificio/obra, la línea secundaria muestra la razón
+                    // social (si difiere) + documento; en modo normal, doc + teléfono.
+                    const bits = usarNombreEdificio
+                      ? [op.nombre && op.nombre !== labelDe(op) ? op.nombre : null, op.numero_documento]
+                      : [op.numero_documento, op.telefono];
+                    const txt = bits.filter(Boolean).join(' · ');
+                    return txt ? <div className="text-xs text-carbon-500">{txt}</div> : null;
+                  })()}
                 </>
               )}
             </li>

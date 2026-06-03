@@ -8,7 +8,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFechaHora, formatDiasEjecucion } from '../utils/formatters.js';
+import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import { badgeEstado, formatFechaHora, formatDiasEjecucion, nombreEdificioCliente, labelNombreEdificio } from '../utils/formatters.js';
 import { esServicioEditable, esEmergenciaCerrada } from '../utils/estadoServicio.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
@@ -21,6 +22,7 @@ const inicial = { id_cliente: '', id_ascensor: '', motivo: '', nivel_urgencia: '
 
 export default function Emergencias() {
   const [clientes, setClientes] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [open, setOpen] = useState(false);
@@ -42,9 +44,14 @@ export default function Emergencias() {
     Promise.all([clientesService.list(), ascensoresService.list(), tecnicosService.list()])
       .then(([c, a, t]) => { setClientes(c); setAscensores(a); setTecnicos(t); })
       .catch(() => {});
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
 
   const ascensoresFiltrados = form.id_cliente ? ascensores.filter(a => String(a.id_cliente) === String(form.id_cliente)) : ascensores;
+  const labelCampoCliente = labelNombreEdificio(
+    clientes.find(c => String(c.id) === String(form.id_cliente)),
+    tiposCliente
+  );
 
   const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
   const quitarTec = (idx) => setAsignaciones(a => a.filter((_, i) => i !== idx));
@@ -170,7 +177,7 @@ export default function Emergencias() {
                   return (
                   <tr key={e.id} className="table-row-hover">
                     <td className="table-td text-xs">{formatFechaHora(e.fecha_reporte)}</td>
-                    <td className="table-td text-xs"><div>{e.cliente?.nombre}</div><div className="font-mono text-slate-500">{e.ascensor?.codigo}</div></td>
+                    <td className="table-td text-xs"><div>{nombreEdificioCliente(e.cliente)}</div><div className="font-mono text-slate-500">{e.ascensor?.codigo}</div></td>
                     <td className="table-td text-sm">{e.motivo}</td>
                     <td className="table-td"><span className={e.nivel_urgencia === 'alta' ? 'badge-red' : 'badge-amber'}>{e.nivel_urgencia}</span></td>
                     <td className="table-td">
@@ -228,11 +235,15 @@ export default function Emergencias() {
               </div>
             )}
             <div>
-              <label className="label">Cliente *</label>
-              <select className="select" required value={form.id_cliente} onChange={e => setForm(f => ({ ...f, id_cliente: e.target.value, id_ascensor: '' }))}>
-                <option value="">— Seleccione —</option>
-                {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
+              <label className="label">{labelCampoCliente} *</label>
+              <ClienteAutocomplete
+                clientes={clientes}
+                value={form.id_cliente}
+                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+                usarNombreEdificio
+                required
+                placeholder="Escriba para buscar por nombre de edificio / obra…"
+              />
             </div>
             <div>
               <label className="label">Ascensor *</label>

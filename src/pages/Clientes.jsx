@@ -28,9 +28,9 @@ const CON_CONTRATO = [
 ];
 
 const inicial = {
+  tipo: 'Edificio',
   tipo_documento: 'RUC', numero_documento: '', nombre: '', nombre_edificio: '',
-  telefono: '', whatsapp: '',
-  correo: '', direccion: '', distrito: '', observaciones: '',
+  direccion: '', distrito: '', observaciones: '',
   contacto_principal_nombre: '', contacto_principal_correo: '', contacto_principal_telefono: '',
   contacto_cobranzas_nombre: '', contacto_cobranzas_correo: '', contacto_cobranzas_telefono: '',
   contacto_admin_nombre: '', contacto_admin_correo: '', contacto_admin_telefono: '',
@@ -61,6 +61,7 @@ function estadoContratoBadge(c, diasAviso) {
 export default function Clientes() {
   const [filtros, setFiltros] = useState({ q: '', distrito: '', tipo_ascensor: '', clasificacion: '', estado_contrato: '', con_contrato: '' });
   const [clasificaciones, setClasificaciones] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(inicial);
   const [editId, setEditId] = useState(null);
@@ -96,7 +97,10 @@ export default function Clientes() {
   const cargarClasificaciones = () => {
     clientesService.clasificaciones().then(setClasificaciones).catch(() => setClasificaciones([]));
   };
-  useEffect(() => { cargarDistritos(); cargarTiposAscensor(); cargarClasificaciones(); }, []);
+  const cargarTiposCliente = () => {
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
+  };
+  useEffect(() => { cargarDistritos(); cargarTiposAscensor(); cargarClasificaciones(); cargarTiposCliente(); }, []);
 
   const cargar = () => { recargar(); cargarDistritos(); cargarTiposAscensor(); };
 
@@ -105,6 +109,15 @@ export default function Clientes() {
     () => Object.fromEntries(clasificaciones.map(c => [c.codigo, c])),
     [clasificaciones]
   );
+  const tipoClienteByCodigo = useMemo(
+    () => Object.fromEntries(tiposCliente.map(t => [t.codigo, t])),
+    [tiposCliente]
+  );
+  // Etiquetas dinámicas de nombre/dirección según el tipo elegido (Edificio/Obra).
+  // Se toman del catálogo del backend para no hardcodearlas en la vista.
+  const tipoSeleccionado = tipoClienteByCodigo[form.tipo];
+  const labelNombreEdificio = tipoSeleccionado?.nombre_label || 'Nombre del edificio';
+  const labelDireccion = tipoSeleccionado?.direccion_label || 'Dirección del edificio';
 
   const abrirNuevo = () => { setForm(inicial); setEditId(null); setOpen(true); };
   const abrirEdit = async (c) => {
@@ -124,9 +137,9 @@ export default function Clientes() {
       moneda: p.moneda || 'PEN'
     }));
     setForm({
+      tipo: c.tipo || 'Edificio',
       tipo_documento: c.tipo_documento, numero_documento: c.numero_documento || '',
       nombre: c.nombre, nombre_edificio: c.nombre_edificio || '',
-      telefono: sanearTelefono(c.telefono), whatsapp: sanearTelefono(c.whatsapp || ''), correo: c.correo || '',
       direccion: c.direccion || '', distrito: c.distrito || '',
       contacto_principal_nombre: c.contacto_principal_nombre || '',
       contacto_principal_correo: c.contacto_principal_correo || '',
@@ -373,6 +386,11 @@ export default function Clientes() {
                         <td className="table-td">
                           <div className="flex items-center gap-2 flex-wrap">
                             <div className="font-medium text-slate-800">{c.nombre}</div>
+                            {c.tipo && tipoClienteByCodigo[c.tipo] && (
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${tipoClienteByCodigo[c.tipo].color}`}>
+                                {tipoClienteByCodigo[c.tipo].etiqueta}
+                              </span>
+                            )}
                             {c.clasificacion && clasificacionByCodigo[c.clasificacion] && (
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${clasificacionByCodigo[c.clasificacion].color}`}>
                                 {clasificacionByCodigo[c.clasificacion].etiqueta}
@@ -432,6 +450,11 @@ export default function Clientes() {
                       )}
                       <div className="mt-1 flex items-center gap-2 flex-wrap">
                         <span className={`badge ${badge.clase}`}>{badge.texto}</span>
+                        {c.tipo && tipoClienteByCodigo[c.tipo] && (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${tipoClienteByCodigo[c.tipo].color}`}>
+                            {tipoClienteByCodigo[c.tipo].etiqueta}
+                          </span>
+                        )}
                         {c.clasificacion && clasificacionByCodigo[c.clasificacion] && (
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${clasificacionByCodigo[c.clasificacion].color}`}>
                             {clasificacionByCodigo[c.clasificacion].etiqueta}
@@ -465,9 +488,15 @@ export default function Clientes() {
         }>
         <form id="cliente-form" onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
-            <label className="label">Nombre del edificio</label>
-            <input className="input" value={form.nombre_edificio}
-              placeholder="Ej. Edificio Las Palmeras"
+            <label className="label">Tipo *</label>
+            <select className="select" required value={form.tipo}
+              onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}>
+              {tiposCliente.map(t => <option key={t.codigo} value={t.codigo}>{t.etiqueta}</option>)}
+            </select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">{labelNombreEdificio} *</label>
+            <input className="input" required value={form.nombre_edificio}
               onChange={e => setForm(f => ({ ...f, nombre_edificio: e.target.value }))} />
           </div>
           <div className="sm:col-span-2">
@@ -484,36 +513,8 @@ export default function Clientes() {
             <label className="label">Número de documento</label>
             <input className="input" value={form.numero_documento} onChange={e => setForm(f => ({ ...f, numero_documento: e.target.value }))} />
           </div>
-          <div>
-            <label className="label">Teléfono *</label>
-            <input
-              className="input" required
-              type="tel" inputMode="numeric" autoComplete="tel"
-              placeholder="9XX XXX XXX"
-              pattern="9\d{2} \d{3} \d{3}"
-              title="Celular peruano: 9 dígitos comenzando con 9"
-              value={formatTelefono(form.telefono)}
-              onChange={e => setForm(f => ({ ...f, telefono: sanearTelefono(e.target.value) }))}
-            />
-          </div>
-          <div>
-            <label className="label">WhatsApp</label>
-            <input
-              className="input"
-              type="tel" inputMode="numeric" autoComplete="tel"
-              placeholder="9XX XXX XXX"
-              pattern="9\d{2} \d{3} \d{3}"
-              title="Celular peruano: 9 dígitos comenzando con 9"
-              value={formatTelefono(form.whatsapp)}
-              onChange={e => setForm(f => ({ ...f, whatsapp: sanearTelefono(e.target.value) }))}
-            />
-          </div>
           <div className="sm:col-span-2">
-            <label className="label">Correo</label>
-            <input type="email" className="input" value={form.correo} onChange={e => setForm(f => ({ ...f, correo: e.target.value }))} />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="label">Dirección</label>
+            <label className="label">{labelDireccion}</label>
             <input className="input" value={form.direccion} onChange={e => setForm(f => ({ ...f, direccion: e.target.value }))} />
           </div>
           <div>

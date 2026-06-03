@@ -26,7 +26,8 @@ export const clientesService = {
     api.get('/clientes/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   distritos: () => api.get('/clientes/distritos').then(r => r.data?.data ?? r.data),
   tiposAscensor: () => api.get('/clientes/tipos-ascensor').then(r => r.data?.data ?? r.data),
-  clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data)
+  clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data),
+  tipos: () => api.get('/clientes/tipos').then(r => r.data?.data ?? r.data)
 };
 
 export const ascensoresService = {

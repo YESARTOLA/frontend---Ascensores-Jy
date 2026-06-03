@@ -8,7 +8,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima } from '../utils/formatters.js';
+import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima, nombreEdificioCliente, labelNombreEdificio } from '../utils/formatters.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { generarReportePorClientePDF } from '../utils/pdfReport.js';
 
@@ -25,6 +26,7 @@ const inicial = {
 export default function Mantenimientos() {
   const [tabActiva, setTabActiva] = useState('mantenimientos'); // 'mantenimientos' | 'planes'
   const [clientes, setClientes] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [frecuencias, setFrecuencias] = useState([]);
@@ -62,6 +64,7 @@ export default function Mantenimientos() {
       tiposServicioService.list(),
       mantenimientosService.frecuencias()
     ]).then(([c, a, t, f]) => { setClientes(c); setAscensores(a); setTipos(t); setFrecuencias(f); });
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
 
   const recargarInstancias = () => {
@@ -90,6 +93,10 @@ export default function Mantenimientos() {
     : ascensores;
 
   const ascensoresF = form.id_cliente ? ascensores.filter(a => String(a.id_cliente) === String(form.id_cliente)) : ascensores;
+  const labelCampoCliente = labelNombreEdificio(
+    clientes.find(c => String(c.id) === String(form.id_cliente)),
+    tiposCliente
+  );
   const tiposF = tipos.filter(t => t.categoria.includes('Mantenimiento'));
   const esContinuo = form.tipo_plan === 'continuo';
   const frecuenciaSeleccionada = frecuencias.find(f => f.codigo === form.frecuencia);
@@ -301,7 +308,7 @@ export default function Mantenimientos() {
         const datos = await mantenimientosService.exportarDatos(params);
         const filtrosTxt = [];
         if (exportForm.ids_cliente.length > 0) {
-          const nombres = exportForm.ids_cliente.map(id => clientes.find(c => String(c.id) === id)?.nombre).filter(Boolean);
+          const nombres = exportForm.ids_cliente.map(id => nombreEdificioCliente(clientes.find(c => String(c.id) === id))).filter(Boolean);
           filtrosTxt.push(`Clientes: ${nombres.length <= 3 ? nombres.join(', ') : `${nombres.length} seleccionados`}`);
         } else filtrosTxt.push('Todos los clientes');
         if (exportForm.ids_ascensor.length > 0) {
@@ -378,7 +385,7 @@ export default function Mantenimientos() {
               <select className="select" value={filtroInst.id_cliente}
                 onChange={e => setFiltroInst(f => ({ ...f, id_cliente: e.target.value, id_ascensor: '' }))}>
                 <option value="">Todos los clientes</option>
-                {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                {clientes.map(c => <option key={c.id} value={c.id}>{nombreEdificioCliente(c)}</option>)}
               </select>
               <select className="select" value={filtroInst.id_ascensor}
                 onChange={e => setFiltroInst(f => ({ ...f, id_ascensor: e.target.value }))}>
@@ -490,7 +497,7 @@ export default function Mantenimientos() {
                     const ejecutadosTotal = Number(m.mantenimientos_ejecutados_total || 0);
                     return (
                       <tr key={m.id} className="table-row-hover">
-                        <td className="table-td text-xs"><div>{m.cliente?.nombre}</div><div className="font-mono text-slate-500">{m.ascensor?.codigo}</div></td>
+                        <td className="table-td text-xs"><div>{nombreEdificioCliente(m.cliente)}</div><div className="font-mono text-slate-500">{m.ascensor?.codigo}</div></td>
                         <td className="table-td text-xs">{m.tipo_servicio?.nombre}</td>
                         <td className="table-td text-xs">{labelFrecuencia(m)} ({m.tipo_plan})</td>
                         <td className="table-td text-xs">{formatFecha(m.fecha_inicio)} {m.hora_programada || ''}</td>
@@ -534,7 +541,7 @@ export default function Mantenimientos() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 <div>
                   <div className="text-xs uppercase tracking-wide text-slate-500">Cliente</div>
-                  <div className="text-slate-800">{planDetalle.cliente?.nombre || '—'}</div>
+                  <div className="text-slate-800">{nombreEdificioCliente(planDetalle.cliente) || '—'}</div>
                 </div>
                 <div>
                   <div className="text-xs uppercase tracking-wide text-slate-500">Ascensor</div>
@@ -697,8 +704,16 @@ export default function Mantenimientos() {
             </div>
           )}
           <div>
-            <label className="label">Cliente *</label>
-            <select className="select" required disabled={!!editando} value={form.id_cliente} onChange={e => setForm(f => ({ ...f, id_cliente: e.target.value, id_ascensor: '' }))}><option value="">—</option>{clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select>
+            <label className="label">{labelCampoCliente} *</label>
+            <ClienteAutocomplete
+              clientes={clientes}
+              value={form.id_cliente}
+              onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+              usarNombreEdificio
+              required
+              disabled={!!editando}
+              placeholder="Escriba para buscar por nombre de edificio / obra…"
+            />
           </div>
           <div>
             <label className="label">Ascensor *</label>
@@ -787,7 +802,7 @@ export default function Mantenimientos() {
                 return (
                   <label key={c.id} className={`flex items-center gap-2 p-2 cursor-pointer text-sm ${marcado ? 'bg-brand-50/60' : 'bg-white'}`}>
                     <input type="checkbox" checked={marcado} onChange={() => toggleExportCliente(c.id)} />
-                    <span className="flex-1 truncate">{c.nombre}</span>
+                    <span className="flex-1 truncate">{nombreEdificioCliente(c)}</span>
                   </label>
                 );
               })}
@@ -815,7 +830,7 @@ export default function Mantenimientos() {
                     <input type="checkbox" checked={marcado} onChange={() => toggleExportAscensor(a.id)} />
                     <div className="flex-1 min-w-0">
                       <div className="font-mono text-xs">{a.codigo}</div>
-                      <div className="text-xs text-slate-500 truncate">{cliente?.nombre || '—'}{a.ubicacion ? ` · ${a.ubicacion}` : ''}</div>
+                      <div className="text-xs text-slate-500 truncate">{nombreEdificioCliente(cliente) || '—'}{a.ubicacion ? ` · ${a.ubicacion}` : ''}</div>
                     </div>
                   </label>
                 );

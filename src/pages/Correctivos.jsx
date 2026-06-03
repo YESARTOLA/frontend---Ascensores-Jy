@@ -8,7 +8,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFechaHora } from '../utils/formatters.js';
+import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import { badgeEstado, formatFechaHora, nombreEdificioCliente, labelNombreEdificio } from '../utils/formatters.js';
 import { esServicioEditable, ESTADOS_CORRECTIVO, esCorrectivoCerrado } from '../utils/estadoServicio.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
@@ -32,6 +33,7 @@ function badgeUrgencia(n) {
 
 export default function Correctivos() {
   const [clientes, setClientes] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [filtros, setFiltros] = useState({ estado_correctivo: '', nivel_urgencia: '' });
@@ -55,7 +57,13 @@ export default function Correctivos() {
     Promise.all([clientesService.list(), ascensoresService.list(), tecnicosService.list()])
       .then(([c, a, t]) => { setClientes(c); setAscensores(a); setTecnicos(t); })
       .catch(() => {});
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
+
+  const labelCampoCliente = labelNombreEdificio(
+    clientes.find(c => String(c.id) === String(form.id_cliente)),
+    tiposCliente
+  );
 
   const ascensoresFiltrados = form.id_cliente
     ? ascensores.filter(a => String(a.id_cliente) === String(form.id_cliente))
@@ -199,7 +207,7 @@ export default function Correctivos() {
                   <tr key={c.id} className="table-row-hover">
                     <td className="table-td text-xs">{formatFechaHora(c.fecha_reporte)}</td>
                     <td className="table-td text-xs">
-                      <div>{c.cliente?.nombre}</div>
+                      <div>{nombreEdificioCliente(c.cliente)}</div>
                       <div className="font-mono text-slate-500">{c.ascensor?.codigo}</div>
                     </td>
                     <td className="table-td text-sm">{c.falla}</td>
@@ -258,12 +266,15 @@ export default function Correctivos() {
               </div>
             )}
             <div>
-              <label className="label">Cliente *</label>
-              <select className="select" required value={form.id_cliente}
-                onChange={e => setForm(f => ({ ...f, id_cliente: e.target.value, id_ascensor: '' }))}>
-                <option value="">— Seleccione —</option>
-                {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
+              <label className="label">{labelCampoCliente} *</label>
+              <ClienteAutocomplete
+                clientes={clientes}
+                value={form.id_cliente}
+                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+                usarNombreEdificio
+                required
+                placeholder="Escriba para buscar por nombre de edificio / obra…"
+              />
             </div>
             <div>
               <label className="label">Ascensor *</label>

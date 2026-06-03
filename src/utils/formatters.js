@@ -241,3 +241,27 @@ export function formatTelefono(value) {
   if (d.length <= 6) return `${d.slice(0, 3)} ${d.slice(3)}`;
   return `${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6, 9)}`;
 }
+
+/**
+ * Nombre del edificio / obra del cliente, para mostrar en listas y selectores
+ * de los módulos operativos. Cae a la razón social solo para clientes legacy
+ * que no tuvieran cargado el nombre de edificio.
+ */
+export function nombreEdificioCliente(cliente) {
+  if (!cliente) return '';
+  return cliente.nombre_edificio || cliente.nombre || '';
+}
+
+/**
+ * Etiqueta del campo selector de cliente, adaptada al tipo del cliente elegido
+ * (Edificio / Obra). `tipos` es el catálogo TIPOS_CLIENTE del backend
+ * (`{ codigo, etiqueta, nombre_label }`), única fuente de verdad de los textos.
+ * Sin cliente elegido, combina las etiquetas del catálogo
+ * (ej. "Nombre del Edificio / Obra").
+ */
+export function labelNombreEdificio(cliente, tipos = []) {
+  const t = cliente && tipos.find(x => x.codigo === cliente.tipo);
+  if (t?.nombre_label) return t.nombre_label;
+  if (tipos.length) return `Nombre del ${tipos.map(x => x.etiqueta).join(' / ')}`;
+  return 'Nombre del Edificio / Obra';
+}

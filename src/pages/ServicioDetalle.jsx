@@ -7,7 +7,7 @@ import Modal from '../components/common/Modal.jsx';
 import { FileLink, useFilePreview } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, codigosAscensores, resumenAscensores } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, codigosAscensores, resumenAscensores, nombreEdificioCliente } from '../utils/formatters.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 import {
   estaServicioFinalizado,
@@ -472,7 +472,7 @@ export default function ServicioDetalle() {
   return (
     <>
       <PageHeader title={`${s.codigo} · ${s.titulo}`}
-        subtitle={`${s.cliente?.nombre} · ${resumenAscensores(s)} · ${s.tipo_servicio?.nombre}`}
+        subtitle={`${nombreEdificioCliente(s.cliente)} · ${resumenAscensores(s)} · ${s.tipo_servicio?.nombre}`}
         actions={
           <>
             <button type="button" onClick={volver} className="btn-secondary">← Volver</button>
@@ -519,8 +519,8 @@ export default function ServicioDetalle() {
             <Info label="Fecha programada" value={`${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`} />
             <Info label="Prioridad" value={s.prioridad} />
             <Info label="Cliente" value={esTecnico
-              ? <span className="text-slate-800">{s.cliente?.nombre}</span>
-              : <Link to={`/clientes/${s.cliente?.id}`} className="text-brand-700 hover:underline">{s.cliente?.nombre}</Link>} cols={2} />
+              ? <span className="text-slate-800">{nombreEdificioCliente(s.cliente)}</span>
+              : <Link to={`/clientes/${s.cliente?.id}`} className="text-brand-700 hover:underline">{nombreEdificioCliente(s.cliente)}</Link>} cols={2} />
             <Info label={`Ascensores · ${(s.ascensores || []).length}`} value={
               (s.ascensores || []).length === 0
                 ? '—'

@@ -8,7 +8,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatMonto, hoyISO, toYMDLima } from '../utils/formatters.js';
+import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import { badgeEstado, formatFecha, formatMonto, hoyISO, toYMDLima, nombreEdificioCliente, labelNombreEdificio } from '../utils/formatters.js';
 import { ESTADOS_SERVICIO, esServicioEditable } from '../utils/estadoServicio.js';
 
 const ESTADOS_FILTRO = ['', ...ESTADOS_SERVICIO];
@@ -118,6 +119,7 @@ function servicioToForm(s) {
 export default function Servicios() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [clientes, setClientes] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [preciosCliente, setPreciosCliente] = useState([]);
@@ -138,6 +140,7 @@ export default function Servicios() {
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list()])
       .then(([cs, as, ts]) => { setClientes(cs); setAscensores(as); setTipos(ts); });
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
 
   const cargar = recargar;
@@ -232,6 +235,12 @@ export default function Servicios() {
   const cambiarCliente = (id_cliente) => {
     setForm(f => ({ ...f, id_cliente, ascensores_seleccion: {} }));
   };
+
+  // Etiqueta del campo de cliente: adaptada al tipo (Edificio/Obra) del elegido.
+  const labelCampoCliente = useMemo(() => {
+    const sel = clientes.find(c => String(c.id) === String(form.id_cliente));
+    return labelNombreEdificio(sel, tiposCliente);
+  }, [clientes, form.id_cliente, tiposCliente]);
 
   // Cargar el catálogo de precios del cliente seleccionado para usarlo como
   // default al elegir el tipo de servicio en "Nuevo servicio". En modo edición
@@ -409,7 +418,7 @@ export default function Servicios() {
                         <td className="table-td text-sm max-w-[240px] truncate" title={s.titulo || ''}>{s.titulo || '—'}</td>
                         <td className="table-td text-xs">{s.tipo_registro}</td>
                         <td className="table-td">
-                          <div className="text-sm">{s.cliente?.nombre}</div>
+                          <div className="text-sm">{nombreEdificioCliente(s.cliente)}</div>
                           <div className="text-xs text-slate-500 font-mono" title={codigos.join(', ')}>{ascResumen}</div>
                         </td>
                         <td className="table-td text-xs">{s.tipo_servicio?.nombre}</td>
@@ -450,7 +459,7 @@ export default function Servicios() {
                         <div>
                           <div className="font-mono text-xs text-brand-700">{s.codigo}</div>
                           <div className="font-medium text-slate-800 text-sm mt-0.5">{s.titulo}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">{s.cliente?.nombre} · {ascResumen}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{nombreEdificioCliente(s.cliente)} · {ascResumen}</div>
                         </div>
                         <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
                       </div>
@@ -504,11 +513,15 @@ export default function Servicios() {
             </select>
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Cliente *</label>
-            <select className="select" required value={form.id_cliente} onChange={e => cambiarCliente(e.target.value)}>
-              <option value="">— Seleccione —</option>
-              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-            </select>
+            <label className="label">{labelCampoCliente} *</label>
+            <ClienteAutocomplete
+              clientes={clientes}
+              value={form.id_cliente}
+              onChange={cambiarCliente}
+              usarNombreEdificio
+              required
+              placeholder="Escriba para buscar por nombre de edificio / obra…"
+            />
           </div>
 
           <div className="sm:col-span-2">
