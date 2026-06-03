@@ -400,7 +400,7 @@ export default function Servicios() {
               <table className="table-base">
                 <thead><tr>
                   <th className="table-th">Código</th><th className="table-th">Título</th><th className="table-th">Tipo</th>
-                  <th className="table-th">Cliente / Ascensores</th><th className="table-th">Tipo servicio</th>
+                  <th className="table-th">Edificio-Obra / Ascensores</th><th className="table-th">Tipo servicio</th>
                   <th className="table-th">Fecha</th><th className="table-th">Técnicos</th>
                   <th className="table-th">Estado</th>{puedeVerPrecio && <th className="table-th text-right">Precio</th>}
                   <th className="table-th text-right">Acciones</th>

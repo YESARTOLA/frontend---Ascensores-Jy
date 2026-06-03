@@ -5,7 +5,7 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO } from '../utils/formatters.js';
+import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO, nombreEdificioCliente } from '../utils/formatters.js';
 import { generarFichaAscensorPDF } from '../utils/pdfReport.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
@@ -55,7 +55,7 @@ export default function AscensorHistorial() {
   return (
     <>
       <PageHeader title={`Ascensor ${ascensor.codigo}`}
-        subtitle={`${ascensor.tipo} · ${ascensor.marca} ${ascensor.modelo} · ${ascensor.cliente?.nombre}`}
+        subtitle={`${ascensor.tipo} · ${ascensor.marca} ${ascensor.modelo} · ${nombreEdificioCliente(ascensor.cliente)}`}
         actions={
           <>
             <button onClick={exportarPdf} disabled={exportandoPdf} className="btn-primary">

@@ -8,7 +8,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha } from '../utils/formatters.js';
+import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import { badgeEstado, formatFecha, nombreEdificioCliente, labelNombreEdificio } from '../utils/formatters.js';
 
 const inicial = {
   id_cliente: '', codigo: '', ubicacion: '', tipo: '', marca: '', modelo: '',
@@ -20,6 +21,7 @@ const ESTADOS_OP = ['Operativo', 'En observación', 'Fuera de servicio', 'En ins
 
 export default function Ascensores() {
   const [clientes, setClientes] = useState([]);
+  const [tiposCliente, setTiposCliente] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -33,9 +35,16 @@ export default function Ascensores() {
     usePaginatedList(ascensoresService.paginate, { q }, { initialPageSize: 25 });
   useEffect(() => {
     clientesService.list().then(setClientes).catch(() => setClientes([]));
+    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
     tiposAscensorService.list().then(setTipos).catch(() => setTipos([]));
   }, []);
   const cargar = recargar;
+
+  // Etiqueta del campo de cliente, adaptada al tipo (Edificio/Obra) del elegido.
+  const labelCampoCliente = labelNombreEdificio(
+    clientes.find(c => String(c.id) === String(form.id_cliente)),
+    tiposCliente
+  );
 
   const abrirNuevo = () => {
     setForm({ ...inicial, tipo: tipos[0]?.nombre || '' });
@@ -81,7 +90,7 @@ export default function Ascensores() {
             <div className="hidden md:block overflow-x-auto scroll-thin">
               <table className="table-base">
                 <thead><tr>
-                  <th className="table-th">Código</th><th className="table-th">Cliente</th>
+                  <th className="table-th">Código</th><th className="table-th">Edificio / Obra</th>
                   <th className="table-th">Tipo / Marca</th><th className="table-th">Ubicación</th>
                   <th className="table-th">Estado</th><th className="table-th">Próx. mantenimiento</th>
                   <th className="table-th text-right">Acciones</th>
@@ -90,7 +99,7 @@ export default function Ascensores() {
                   {data.map(a => (
                     <tr key={a.id} className="table-row-hover">
                       <td className="table-td"><Link to={`/ascensores/${a.id}`} className="font-mono text-brand-700 hover:underline">{a.codigo}</Link></td>
-                      <td className="table-td">{a.cliente?.nombre}</td>
+                      <td className="table-td">{nombreEdificioCliente(a.cliente)}</td>
                       <td className="table-td text-xs"><div>{a.tipo}</div><div className="text-slate-500">{a.marca} {a.modelo}</div></td>
                       <td className="table-td text-xs">{a.ubicacion || '—'}</td>
                       <td className="table-td"><span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span></td>
@@ -113,7 +122,7 @@ export default function Ascensores() {
                       <Link to={`/ascensores/${a.id}`} className="font-mono text-sm text-brand-700">{a.codigo}</Link>
                       <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>
                     </div>
-                    <div className="text-sm text-slate-700 truncate">{a.cliente?.nombre}</div>
+                    <div className="text-sm text-slate-700 truncate">{nombreEdificioCliente(a.cliente)}</div>
                     <div className="text-xs text-slate-500">{a.tipo} · {a.marca} {a.modelo}</div>
                     <div className="text-xs text-slate-500">{a.ubicacion}</div>
                     {puedeEditar && <button onClick={() => abrirEdit(a)} className="text-xs text-slate-600 mt-2">Editar</button>}
@@ -131,11 +140,15 @@ export default function Ascensores() {
         footer={<><button className="btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn-primary" onClick={guardar}>Guardar</button></>}>
         <form onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="label">Cliente *</label>
-            <select className="select" required value={form.id_cliente} onChange={e => setForm(f => ({ ...f, id_cliente: e.target.value }))}>
-              <option value="">— Seleccione —</option>
-              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-            </select>
+            <label className="label">{labelCampoCliente} *</label>
+            <ClienteAutocomplete
+              clientes={clientes}
+              value={form.id_cliente}
+              onChange={(id) => setForm(f => ({ ...f, id_cliente: id }))}
+              usarNombreEdificio
+              required
+              placeholder="Escriba para buscar por nombre de edificio / obra…"
+            />
           </div>
           <div>
             <label className="label">Código único *</label>

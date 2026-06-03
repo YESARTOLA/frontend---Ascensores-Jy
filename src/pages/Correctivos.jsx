@@ -190,7 +190,7 @@ export default function Correctivos() {
               <thead>
                 <tr>
                   <th className="table-th">Reportado</th>
-                  <th className="table-th">Cliente / Ascensor</th>
+                  <th className="table-th">Edificio-Obra / Ascensor</th>
                   <th className="table-th">Falla</th>
                   <th className="table-th">Urgencia</th>
                   <th className="table-th">Servicio</th>

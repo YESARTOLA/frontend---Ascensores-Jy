@@ -418,7 +418,7 @@ export default function Mantenimientos() {
               <div className="overflow-x-auto scroll-thin">
                 <table className="table-base">
                   <thead><tr>
-                    <th className="table-th">Cliente / Ascensor</th>
+                    <th className="table-th">Edificio-Obra / Ascensor</th>
                     <th className="table-th">Tipo</th>
                     <th className="table-th">Servicio</th>
                     <th className="table-th">Programada</th>
@@ -481,7 +481,7 @@ export default function Mantenimientos() {
             <div className="overflow-x-auto scroll-thin">
               <table className="table-base">
                 <thead><tr>
-                  <th className="table-th">Cliente / Ascensor</th><th className="table-th">Tipo</th>
+                  <th className="table-th">Edificio-Obra / Ascensor</th><th className="table-th">Tipo</th>
                   <th className="table-th">Frecuencia</th><th className="table-th">Próx. fecha</th>
                   <th className="table-th text-center">Gratis</th>
                   <th className="table-th text-center">Ejecutados</th>

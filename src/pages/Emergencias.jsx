@@ -157,7 +157,7 @@ export default function Emergencias() {
             <table className="table-base">
               <thead><tr>
                 <th className="table-th">Reportada</th>
-                <th className="table-th">Cliente / Ascensor</th>
+                <th className="table-th">Edificio-Obra / Ascensor</th>
                 <th className="table-th">Motivo</th>
                 <th className="table-th">Urgencia</th>
                 <th className="table-th">Servicio</th>
