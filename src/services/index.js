@@ -24,10 +24,19 @@ export const clientesService = {
   vista360: (id) => api.get(`/clientes/${id}/360`).then(r => r.data?.data ?? r.data),
   exportar: (params, formato = 'excel') =>
     api.get('/clientes/exportar', { params: { ...params, formato }, responseType: 'blob' }),
-  distritos: () => api.get('/clientes/distritos').then(r => r.data?.data ?? r.data),
   tiposAscensor: () => api.get('/clientes/tipos-ascensor').then(r => r.data?.data ?? r.data),
-  clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data),
-  tipos: () => api.get('/clientes/tipos').then(r => r.data?.data ?? r.data)
+  clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data)
+};
+
+// Edificios u obras de un cliente (ubicación física que agrupa ascensores).
+export const edificiosService = {
+  list: (params) => api.get('/edificios', { params }).then(r => r.data?.data ?? r.data),
+  get: (id) => api.get(`/edificios/${id}`).then(r => r.data?.data ?? r.data),
+  create: (d) => api.post('/edificios', d).then(r => r.data?.data ?? r.data),
+  update: (id, d) => api.put(`/edificios/${id}`, d).then(r => r.data?.data ?? r.data),
+  setEstado: (id, estado) => api.patch(`/edificios/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data),
+  tipos: () => api.get('/edificios/tipos').then(r => r.data?.data ?? r.data),
+  distritos: () => api.get('/edificios/distritos').then(r => r.data?.data ?? r.data)
 };
 
 export const ascensoresService = {
@@ -46,6 +55,12 @@ export const tiposAscensorService = {
   create: (d) => api.post('/tipos-ascensor', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/tipos-ascensor/${id}`, d).then(r => r.data?.data ?? r.data),
   setEstado: (id, estado) => api.patch(`/tipos-ascensor/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data)
+};
+
+export const ubigeoService = {
+  // Catálogo oficial INEI (departamento/provincia/distrito); se carga una vez
+  // y la cascada se arma en memoria.
+  list: () => api.get('/ubigeo').then(r => r.data?.data ?? r.data)
 };
 
 export const tiposServicioService = {
@@ -149,8 +164,12 @@ export const leadsService = {
   paginate: (params) => api.get('/leads', { params }).then(r => r.data),
   create: (d) => api.post('/leads', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/leads/${id}`, d).then(r => r.data?.data ?? r.data),
-  cambiarEstado: (id, estado_lead) => api.patch(`/leads/${id}/estado`, { estado_lead }).then(r => r.data?.data ?? r.data),
-  convertir: (id, payload) => api.post(`/leads/${id}/convertir`, payload).then(r => r.data?.data ?? r.data)
+  historial: (id) => api.get(`/leads/${id}/historial`).then(r => r.data?.data ?? r.data),
+  cambiarEstado: (id, estado_lead, motivo_descarte) => api.patch(`/leads/${id}/estado`, { estado_lead, motivo_descarte }).then(r => r.data?.data ?? r.data),
+  vendedores: () => api.get('/leads/vendedores').then(r => r.data?.data ?? r.data),
+  convertir: (id, payload) => api.post(`/leads/${id}/convertir`, payload).then(r => r.data?.data ?? r.data),
+  cotizaciones: (id) => api.get(`/leads/${id}/cotizaciones`).then(r => r.data?.data ?? r.data),
+  subirCotizacion: (id, id_archivo) => api.post(`/leads/${id}/cotizaciones`, { id_archivo }).then(r => r.data?.data ?? r.data)
 };
 
 export const atencionesRapidasService = {

@@ -5,7 +5,7 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO, nombreEdificioCliente } from '../utils/formatters.js';
+import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import { generarFichaAscensorPDF } from '../utils/pdfReport.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
@@ -55,7 +55,7 @@ export default function AscensorHistorial() {
   return (
     <>
       <PageHeader title={`Ascensor ${ascensor.codigo}`}
-        subtitle={`${ascensor.tipo} · ${ascensor.marca} ${ascensor.modelo} · ${nombreEdificioCliente(ascensor.cliente)}`}
+        subtitle={`${ascensor.tipo} · ${ascensor.marca} ${ascensor.modelo} · ${nombreEdificio(ascensor.edificio)} · ${nombreCliente(ascensor.edificio?.cliente)}`}
         actions={
           <>
             <button onClick={exportarPdf} disabled={exportandoPdf} className="btn-primary">
@@ -82,10 +82,10 @@ export default function AscensorHistorial() {
             <Info label="Observaciones" value={ascensor.observaciones || '—'} cols={2} />
             <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
               <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">Ubicación del cliente</div>
-                {coordsDe(ascensor.cliente) && (
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">Ubicación del edificio</div>
+                {coordsDe(ascensor.edificio) && (
                   <a
-                    href={linkGoogleMaps(coordsDe(ascensor.cliente))}
+                    href={linkGoogleMaps(coordsDe(ascensor.edificio))}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-brand-700 hover:underline font-medium"
@@ -94,16 +94,16 @@ export default function AscensorHistorial() {
                   </a>
                 )}
               </div>
-              {(ascensor.cliente?.direccion || ascensor.cliente?.distrito) && (
+              {(ascensor.edificio?.direccion || ascensor.edificio?.distrito) && (
                 <div className="text-sm text-slate-800 mb-2">
-                  {[ascensor.cliente?.direccion, ascensor.cliente?.distrito].filter(Boolean).join(' · ')}
+                  {[ascensor.edificio?.direccion, ascensor.edificio?.distrito].filter(Boolean).join(' · ')}
                 </div>
               )}
-              {coordsDe(ascensor.cliente) ? (
-                <MapaUbicacion valor={ascensor.cliente} alto="200px" mostrarLinkMaps={false} />
+              {coordsDe(ascensor.edificio) ? (
+                <MapaUbicacion valor={ascensor.edificio} alto="200px" mostrarLinkMaps={false} />
               ) : (
                 <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                  Ubicación no registrada para este cliente.
+                  Ubicación no registrada para este edificio.
                 </div>
               )}
             </div>

@@ -9,7 +9,7 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFechaHora, nombreEdificioCliente, labelNombreEdificio } from '../utils/formatters.js';
+import { badgeEstado, formatFechaHora, nombreCliente } from '../utils/formatters.js';
 import { esServicioEditable, ESTADOS_CORRECTIVO, esCorrectivoCerrado } from '../utils/estadoServicio.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
@@ -33,7 +33,6 @@ function badgeUrgencia(n) {
 
 export default function Correctivos() {
   const [clientes, setClientes] = useState([]);
-  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [filtros, setFiltros] = useState({ estado_correctivo: '', nivel_urgencia: '' });
@@ -57,16 +56,12 @@ export default function Correctivos() {
     Promise.all([clientesService.list(), ascensoresService.list(), tecnicosService.list()])
       .then(([c, a, t]) => { setClientes(c); setAscensores(a); setTecnicos(t); })
       .catch(() => {});
-    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
 
-  const labelCampoCliente = labelNombreEdificio(
-    clientes.find(c => String(c.id) === String(form.id_cliente)),
-    tiposCliente
-  );
+  const labelCampoCliente = 'Cliente';
 
   const ascensoresFiltrados = form.id_cliente
-    ? ascensores.filter(a => String(a.id_cliente) === String(form.id_cliente))
+    ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
     : ascensores;
 
   const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
@@ -207,7 +202,7 @@ export default function Correctivos() {
                   <tr key={c.id} className="table-row-hover">
                     <td className="table-td text-xs">{formatFechaHora(c.fecha_reporte)}</td>
                     <td className="table-td text-xs">
-                      <div>{nombreEdificioCliente(c.cliente)}</div>
+                      <div>{nombreCliente(c.cliente)}</div>
                       <div className="font-mono text-slate-500">{c.ascensor?.codigo}</div>
                     </td>
                     <td className="table-td text-sm">{c.falla}</td>
@@ -270,8 +265,7 @@ export default function Correctivos() {
               <ClienteAutocomplete
                 clientes={clientes}
                 value={form.id_cliente}
-                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
-                usarNombreEdificio
+                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
                 required
                 placeholder="Escriba para buscar por nombre de edificio / obra…"
               />

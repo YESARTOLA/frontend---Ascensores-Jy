@@ -7,7 +7,7 @@ import Modal from '../components/common/Modal.jsx';
 import { FileLink, useFilePreview } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, codigosAscensores, resumenAscensores, nombreEdificioCliente } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, codigosAscensores, resumenAscensores, nombreCliente } from '../utils/formatters.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 import {
   estaServicioFinalizado,
@@ -472,7 +472,7 @@ export default function ServicioDetalle() {
   return (
     <>
       <PageHeader title={`${s.codigo} · ${s.titulo}`}
-        subtitle={`${nombreEdificioCliente(s.cliente)} · ${resumenAscensores(s)} · ${s.tipo_servicio?.nombre}`}
+        subtitle={`${nombreCliente(s.cliente)} · ${resumenAscensores(s)} · ${s.tipo_servicio?.nombre}`}
         actions={
           <>
             <button type="button" onClick={volver} className="btn-secondary">← Volver</button>
@@ -519,8 +519,8 @@ export default function ServicioDetalle() {
             <Info label="Fecha programada" value={`${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`} />
             <Info label="Prioridad" value={s.prioridad} />
             <Info label="Cliente" value={esTecnico
-              ? <span className="text-slate-800">{nombreEdificioCliente(s.cliente)}</span>
-              : <Link to={`/clientes/${s.cliente?.id}`} className="text-brand-700 hover:underline">{nombreEdificioCliente(s.cliente)}</Link>} cols={2} />
+              ? <span className="text-slate-800">{nombreCliente(s.cliente)}</span>
+              : <Link to={`/clientes/${s.cliente?.id}`} className="text-brand-700 hover:underline">{nombreCliente(s.cliente)}</Link>} cols={2} />
             <Info label={`Ascensores · ${(s.ascensores || []).length}`} value={
               (s.ascensores || []).length === 0
                 ? '—'
@@ -543,7 +543,7 @@ export default function ServicioDetalle() {
             } cols={2} />}
             <Info label="Descripción" value={s.descripcion || '—'} cols={2} />
             <Info label="Observaciones" value={s.observaciones || '—'} cols={2} />
-            <UbicacionCliente cliente={s.cliente} />
+            <UbicacionCliente edificio={(s.ascensores || []).map(a => a.ascensor?.edificio).find(Boolean)} />
           </div>
         </div>
 
@@ -1266,10 +1266,10 @@ function Info({ label, value, cols = 1 }) {
  * + botón directo a Google Maps. Si el cliente fue creado antes de que el
  * mapa fuera obligatorio, muestra solo el texto disponible y la nota.
  */
-function UbicacionCliente({ cliente }) {
-  if (!cliente) return null;
-  const coords = coordsDe(cliente);
-  const direccionPartes = [cliente.direccion, cliente.distrito].filter(Boolean);
+function UbicacionCliente({ edificio }) {
+  if (!edificio) return null;
+  const coords = coordsDe(edificio);
+  const direccionPartes = [edificio.direccion, edificio.distrito].filter(Boolean);
   const direccionTexto = direccionPartes.join(' · ') || 'Sin dirección registrada';
   return (
     <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
@@ -1289,13 +1289,13 @@ function UbicacionCliente({ cliente }) {
       <div className="text-sm text-slate-800 mb-2">{direccionTexto}</div>
       {coords ? (
         <MapaUbicacion
-          valor={cliente}
+          valor={edificio}
           alto="220px"
           mostrarLinkMaps={false}
         />
       ) : (
         <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-          Ubicación no registrada en el mapa para este cliente.
+          Ubicación no registrada en el mapa para este edificio.
         </div>
       )}
     </div>

@@ -9,9 +9,23 @@ import OtModal from '../components/common/OtModal.jsx';
 import Combobox from '../components/common/Combobox.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import { badgeEstado, formatFecha, formatMonto } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
+import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
+import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
 
-const ESTADOS_COBRO = ['Pendiente de iniciar', 'En gestión', 'Parcialmente pagado', 'Vencido', 'En mora', 'Pagado', 'Cerrado', 'Incobrable', 'Sin cobro'];
+// Columnas del export (espejo de la tabla, sin OT, abonos-por-cuenta ni acciones).
+const COLUMNAS_EXPORT = [
+  { header: 'Cliente', get: c => c.cliente?.nombre },
+  { header: 'Proyecto', get: c => c.servicio?.titulo },
+  { header: 'Servicio', get: c => c.servicio?.codigo },
+  { header: 'Precio total', align: 'right', get: c => formatMonto(c.monto_total, c.moneda) },
+  { header: 'Abonos', align: 'right', get: c => formatMonto(c.total_abonado, c.moneda) },
+  { header: 'Saldo', align: 'right', get: c => formatMonto(c.saldo_pendiente, c.moneda) },
+  { header: 'Cuotas (P/T)', get: c => `${c.cuotas_pagadas}/${c.numero_cuotas}` },
+  { header: 'Próximo abono', get: c => formatFecha(c.fecha_proximo_abono) },
+  { header: 'Mora', align: 'right', get: c => (c.dias_mora > 0 ? c.dias_mora : '') },
+  { header: 'Estado', badge: true, get: c => c.estado_cobro }
+];
 
 const TZ = 'America/Lima';
 const fmtDiaLargo = new Intl.DateTimeFormat('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: TZ });
@@ -74,6 +88,7 @@ export default function Cobros() {
   const [cargandoCalendario, setCargandoCalendario] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [otAbierta, setOtAbierta] = useState(null); // { numero, archivo } | null
+  const [exportando, setExportando] = useState(false);
   const toast = useToast();
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
@@ -125,6 +140,49 @@ export default function Cobros() {
       window.open(url, '_blank');
       toast.success('WhatsApp abierto con recordatorio');
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+  };
+
+  // Descripción legible de los filtros activos, para la cabecera del export.
+  const filtrosLegibles = () => {
+    const p = [];
+    if (filtros.q) p.push(`Búsqueda: ${filtros.q}`);
+    if (filtros.estado_cobro) p.push(`Estado: ${filtros.estado_cobro}`);
+    if (filtros.id_cliente) p.push(`Cliente: ${clientes.find(c => String(c.id) === String(filtros.id_cliente))?.nombre || filtros.id_cliente}`);
+    if (filtros.id_proyecto) p.push(`Proyecto: ${proyectos.find(pr => String(pr.id) === String(filtros.id_proyecto))?.titulo || filtros.id_proyecto}`);
+    if (filtros.id_tecnico) p.push(`Técnico: ${tecnicos.find(t => String(t.id) === String(filtros.id_tecnico))?.nombre || filtros.id_tecnico}`);
+    if (filtros.id_tipo_servicio) p.push(`Tipo: ${tipos.find(t => String(t.id) === String(filtros.id_tipo_servicio))?.nombre || filtros.id_tipo_servicio}`);
+    if (filtros.vencidos === '1') p.push('Solo vencidos');
+    if (filtros.en_mora === '1') p.push('Solo en mora');
+    if (filtros.pagados === '1') p.push('Solo pagados');
+    if (filtros.pendientes === '1') p.push('Solo con saldo');
+    if (filtros.fecha_proximo_desde) p.push(`Próx. desde: ${filtros.fecha_proximo_desde}`);
+    if (filtros.fecha_proximo_hasta) p.push(`Próx. hasta: ${filtros.fecha_proximo_hasta}`);
+    return p;
+  };
+
+  // Trae el set COMPLETO de cobros según filtros activos (sin `page`) y exporta.
+  const exportar = async (formato) => {
+    try {
+      setExportando(true);
+      const resp = await cobrosService.paginate({ ...filtros });
+      const filas = Array.isArray(resp) ? resp : (resp?.data || []);
+      if (!filas.length) { toast.error('No hay datos para exportar'); return; }
+      const opts = {
+        titulo: 'Gestión de cobros',
+        subtitulo: 'Listado filtrado',
+        columnas: COLUMNAS_EXPORT,
+        filas,
+        filtros: filtrosLegibles(),
+        archivo: `cobros_${hoyISO()}.${formato === 'pdf' ? 'pdf' : 'xls'}`
+      };
+      if (formato === 'pdf') await exportarPDFTabla(opts);
+      else exportarExcelTabla(opts);
+      toast.success(formato === 'pdf' ? 'PDF descargado' : 'Excel descargado');
+    } catch {
+      toast.error('Error al exportar');
+    } finally {
+      setExportando(false);
+    }
   };
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
@@ -192,6 +250,12 @@ export default function Cobros() {
               onClick={() => setVistaModo('calendario')}
               className={vistaModo === 'calendario' ? 'btn-primary' : 'btn-secondary'}
             >Calendario</button>
+            {vistaModo === 'tabla' && (
+              <>
+                <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || data.length === 0}>Exportar Excel</button>
+                <button onClick={() => exportar('pdf')} className="btn-primary" disabled={exportando || data.length === 0}>Exportar PDF</button>
+              </>
+            )}
             {vistaModo === 'calendario' && (
               <>
                 <button onClick={() => setCursor(new Date())} className="btn-secondary">Hoy</button>

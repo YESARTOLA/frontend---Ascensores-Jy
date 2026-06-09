@@ -528,7 +528,9 @@ export async function generarReportePorClientePDF(opciones) {
     y += 5.5;
 
     const docCli = [grupo.cliente?.tipo_documento, grupo.cliente?.numero_documento].filter(Boolean).join(' ');
-    const subPartes = [docCli, grupo.cliente?.nombre_edificio, grupo.cliente?.distrito, grupo.cliente?.telefono].filter(Boolean);
+    // La ubicación (edificio/distrito) vive a nivel de edificio; el detalle por
+    // edificio se ve en cada fila de programación.
+    const subPartes = [docCli, grupo.cliente?.telefono].filter(Boolean);
     if (subPartes.length > 0) {
       setText(doc, BRAND.carbonMid);
       doc.setFont('helvetica', 'normal');

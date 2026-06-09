@@ -23,15 +23,11 @@ export default function ClienteAutocomplete({
   allowEmpty = false,
   emptyLabel = '— Todos —',
   required = false,
-  usarNombreEdificio = false,
   disabled = false,
   id
 }) {
-  // Texto principal de cada cliente. En los módulos operativos se identifica por
-  // nombre de edificio / obra (cae a razón social en clientes legacy sin él);
-  // en el resto se mantiene la razón social.
-  const labelDe = (c) =>
-    (usarNombreEdificio ? (c?.nombre_edificio || c?.nombre) : c?.nombre) || '';
+  // El cliente se identifica por su razón social / nombre.
+  const labelDe = (c) => c?.nombre || '';
   const [query, setQuery] = useState('');
   const [abierto, setAbierto] = useState(false);
   const [focusIdx, setFocusIdx] = useState(0);
@@ -65,7 +61,7 @@ export default function ClienteAutocomplete({
     const fuente = !q
       ? clientes
       : clientes.filter(c => {
-          const campos = [c.nombre, c.numero_documento, c.telefono, c.nombre_edificio].filter(Boolean);
+          const campos = [c.nombre, c.numero_documento, c.telefono].filter(Boolean);
           return campos.some(s => String(s).toLowerCase().includes(q));
         });
     const limitado = fuente.slice(0, 50);
@@ -156,12 +152,7 @@ export default function ClienteAutocomplete({
                 <>
                   <div className="font-medium">{labelDe(op)}</div>
                   {(() => {
-                    // En modo edificio/obra, la línea secundaria muestra la razón
-                    // social (si difiere) + documento; en modo normal, doc + teléfono.
-                    const bits = usarNombreEdificio
-                      ? [op.nombre && op.nombre !== labelDe(op) ? op.nombre : null, op.numero_documento]
-                      : [op.numero_documento, op.telefono];
-                    const txt = bits.filter(Boolean).join(' · ');
+                    const txt = [op.numero_documento, op.telefono].filter(Boolean).join(' · ');
                     return txt ? <div className="text-xs text-carbon-500">{txt}</div> : null;
                   })()}
                 </>

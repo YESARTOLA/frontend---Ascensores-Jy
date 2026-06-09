@@ -30,6 +30,16 @@ export const ESTADOS_FACTURACION_COMPLETA = [
   ESTADO_FACTURACION_ENVIADA
 ];
 
+// Dominio completo de la facturación a nivel servicio (columna estado_facturacion),
+// usado para poblar filtros.
+export const ESTADOS_FACTURACION = [
+  ESTADO_FACTURACION_SIN,
+  ESTADO_FACTURACION_PENDIENTE,
+  ESTADO_FACTURACION_PARCIAL,
+  ESTADO_FACTURACION_FACTURADO,
+  ESTADO_FACTURACION_ENVIADA
+];
+
 export function esFacturaActiva(factura) {
   if (!factura) return false;
   if (factura.estado !== undefined && factura.estado !== 1) return false;

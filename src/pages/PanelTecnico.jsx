@@ -135,7 +135,9 @@ function Bloque({ titulo, items }) {
 }
 
 function Tarjeta({ s, resaltar }) {
-  const coords = coordsDe(s.cliente);
+  // La ubicación física la da el edificio de los ascensores del servicio.
+  const edificioServicio = (s.ascensores || []).map(a => a.ascensor?.edificio).find(Boolean);
+  const coords = coordsDe(edificioServicio);
   return (
     <Link to={`/servicios/${s.id}`} className={`relative rounded-lg ring-1 hover:shadow-soft transition p-4 bg-white ${resaltar ? 'ring-amber-300 hover:ring-amber-400' : 'ring-slate-100 hover:ring-brand-200'}`}>
       <div className="flex items-start justify-between gap-2">
@@ -145,10 +147,10 @@ function Tarjeta({ s, resaltar }) {
         </div>
         <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
       </div>
-      <div className="mt-2 text-xs text-slate-500 truncate">{s.cliente?.nombre}</div>
-      {(s.cliente?.direccion || s.cliente?.distrito) && (
+      <div className="mt-2 text-xs text-slate-500 truncate">{s.cliente?.nombre}{edificioServicio?.nombre ? ` · ${edificioServicio.nombre}` : ''}</div>
+      {(edificioServicio?.direccion || edificioServicio?.distrito) && (
         <div className="text-[11px] text-slate-500 truncate">
-          {[s.cliente?.direccion, s.cliente?.distrito].filter(Boolean).join(' · ')}
+          {[edificioServicio?.direccion, edificioServicio?.distrito].filter(Boolean).join(' · ')}
         </div>
       )}
       <div className="text-xs text-slate-500 truncate font-mono" title={(s.ascensores || []).map(a => `${a.ascensor?.codigo} · ${a.ascensor?.ubicacion || ''}`).join('\n')}>{resumenAscensores(s)}</div>

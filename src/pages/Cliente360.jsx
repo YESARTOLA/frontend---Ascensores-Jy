@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { clientesService } from '../services';
+import { clientesService, edificiosService } from '../services';
 import Loader from '../components/common/Loader.jsx';
 import PageHeader from '../components/common/PageHeader.jsx';
+import Modal from '../components/common/Modal.jsx';
 import { FileLink, useFilePreview } from '../components/common/FilePreview.jsx';
+import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensores, resumenAscensores, formatTelefono } from '../utils/formatters.js';
+import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensores, resumenAscensores, formatTelefono, nombreEdificio } from '../utils/formatters.js';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
 import { coordsDe } from '../utils/mapa.js';
+import EdificioForm, { edificioFormInicial, edificioToForm } from '../components/edificios/EdificioForm.jsx';
 
 const ESTADOS_PENDIENTE = ['Borrador', 'Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida'];
 const ESTADOS_CURSO = ['En camino', 'En curso'];
@@ -18,14 +21,24 @@ export default function Cliente360() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [clasificaciones, setClasificaciones] = useState([]);
-  const [tiposCliente, setTiposCliente] = useState([]);
-  const { puedeVerPrecio } = useAuth();
+  const [tiposEdificio, setTiposEdificio] = useState([]);
+  const [distritos, setDistritos] = useState([]);
+  const { puedeVerPrecio, esSuperAdmin, esAdmin, esCoordinador } = useAuth();
+  const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
   const { open: abrirPreview } = useFilePreview();
+  const toast = useToast();
+  // Modal de edificio (alta/edición).
+  const [openEd, setOpenEd] = useState(false);
+  const [edForm, setEdForm] = useState(edificioFormInicial);
+  const [edId, setEdId] = useState(null);
+  const [savingEd, setSavingEd] = useState(false);
 
+  const cargar = () => clientesService.vista360(id).then(setData);
   useEffect(() => {
-    clientesService.vista360(id).then(setData).finally(() => setLoading(false));
+    cargar().finally(() => setLoading(false));
     clientesService.clasificaciones().then(setClasificaciones).catch(() => setClasificaciones([]));
-    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
+    edificiosService.tipos().then(setTiposEdificio).catch(() => setTiposEdificio([]));
+    edificiosService.distritos().then(setDistritos).catch(() => setDistritos([]));
   }, [id]);
 
   const clasificacionActual = useMemo(
@@ -33,12 +46,21 @@ export default function Cliente360() {
     [clasificaciones, data?.clasificacion]
   );
 
-  // Tipo del cliente (Edificio/Obra): define el badge y las etiquetas de
-  // nombre/dirección, tomadas del catálogo para no hardcodearlas.
-  const tipoActual = useMemo(
-    () => (data?.tipo ? tiposCliente.find(t => t.codigo === data.tipo) : null),
-    [tiposCliente, data?.tipo]
-  );
+  const abrirNuevoEdificio = () => { setEdForm(edificioFormInicial); setEdId(null); setOpenEd(true); };
+  const abrirEditarEdificio = (ed) => { setEdForm(edificioToForm(ed)); setEdId(ed.id); setOpenEd(true); };
+  const guardarEdificio = async (payload) => {
+    if (savingEd) return;
+    setSavingEd(true);
+    try {
+      if (edId) await edificiosService.update(edId, payload);
+      else await edificiosService.create({ ...payload, id_cliente: Number(id) });
+      toast.success('Edificio guardado');
+      setOpenEd(false);
+      await cargar();
+      edificiosService.distritos().then(setDistritos).catch(() => {});
+    } catch (err) { toast.error(err.response?.data?.error || 'Error al guardar'); }
+    finally { setSavingEd(false); }
+  };
 
   const grupos = useMemo(() => {
     if (!data?.servicios) return { pendientes: [], curso: [], finalizados: [] };
@@ -57,12 +79,7 @@ export default function Cliente360() {
       <PageHeader
         title={
           <span className="inline-flex items-center gap-2 flex-wrap">
-            <span>{data.nombre_edificio || data.nombre}</span>
-            {tipoActual && (
-              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${tipoActual.color}`}>
-                {tipoActual.etiqueta}
-              </span>
-            )}
+            <span>{data.nombre}</span>
             {clasificacionActual && (
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${clasificacionActual.color}`}>
                 {clasificacionActual.etiqueta}
@@ -70,20 +87,17 @@ export default function Cliente360() {
             )}
           </span>
         }
-        subtitle={[data.nombre_edificio ? data.nombre : null, `${data.tipo_documento} ${data.numero_documento || ''}`, data.distrito].filter(Boolean).join(' · ')}
+        subtitle={`${data.tipo_documento} ${data.numero_documento || ''}`}
         actions={<Link to="/clientes" className="btn-secondary">← Clientes</Link>} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="card lg:col-span-1">
           <div className="card-header"><h3 className="card-title">Datos generales</h3></div>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
-            {data.nombre_edificio && <Info label={tipoActual?.etiqueta || 'Edificio'} value={data.nombre_edificio} cols={2} />}
             <Info label="Razón social" value={data.nombre || '—'} cols={2} />
             <Info label="Teléfono" value={formatTelefono(data.telefono) || '—'} />
             <Info label="WhatsApp" value={formatTelefono(data.whatsapp) || '—'} />
-            <Info label="Correo" value={data.correo || '—'} />
-            <Info label="Distrito" value={data.distrito || '—'} />
-            <Info label={tipoActual?.direccion_label || 'Dirección del edificio'} value={data.direccion || '—'} cols={2} />
+            <Info label="Correo" value={data.correo || '—'} cols={2} />
             <Info label="Inicio contrato" value={formatFecha(data.contrato_inicio)} />
             <Info label="Fin contrato" value={formatFecha(data.contrato_fin)} />
             <Info
@@ -96,16 +110,6 @@ export default function Cliente360() {
                 : '—'}
             />
             <Info label="Registro" value={formatFechaHora(data.date_time_registration)} cols={2} />
-            <div className="col-span-2">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Ubicación</div>
-              {coordsDe(data) ? (
-                <MapaUbicacion valor={data} alto="220px" />
-              ) : (
-                <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                  Ubicación no registrada. Edita el cliente para fijarla en el mapa.
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
@@ -159,21 +163,48 @@ export default function Cliente360() {
           </div>
         )}
 
-        <div className="card lg:col-span-2">
-          <div className="card-header"><h3 className="card-title">Ascensores ({data.ascensores?.length || 0})</h3></div>
-          <div className="card-body grid sm:grid-cols-2 gap-3">
-            {data.ascensores?.length === 0 && <p className="text-sm text-slate-500">Sin ascensores registrados</p>}
-            {data.ascensores?.map(a => (
-              <Link key={a.id} to={`/ascensores/${a.id}`} state={{ from: `/clientes/${id}`, fromLabel: data.nombre }} className="block rounded-lg ring-1 ring-slate-100 hover:ring-brand-200 p-3 transition">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="font-mono text-xs text-slate-500">{a.codigo}</div>
-                    <div className="font-medium text-slate-800 text-sm mt-0.5">{a.tipo} · {a.marca} {a.modelo}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{a.ubicacion}</div>
+        <div className="card lg:col-span-3">
+          <div className="card-header flex items-center justify-between">
+            <h3 className="card-title">Edificios / Obras ({data.edificios?.length || 0})</h3>
+            {puedeEditar && <button onClick={abrirNuevoEdificio} className="btn-primary btn-sm">+ Nuevo edificio</button>}
+          </div>
+          <div className="card-body space-y-3">
+            {(!data.edificios || data.edificios.length === 0) && (
+              <p className="text-sm text-slate-500">Sin edificios registrados. Crea el primero para poder agregarle ascensores.</p>
+            )}
+            {data.edificios?.map(ed => (
+              <div key={ed.id} className="rounded-lg ring-1 ring-slate-200 p-3">
+                <div className="flex items-start justify-between gap-2 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-slate-800">{ed.nombre}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-slate-200">{ed.tipo}</span>
+                    </div>
+                    <div className="text-xs text-slate-500">{[ed.direccion, ed.distrito].filter(Boolean).join(' · ') || '—'}</div>
                   </div>
-                  <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>
+                  <div className="flex items-center gap-3 text-xs shrink-0">
+                    {coordsDe(ed) && (
+                      <a href={`https://www.google.com/maps/search/?api=1&query=${ed.latitud},${ed.longitud}`} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline">📍 Mapa</a>
+                    )}
+                    {puedeEditar && <button onClick={() => abrirEditarEdificio(ed)} className="text-slate-600 hover:underline">Editar</button>}
+                  </div>
                 </div>
-              </Link>
+                <div className="mt-2 grid sm:grid-cols-2 gap-2">
+                  {(ed.ascensores || []).length === 0 && <p className="text-xs text-slate-400">Sin ascensores en este edificio</p>}
+                  {(ed.ascensores || []).map(a => (
+                    <Link key={a.id} to={`/ascensores/${a.id}`} state={{ from: `/clientes/${id}`, fromLabel: data.nombre }} className="block rounded-md ring-1 ring-slate-100 hover:ring-brand-200 p-2 transition">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-mono text-[11px] text-slate-500">{a.codigo}</div>
+                          <div className="text-sm text-slate-800">{a.tipo} · {a.marca} {a.modelo}</div>
+                          {a.ubicacion && <div className="text-xs text-slate-500">{a.ubicacion}</div>}
+                        </div>
+                        <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -369,6 +400,15 @@ export default function Cliente360() {
           </ul>
         </div>
       </div>
+
+      <Modal open={openEd} onClose={() => setOpenEd(false)} title={edId ? 'Editar edificio / obra' : 'Nuevo edificio / obra'} size="lg"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setOpenEd(false)} disabled={savingEd}>Cancelar</button>
+          <button className="btn-primary" type="submit" form="edificio-form" disabled={savingEd}>{savingEd ? 'Guardando…' : 'Guardar'}</button>
+        </>}>
+        <EdificioForm formId="edificio-form" value={edForm} onChange={setEdForm} onSubmit={guardarEdificio}
+          tipos={tiposEdificio} distritos={distritos} />
+      </Modal>
     </>
   );
 }

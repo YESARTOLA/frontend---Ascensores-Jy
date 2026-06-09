@@ -7,14 +7,28 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
-import { badgeEstado, formatFecha, formatMonto } from '../utils/formatters.js';
+import { useToast } from '../components/common/Toast.jsx';
+import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_FACTURA, ESTADO_FACTURA_SIN } from '../utils/estadoFactura.js';
+import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 
 const FILTROS_INICIALES = {
   q: '', id_cliente: '', estado_factura: '', cobertura: '', desde: '', hasta: '',
   // Orden por defecto: correlativo (id) ascendente → el 1 arriba.
   sort: 'correlativo', dir: 'asc'
 };
+
+// Columnas del export (espejo de la tabla, sin la columna de archivo).
+const COLUMNAS_EXPORT = [
+  { header: '#', get: (_f, i) => i + 1 },
+  { header: 'Número', get: f => f.numero_factura },
+  { header: 'Cliente', get: f => f.cliente?.nombre },
+  { header: 'Servicio', get: f => f.servicio?.codigo },
+  { header: 'Emisión', get: f => formatFecha(f.fecha_emision) },
+  { header: 'Monto', align: 'right', get: f => formatMonto(f.monto) },
+  { header: 'Cobertura', get: f => (f.id_cuota ? `Cuota N° ${f.cuota?.numero_cuota ?? '?'}` : 'General') },
+  { header: 'Estado', badge: true, get: f => f.estado_factura }
+];
 
 // 'Sin factura' es el estado de facturación a nivel servicio; una fila de factura
 // nunca lo tiene, así que se excluye del filtro para no ofrecer una opción vacía.
@@ -42,6 +56,8 @@ function ThSort({ label, col, sort, dir, onSort, align = 'left' }) {
 export default function Facturas() {
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
   const [clientes, setClientes] = useState([]);
+  const [exportando, setExportando] = useState(false);
+  const toast = useToast();
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize } =
     usePaginatedList(facturasService.paginate, filtros, { initialPageSize: 25 });
@@ -49,6 +65,43 @@ export default function Facturas() {
   useEffect(() => { clientesService.list().then(setClientes).catch(() => setClientes([])); }, []);
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
+
+  // Descripción legible de los filtros activos, para la cabecera del export.
+  const filtrosLegibles = () => {
+    const p = [];
+    if (filtros.q) p.push(`Búsqueda: ${filtros.q}`);
+    if (filtros.id_cliente) p.push(`Cliente: ${clientes.find(c => String(c.id) === String(filtros.id_cliente))?.nombre || filtros.id_cliente}`);
+    if (filtros.estado_factura) p.push(`Estado: ${filtros.estado_factura}`);
+    if (filtros.cobertura) p.push(`Cobertura: ${filtros.cobertura === 'cuota' ? 'Por cuota' : 'General'}`);
+    if (filtros.desde) p.push(`Emisión desde: ${filtros.desde}`);
+    if (filtros.hasta) p.push(`Emisión hasta: ${filtros.hasta}`);
+    return p;
+  };
+
+  // Trae el set COMPLETO según filtros activos (sin `page`) y exporta.
+  const exportar = async (formato) => {
+    try {
+      setExportando(true);
+      const resp = await facturasService.paginate({ ...filtros });
+      const filas = Array.isArray(resp) ? resp : (resp?.data || []);
+      if (!filas.length) { toast.error('No hay datos para exportar'); return; }
+      const opts = {
+        titulo: 'Facturas',
+        subtitulo: 'Listado filtrado',
+        columnas: COLUMNAS_EXPORT,
+        filas,
+        filtros: filtrosLegibles(),
+        archivo: `facturas_${hoyISO()}.${formato === 'pdf' ? 'pdf' : 'xls'}`
+      };
+      if (formato === 'pdf') await exportarPDFTabla(opts);
+      else exportarExcelTabla(opts);
+      toast.success(formato === 'pdf' ? 'PDF descargado' : 'Excel descargado');
+    } catch {
+      toast.error('Error al exportar');
+    } finally {
+      setExportando(false);
+    }
+  };
 
   // Click en encabezado: si ya ordena por esa columna, alterna dirección;
   // si no, ordena por ella en ascendente.
@@ -62,7 +115,14 @@ export default function Facturas() {
 
   return (
     <>
-      <PageHeader title="Facturas" subtitle={`${total.toLocaleString('es-PE')} factura(s)`} />
+      <PageHeader title="Facturas" subtitle={`${total.toLocaleString('es-PE')} factura(s)`}
+        actions={
+          <>
+            <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || total === 0}>Exportar Excel</button>
+            <button onClick={() => exportar('pdf')} className="btn-primary" disabled={exportando || total === 0}>Exportar PDF</button>
+          </>
+        }
+      />
 
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">

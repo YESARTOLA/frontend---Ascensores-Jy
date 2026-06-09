@@ -484,7 +484,10 @@ function TablaOperativos({ data, puedeVerPrecio }) {
         <th className="table-th">Código</th><th className="table-th">Cliente</th>
         <th className="table-th">Ascensor</th><th className="table-th">Tipo</th>
         <th className="table-th">Fecha</th><th className="table-th">Técnicos</th>
-        <th className="table-th">Estado</th>{puedeVerPrecio && <th className="table-th text-right">Precio</th>}
+        <th className="table-th">Estado</th>
+        {puedeVerPrecio && <th className="table-th text-right">Precio</th>}
+        {puedeVerPrecio && <th className="table-th text-right">Cobrado</th>}
+        {puedeVerPrecio && <th className="table-th text-right">Falta pagar</th>}
       </tr></thead>
       <tbody className="divide-y divide-slate-100">
         {data.map((s, idx) => (
@@ -497,6 +500,8 @@ function TablaOperativos({ data, puedeVerPrecio }) {
             <td className="table-td text-xs">{s.asignaciones?.map(a => a.tecnico?.nombre).join(', ') || '—'}</td>
             <td className="table-td"><span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span></td>
             {puedeVerPrecio && <td className="table-td text-right font-mono">{formatMonto(s.precio_interno, s.moneda)}</td>}
+            {puedeVerPrecio && <td className="table-td text-right font-mono">{s.cobro ? formatMonto(s.cobro.total_abonado, s.cobro.moneda || s.moneda) : '—'}</td>}
+            {puedeVerPrecio && <td className="table-td text-right font-mono">{s.cobro ? formatMonto(s.cobro.saldo_pendiente, s.cobro.moneda || s.moneda) : '—'}</td>}
           </tr>
         ))}
       </tbody>
@@ -995,7 +1000,8 @@ function BloqueLeads({ data }) {
       <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-slate-100">
         <Card label="Total" value={data.total} />
         <Card label="Convertidos" value={data.convertidos} />
-        {Object.entries(data.porCanal || {}).slice(0, 2).map(([k, v]) => <Card key={k} label={k} value={v} />)}
+        <Card label="Descartados" value={data.descartados} />
+        {Object.entries(data.porCanal || {}).slice(0, 1).map(([k, v]) => <Card key={k} label={k} value={v} />)}
       </div>
       <table className="table-base">
         <thead><tr><th className="table-th">Contacto</th><th className="table-th">Canal</th><th className="table-th">Estado</th></tr></thead>
@@ -1288,6 +1294,9 @@ function buildAnalitica(codigo, data, puedeVerPrecio) {
     const finalizados = data.filter(s => /finaliz|cerrad|cobrad|facturad/i.test(s.estado_servicio || '')).length;
     const cancelados = data.filter(s => /cancel/i.test(s.estado_servicio || '')).length;
     const monto = puedeVerPrecio ? data.reduce((s, x) => s + (Number(x.precio_interno) || 0), 0) : null;
+    // Totales financieros desde el cobro (misma fuente que Gestión de cobros).
+    const cobrado = puedeVerPrecio ? data.reduce((s, x) => s + (Number(x.cobro?.total_abonado) || 0), 0) : null;
+    const porCobrar = puedeVerPrecio ? data.reduce((s, x) => s + (Number(x.cobro?.saldo_pendiente) || 0), 0) : null;
     return {
       pie: { title: 'Servicios por estado', data: porEstado },
       bar: { title: 'Top 5 clientes (cantidad)', data: porCliente },
@@ -1297,7 +1306,9 @@ function buildAnalitica(codigo, data, puedeVerPrecio) {
         porCliente[0] ? `Cliente con más servicios: ${porCliente[0].label} (${porCliente[0].value})` : null,
         `Finalizados: ${finalizados} (${pct(finalizados, total)}%)`,
         cancelados > 0 ? `Cancelados: ${cancelados} (${pct(cancelados, total)}%)` : null,
-        monto !== null ? `Monto acumulado: ${formatMonto(monto)}` : null
+        monto !== null ? `Monto acumulado: ${formatMonto(monto)}` : null,
+        cobrado !== null ? `Total cobrado: ${formatMonto(cobrado)}` : null,
+        porCobrar !== null ? `Total por cobrar: ${formatMonto(porCobrar)}` : null
       ].filter(Boolean)
     };
   }
@@ -1517,17 +1528,20 @@ function buildAnalitica(codigo, data, puedeVerPrecio) {
   if (codigo === 'leads') {
     const total = data.total || data.leads?.length || 0;
     const convertidos = data.convertidos || 0;
+    const descartados = data.descartados || 0;
     const porCanal = Object.entries(data.porCanal || {}).map(([label, value]) => ({ label, value: Number(value) || 0 }));
     const porEstado = groupCount(data.leads || [], l => l.estado_lead || 'Sin estado');
     const topCanal = [...porCanal].sort((a, b) => b.value - a.value)[0];
+    const enSeguimiento = total - convertidos - descartados;
     return {
       pie: { title: 'Leads por estado', data: porEstado },
       bar: { title: 'Leads por canal', data: topN(porCanal, 6) },
       analisis: [
         `Total leads: ${total}`,
         `Convertidos: ${convertidos} (${pct(convertidos, total)}%)`,
+        descartados > 0 ? `Descartados: ${descartados} (${pct(descartados, total)}%)` : null,
         topCanal ? `Canal principal: ${topCanal.label} (${topCanal.value})` : null,
-        total - convertidos > 0 ? `En seguimiento: ${total - convertidos}` : null
+        enSeguimiento > 0 ? `En seguimiento: ${enSeguimiento}` : null
       ].filter(Boolean)
     };
   }

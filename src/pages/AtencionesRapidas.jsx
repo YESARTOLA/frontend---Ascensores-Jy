@@ -8,7 +8,7 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFechaHora, hoyISO, sanearTelefono, formatTelefono, labelNombreEdificio } from '../utils/formatters.js';
+import { badgeEstado, formatFechaHora, hoyISO, sanearTelefono, formatTelefono } from '../utils/formatters.js';
 import { esAtencionRapidaConvertida } from '../utils/estadoServicio.js';
 
 const FORM_ID = 'form-atencion-rapida';
@@ -17,7 +17,6 @@ const inicialConv = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', tip
 
 export default function AtencionesRapidas() {
   const [clientes, setClientes] = useState([]);
-  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [open, setOpen] = useState(false);
@@ -38,13 +37,9 @@ export default function AtencionesRapidas() {
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list()])
       .then(([c, a, t]) => { setClientes(c); setAscensores(a); setTipos(t); });
-    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
-  const ascensoresF = convForm.id_cliente ? ascensores.filter(a => String(a.id_cliente) === String(convForm.id_cliente)) : ascensores;
-  const labelCampoCliente = labelNombreEdificio(
-    clientes.find(c => String(c.id) === String(convForm.id_cliente)),
-    tiposCliente
-  );
+  const ascensoresF = convForm.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(convForm.id_cliente)) : ascensores;
+  const labelCampoCliente = 'Cliente';
 
   const abrirNuevo = () => {
     setEditando(null);
@@ -184,8 +179,7 @@ export default function AtencionesRapidas() {
             <ClienteAutocomplete
               clientes={clientes}
               value={convForm.id_cliente}
-              onChange={(id) => setConvForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
-              usarNombreEdificio
+              onChange={(id) => setConvForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
               required
               placeholder="Escriba para buscar por nombre de edificio / obra…"
             />

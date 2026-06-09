@@ -199,7 +199,7 @@ export function badgeEstado(estado) {
   if (e.includes('pendien') || e.includes('checklist') || e === 'cotizado') return 'badge-amber';
   if (
     e.includes('mora') || e.includes('vencid') || e.includes('cancel') ||
-    e.includes('fuera') || e === 'rechazado'
+    e.includes('fuera') || e.includes('descart') || e === 'rechazado'
   ) return 'badge-red';
   if (e.includes('observ')) return 'badge-violet';
   return 'badge-gray';
@@ -243,24 +243,31 @@ export function formatTelefono(value) {
 }
 
 /**
- * Nombre del edificio / obra del cliente, para mostrar en listas y selectores
- * de los módulos operativos. Cae a la razón social solo para clientes legacy
- * que no tuvieran cargado el nombre de edificio.
+ * Nombre del edificio u obra. La ubicación física vive en la entidad Edificio:
+ * `nombreEdificio(edificio)` es la fuente para listas y selectores. Cae a vacío
+ * si no hay edificio.
  */
-export function nombreEdificioCliente(cliente) {
-  if (!cliente) return '';
-  return cliente.nombre_edificio || cliente.nombre || '';
+export function nombreEdificio(edificio) {
+  return edificio?.nombre || '';
 }
 
 /**
- * Etiqueta del campo selector de cliente, adaptada al tipo del cliente elegido
- * (Edificio / Obra). `tipos` es el catálogo TIPOS_CLIENTE del backend
+ * Nombre visible de un cliente (razón social / entidad comercial). El cliente
+ * ya no lleva nombre de edificio: para mostrar la ubicación, usa el edificio.
+ */
+export function nombreCliente(cliente) {
+  return cliente?.nombre || '';
+}
+
+/**
+ * Etiqueta del campo nombre, adaptada al tipo del edificio elegido
+ * (Edificio / Obra). `tipos` es el catálogo TIPOS_EDIFICIO del backend
  * (`{ codigo, etiqueta, nombre_label }`), única fuente de verdad de los textos.
- * Sin cliente elegido, combina las etiquetas del catálogo
+ * Sin edificio elegido, combina las etiquetas del catálogo
  * (ej. "Nombre del Edificio / Obra").
  */
-export function labelNombreEdificio(cliente, tipos = []) {
-  const t = cliente && tipos.find(x => x.codigo === cliente.tipo);
+export function labelNombreEdificio(edificio, tipos = []) {
+  const t = edificio && tipos.find(x => x.codigo === edificio.tipo);
   if (t?.nombre_label) return t.nombre_label;
   if (tipos.length) return `Nombre del ${tipos.map(x => x.etiqueta).join(' / ')}`;
   return 'Nombre del Edificio / Obra';

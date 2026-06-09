@@ -14,7 +14,7 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import CuotasEditor, { planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
 
 const itemVacio = () => ({
@@ -70,9 +70,6 @@ export default function CotizacionDetalle() {
   const [archivoRespaldo, setArchivoRespaldo] = useState(null);
   const [subiendoRespaldo, setSubiendoRespaldo] = useState(false);
 
-  // Edición de cabecera
-  const [openCabecera, setOpenCabecera] = useState(false);
-  const [cabeceraForm, setCabeceraForm] = useState(null);
   const [clientes, setClientes] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tipos, setTipos] = useState([]);
@@ -394,7 +391,7 @@ export default function CotizacionDetalle() {
         <div className="card p-4 lg:col-span-2 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-bold text-carbon-900">{cot.titulo}</h2>
+              <h2 className="text-lg font-bold text-carbon-900">{cot.ascensores?.map(a => nombreEdificio(a.ascensor?.edificio)).find(Boolean) || nombreCliente(cot.cliente) || cot.codigo}</h2>
               {cot.descripcion && <p className="text-sm text-carbon-600 mt-1">{cot.descripcion}</p>}
             </div>
             <div className="flex flex-col items-end gap-1">
@@ -732,7 +729,7 @@ export default function CotizacionDetalle() {
                     <label className="label">Motivo *</label>
                     <textarea className="textarea" rows="2" required
                       value={aprobarForm.motivo}
-                      placeholder={cot.descripcion || cot.titulo || 'Describe el motivo de la emergencia'}
+                      placeholder={cot.descripcion || 'Describe el motivo de la emergencia'}
                       onChange={e => setAprobarForm(f => ({ ...f, motivo: e.target.value }))} />
                   </div>
                   <div>
@@ -755,7 +752,7 @@ export default function CotizacionDetalle() {
                     <label className="label">Descripción de la falla *</label>
                     <textarea className="textarea" rows="2" required
                       value={aprobarForm.falla}
-                      placeholder={cot.descripcion || cot.titulo || 'Describe la falla a corregir'}
+                      placeholder={cot.descripcion || 'Describe la falla a corregir'}
                       onChange={e => setAprobarForm(f => ({ ...f, falla: e.target.value }))} />
                   </div>
                   <div>

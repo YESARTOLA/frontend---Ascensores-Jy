@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   cotizacionesService,
   clientesService,
+  edificiosService,
   ascensoresService,
   tiposServicioService,
   configuracionService,
@@ -33,7 +34,8 @@ const itemVacio = () => ({
 const ascensorVacio = (modo = 'existente') => ({
   modo, // 'existente' | 'nuevo'
   id_ascensor: '',
-  ascensor_nuevo: { ubicacion: '', pisos: '', capacidad: '', marca: '', modelo: '', descripcion: '' }
+  // Un ascensor nuevo se instala en un edificio del cliente (id_edificio).
+  ascensor_nuevo: { id_edificio: '', ubicacion: '', pisos: '', capacidad: '', marca: '', modelo: '', descripcion: '' }
 });
 
 const formInicial = (preset = {}) => ({
@@ -41,7 +43,6 @@ const formInicial = (preset = {}) => ({
   id_lead: preset.id_lead || null,
   ascensores: [ascensorVacio()],
   id_tipo_servicio: preset.id_tipo_servicio || '',
-  titulo: preset.titulo || '',
   descripcion: '',
   fecha_validez: '',
   moneda: 'PEN',
@@ -65,6 +66,7 @@ function calcImporte(it) {
 export default function Cotizaciones() {
   const [clientes, setClientes] = useState([]);
   const [ascensores, setAscensores] = useState([]);
+  const [edificiosCliente, setEdificiosCliente] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [igvTasa, setIgvTasa] = useState(0.18);
   const [validezDefaultDias, setValidezDefaultDias] = useState(15);
@@ -124,8 +126,16 @@ export default function Cotizaciones() {
   };
 
   const ascensoresDelCliente = form.id_cliente
-    ? ascensores.filter(a => String(a.id_cliente) === String(form.id_cliente))
+    ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
     : [];
+
+  // Edificios del cliente elegido (para colocar ascensores nuevos).
+  useEffect(() => {
+    if (!form.id_cliente) { setEdificiosCliente([]); return; }
+    let vivo = true;
+    edificiosService.list({ id_cliente: form.id_cliente }).then(d => { if (vivo) setEdificiosCliente(d || []); }).catch(() => { if (vivo) setEdificiosCliente([]); });
+    return () => { vivo = false; };
+  }, [form.id_cliente]);
 
   const cambiarItem = (idx, key, val) => {
     setForm(f => ({
@@ -190,13 +200,15 @@ export default function Cotizaciones() {
     if (saving) return;
     if (!form.id_cliente) return toast.error('Selecciona un cliente');
     if (!form.id_tipo_servicio) return toast.error('Selecciona un tipo de servicio');
-    if (!form.titulo.trim()) return toast.error('Título obligatorio');
     if (!form.fecha_validez) return toast.error('Fecha de validez obligatoria');
     if (!form.ascensores.length) return toast.error('Agrega al menos un ascensor');
     for (let i = 0; i < form.ascensores.length; i++) {
       const a = form.ascensores[i];
       if (a.modo === 'existente' && !a.id_ascensor) {
         return toast.error(`Ascensor #${i + 1}: selecciona uno o cámbialo a "Nuevo (instalación)"`);
+      }
+      if (a.modo === 'nuevo' && !a.ascensor_nuevo.id_edificio) {
+        return toast.error(`Ascensor #${i + 1}: elige el edificio donde se instala`);
       }
       if (a.modo === 'nuevo' && !a.ascensor_nuevo.ubicacion && !a.ascensor_nuevo.descripcion) {
         return toast.error(`Ascensor #${i + 1}: describe el ascensor nuevo (ubicación o descripción)`);
@@ -222,6 +234,7 @@ export default function Cotizaciones() {
           orden: idx + 1,
           id_ascensor: a.modo === 'existente' ? Number(a.id_ascensor) : null,
           ascensor_nuevo: a.modo === 'nuevo' ? {
+            id_edificio: Number(a.ascensor_nuevo.id_edificio),
             ubicacion: a.ascensor_nuevo.ubicacion || null,
             pisos: a.ascensor_nuevo.pisos ? Number(a.ascensor_nuevo.pisos) : null,
             capacidad: a.ascensor_nuevo.capacidad || null,
@@ -231,7 +244,6 @@ export default function Cotizaciones() {
           } : null
         })),
         id_tipo_servicio: Number(form.id_tipo_servicio),
-        titulo: form.titulo,
         descripcion: form.descripcion || null,
         fecha_validez: form.fecha_validez,
         moneda: form.moneda,
@@ -277,7 +289,7 @@ export default function Cotizaciones() {
 
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
-          <input className="input col-span-2" placeholder="Buscar por código, título, cliente, tipo de ascensor o servicio…" value={filtros.q}
+          <input className="input col-span-2" placeholder="Buscar por código, cliente, tipo de ascensor o servicio…" value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_global} onChange={e => setFiltros(f => ({ ...f, estado_global: e.target.value }))}>
             {ESTADOS_GLOBALES.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
@@ -476,7 +488,13 @@ export default function Cotizaciones() {
                   </select>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input className="input" placeholder="Ubicación (edificio, dirección…)" value={a.ascensor_nuevo.ubicacion}
+                    <select className="select sm:col-span-2" required disabled={!form.id_cliente}
+                      value={a.ascensor_nuevo.id_edificio}
+                      onChange={e => cambiarAscensorNuevo(idx, 'id_edificio', e.target.value)}>
+                      <option value="">{form.id_cliente ? (edificiosCliente.length ? '— Edificio / obra donde se instala —' : 'Este cliente no tiene edificios; créalo en su ficha') : '— Selecciona un cliente primero —'}</option>
+                      {edificiosCliente.map(ed => <option key={ed.id} value={ed.id}>{ed.nombre}{ed.tipo ? ` · ${ed.tipo}` : ''}</option>)}
+                    </select>
+                    <input className="input" placeholder="Ubicación (piso / zona)" value={a.ascensor_nuevo.ubicacion}
                       onChange={e => cambiarAscensorNuevo(idx, 'ubicacion', e.target.value)} />
                     <input className="input" type="number" placeholder="Pisos" value={a.ascensor_nuevo.pisos}
                       onChange={e => cambiarAscensorNuevo(idx, 'pisos', e.target.value)} />
@@ -493,10 +511,6 @@ export default function Cotizaciones() {
             ))}
           </div>
 
-          <div>
-            <label className="label">Título *</label>
-            <input className="input" value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} />
-          </div>
           <div>
             <label className="label">Descripción</label>
             <textarea className="textarea" rows="2" value={form.descripcion}

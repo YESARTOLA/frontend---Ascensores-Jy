@@ -9,7 +9,7 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFecha, formatMonto, hoyISO, toYMDLima, nombreEdificioCliente, labelNombreEdificio } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatMonto, hoyISO, toYMDLima, nombreCliente } from '../utils/formatters.js';
 import { ESTADOS_SERVICIO, esServicioEditable } from '../utils/estadoServicio.js';
 
 const ESTADOS_FILTRO = ['', ...ESTADOS_SERVICIO];
@@ -119,7 +119,6 @@ function servicioToForm(s) {
 export default function Servicios() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [clientes, setClientes] = useState([]);
-  const [tiposCliente, setTiposCliente] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [preciosCliente, setPreciosCliente] = useState([]);
@@ -140,7 +139,6 @@ export default function Servicios() {
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list()])
       .then(([cs, as, ts]) => { setClientes(cs); setAscensores(as); setTipos(ts); });
-    clientesService.tipos().then(setTiposCliente).catch(() => setTiposCliente([]));
   }, []);
 
   const cargar = recargar;
@@ -206,7 +204,7 @@ export default function Servicios() {
 
   const ascensoresFiltrados = useMemo(
     () => form.id_cliente
-      ? ascensores.filter(a => String(a.id_cliente) === String(form.id_cliente))
+      ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
       : [],
     [ascensores, form.id_cliente]
   );
@@ -237,10 +235,7 @@ export default function Servicios() {
   };
 
   // Etiqueta del campo de cliente: adaptada al tipo (Edificio/Obra) del elegido.
-  const labelCampoCliente = useMemo(() => {
-    const sel = clientes.find(c => String(c.id) === String(form.id_cliente));
-    return labelNombreEdificio(sel, tiposCliente);
-  }, [clientes, form.id_cliente, tiposCliente]);
+  const labelCampoCliente = 'Cliente';
 
   // Cargar el catálogo de precios del cliente seleccionado para usarlo como
   // default al elegir el tipo de servicio en "Nuevo servicio". En modo edición
@@ -418,7 +413,7 @@ export default function Servicios() {
                         <td className="table-td text-sm max-w-[240px] truncate" title={s.titulo || ''}>{s.titulo || '—'}</td>
                         <td className="table-td text-xs">{s.tipo_registro}</td>
                         <td className="table-td">
-                          <div className="text-sm">{nombreEdificioCliente(s.cliente)}</div>
+                          <div className="text-sm">{nombreCliente(s.cliente)}</div>
                           <div className="text-xs text-slate-500 font-mono" title={codigos.join(', ')}>{ascResumen}</div>
                         </td>
                         <td className="table-td text-xs">{s.tipo_servicio?.nombre}</td>
@@ -459,7 +454,7 @@ export default function Servicios() {
                         <div>
                           <div className="font-mono text-xs text-brand-700">{s.codigo}</div>
                           <div className="font-medium text-slate-800 text-sm mt-0.5">{s.titulo}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">{nombreEdificioCliente(s.cliente)} · {ascResumen}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{nombreCliente(s.cliente)} · {ascResumen}</div>
                         </div>
                         <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
                       </div>
@@ -517,8 +512,7 @@ export default function Servicios() {
             <ClienteAutocomplete
               clientes={clientes}
               value={form.id_cliente}
-              onChange={cambiarCliente}
-              usarNombreEdificio
+              onChange={cambiarCliente}
               required
               placeholder="Escriba para buscar por nombre de edificio / obra…"
             />
