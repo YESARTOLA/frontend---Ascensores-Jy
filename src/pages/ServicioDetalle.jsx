@@ -7,7 +7,7 @@ import Modal from '../components/common/Modal.jsx';
 import { FileLink, useFilePreview } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, codigosAscensores, resumenAscensores, nombreCliente } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, toYMDLima, codigosAscensores, resumenAscensores, nombreCliente } from '../utils/formatters.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 import {
   estaServicioFinalizado,
@@ -63,6 +63,9 @@ export default function ServicioDetalle() {
   const [entregaForm, setEntregaForm] = useState({ tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', id_archivo: null, estado_entrega: 'Entregada' });
   const [evidenciaForm, setEvidenciaForm] = useState({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null });
   const [subiendoEvidenciaArchivo, setSubiendoEvidenciaArchivo] = useState(false);
+  const [openProgramar, setOpenProgramar] = useState(false);
+  const [programarForm, setProgramarForm] = useState({ fecha_programada: '', hora_programada: '' });
+  const [guardandoProgramar, setGuardandoProgramar] = useState(false);
   const [openGuia, setOpenGuia] = useState(false);
   const [guiaEditando, setGuiaEditando] = useState(null); // null = modo crear; objeto guía = modo editar
   const [guiaForm, setGuiaForm] = useState({ codigo_guia: '', id_archivo: null, archivo: null, observaciones_tecnicas: '', estado_guia: ESTADO_GUIA_OBSERVADA });
@@ -450,6 +453,35 @@ export default function ServicioDetalle() {
     catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
+  // Registrar/editar la fecha de programación cuando el servicio llega al área.
+  // Los servicios aprobados desde una cotización nacen sin fecha; aquí se define.
+  const abrirProgramar = () => {
+    setProgramarForm({
+      fecha_programada: s.fecha_programada ? toYMDLima(s.fecha_programada) : hoyISO(),
+      hora_programada: s.hora_programada || ''
+    });
+    setOpenProgramar(true);
+  };
+
+  const guardarProgramacion = async () => {
+    if (!programarForm.fecha_programada) return toast.error('La fecha es obligatoria');
+    if (guardandoProgramar) return;
+    setGuardandoProgramar(true);
+    try {
+      await serviciosService.update(id, {
+        fecha_programada: programarForm.fecha_programada,
+        hora_programada: programarForm.hora_programada || null
+      });
+      toast.success('Fecha de programación registrada');
+      setOpenProgramar(false);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al programar');
+    } finally {
+      setGuardandoProgramar(false);
+    }
+  };
+
   const subirArchivoEntrega = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -477,6 +509,7 @@ export default function ServicioDetalle() {
           <>
             <button type="button" onClick={volver} className="btn-secondary">← Volver</button>
             {puedeEditarServicio && <button type="button" onClick={() => navigate(`/servicios?edit=${s.id}`)} className="btn-secondary">Editar</button>}
+            {puedeEditarServicio && <button type="button" onClick={abrirProgramar} className={s.fecha_programada ? 'btn-secondary' : 'btn-primary'}>{s.fecha_programada ? 'Reprogramar' : 'Programar fecha'}</button>}
             {puedePromover && <button onClick={promover} className="btn-primary">Promover borrador</button>}
             {puedeAsignar && <button onClick={iniciarAsignar} className="btn-secondary">Asignar / Checklist</button>}
             {puedeIniciar && s.estado_servicio === 'Listo para salida' && <button onClick={() => iniciarAccion('en_camino')} className="btn-secondary">En camino</button>}
@@ -516,7 +549,9 @@ export default function ServicioDetalle() {
                         </span>
                       : <span className="capitalize">{s.origen}</span>
             } />
-            <Info label="Fecha programada" value={`${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`} />
+            <Info label="Fecha programada" value={s.fecha_programada
+              ? `${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`.trim()
+              : <span className="text-amber-600">Sin programar</span>} />
             <Info label="Prioridad" value={s.prioridad} />
             <Info label="Cliente" value={esTecnico
               ? <span className="text-slate-800">{nombreCliente(s.cliente)}</span>
@@ -1096,6 +1131,31 @@ export default function ServicioDetalle() {
           )}
           <p className="text-xs text-slate-500">Al finalizar, se generará servicio realizado y pasará a <strong>En revisión administrativa</strong>. Admin/Contabilidad debe revisar para enviar a gestión de cobros.</p>
         </form>
+      </Modal>
+
+      <Modal open={openProgramar} onClose={() => !guardandoProgramar && setOpenProgramar(false)}
+        title={s.fecha_programada ? 'Reprogramar servicio' : 'Programar fecha del servicio'} size="sm"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setOpenProgramar(false)} disabled={guardandoProgramar}>Cancelar</button>
+          <button className="btn-primary" onClick={guardarProgramacion} disabled={guardandoProgramar}>Guardar</button>
+        </>}>
+        <div className="space-y-3">
+          <p className="text-xs text-carbon-500">
+            Registra cuándo se ejecutará el servicio. Al guardar, aparece en el calendario operativo.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Fecha *</label>
+              <input type="date" className="input" value={programarForm.fecha_programada}
+                onChange={e => setProgramarForm(f => ({ ...f, fecha_programada: e.target.value }))} required />
+            </div>
+            <div>
+              <label className="label">Hora</label>
+              <input type="time" className="input" value={programarForm.hora_programada}
+                onChange={e => setProgramarForm(f => ({ ...f, hora_programada: e.target.value }))} />
+            </div>
+          </div>
+        </div>
       </Modal>
 
       <Modal open={openEntrega} onClose={() => setOpenEntrega(false)} title="Nueva entrega" size="lg"

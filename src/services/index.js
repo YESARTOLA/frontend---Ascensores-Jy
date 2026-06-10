@@ -65,6 +65,7 @@ export const ubigeoService = {
 
 export const tiposServicioService = {
   list: (params) => api.get('/tipos-servicio', { params }).then(r => r.data?.data ?? r.data),
+  catalogos: () => api.get('/tipos-servicio/catalogos').then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/tipos-servicio', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/tipos-servicio/${id}`, d).then(r => r.data?.data ?? r.data),
   setEstado: (id, estado) => api.patch(`/tipos-servicio/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data),

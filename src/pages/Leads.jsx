@@ -6,6 +6,7 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import PadreTabs from '../components/common/PadreTabs.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
@@ -27,7 +28,7 @@ export default function Leads() {
   const [usuarios, setUsuarios] = useState([]);
   const [vendedores, setVendedores] = useState([]);
   // Filtros de la lista (server-side): buscador libre + vendedor + ubicación.
-  const [filtros, setFiltros] = useState({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '' });
+  const [filtros, setFiltros] = useState({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '', id_padre: '' });
   const [open, setOpen] = useState(false);
   const [openConv, setOpenConv] = useState(null);
   const [openDescartar, setOpenDescartar] = useState(null);
@@ -305,6 +306,13 @@ export default function Leads() {
     <>
       <PageHeader title="Leads" subtitle={`${total} lead(s)`} actions={puedeCrear && <button onClick={() => setOpen(true)} className="btn-primary">+ Nuevo lead</button>} />
 
+      <PadreTabs
+        padres={tipos.filter(t => t.es_padre)}
+        value={filtros.id_padre}
+        onChange={k => setFiltros(f => ({ ...f, id_padre: k }))}
+        incluyeSinClasificar
+      />
+
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           <input
@@ -329,7 +337,7 @@ export default function Leads() {
             {distritosFiltro.map(d => <option key={d.codigo} value={d.codigo}>{d.distrito}</option>)}
           </select>
           <button type="button" className="btn-secondary"
-            onClick={() => setFiltros({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '' })}>
+            onClick={() => setFiltros(f => ({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '', id_padre: f.id_padre }))}>
             Limpiar filtros
           </button>
         </div>
@@ -696,8 +704,12 @@ export default function Leads() {
               </>
             )}
             <div>
-              <label className="label">Tipo de servicio *</label>
-              <select className="select" required value={convForm.id_tipo_servicio} onChange={e => setConvForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}><option value="">—</option>{tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
+              <label className="label">Subtipo de servicio *</label>
+              <select className="select" required value={convForm.id_tipo_servicio} onChange={e => setConvForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}>
+                <option value="">—</option>
+                {tipos.filter(t => !t.es_padre).map(t => <option key={t.id} value={t.id}>{t.padre?.nombre ? `${t.padre.nombre} · ` : ''}{t.nombre}</option>)}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-0.5">El subtipo define si se convierte en Proyecto o en un servicio operativo (Emergencias/Correctivos/Mantenimientos/Atención rápida).</p>
             </div>
             <div><label className="label">Fecha programada *</label><input type="date" required className="input" value={convForm.fecha_programada} onChange={e => setConvForm(f => ({ ...f, fecha_programada: e.target.value }))} /></div>
             <div><label className="label">Hora</label><input type="time" className="input" value={convForm.hora_programada} onChange={e => setConvForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>

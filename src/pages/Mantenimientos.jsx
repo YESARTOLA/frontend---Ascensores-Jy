@@ -92,7 +92,8 @@ export default function Mantenimientos() {
 
   const ascensoresF = form.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente)) : ascensores;
   const labelCampoCliente = 'Cliente';
-  const tiposF = tipos.filter(t => t.categoria.includes('Mantenimiento'));
+  // Solo subtipos vinculados al módulo Mantenimientos pueden tener plan.
+  const tiposF = tipos.filter(t => !t.es_padre && t.modulo_asociado === 'mantenimiento');
   const esContinuo = form.tipo_plan === 'continuo';
   const frecuenciaSeleccionada = frecuencias.find(f => f.codigo === form.frecuencia);
   const esFrecuenciaCustom = frecuenciaSeleccionada?.unidad === 'custom';
@@ -703,7 +704,7 @@ export default function Mantenimientos() {
             <ClienteAutocomplete
               clientes={clientes}
               value={form.id_cliente}
-              onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+              onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
               required
               disabled={!!editando}
               placeholder="Escriba para buscar por nombre de edificio / obra…"

@@ -8,6 +8,9 @@ export const leadFormInicial = {
   nombre_contacto: '', telefono: '', correo: '', canal: 'WhatsApp',
   departamento: '', provincia: '', codigo_ubigeo: '', id_tipo_ascensor: '',
   razon_social: '', ruc: '', nombre_proyecto: '',
+  // id_padre_servicio: solo UI (cascada padre → subtipo). No se persiste: el lead
+  // guarda el subtipo (id_tipo_servicio_solicitado) y el padre se deriva de él.
+  id_padre_servicio: '',
   id_tipo_servicio_solicitado: '', cliente_existente: false, id_cliente: '', id_vendedor: '', observaciones: ''
 };
 
@@ -25,6 +28,7 @@ export function leadAFormulario(l) {
     razon_social: l.razon_social || '',
     ruc: l.ruc || '',
     nombre_proyecto: l.nombre_proyecto || '',
+    id_padre_servicio: l.tipo_servicio?.id_padre ? String(l.tipo_servicio.id_padre) : '',
     id_tipo_servicio_solicitado: l.id_tipo_servicio_solicitado || '',
     cliente_existente: l.cliente_existente === 1,
     id_cliente: l.id_cliente || '',
@@ -44,6 +48,12 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
   const distritos = useMemo(
     () => ubigeo.filter(u => u.departamento === value.departamento && u.provincia === value.provincia),
     [ubigeo, value.departamento, value.provincia]
+  );
+  // Cascada de tipo de servicio: padre (Servicios/Proyectos/…) → subtipo.
+  const padresServicio = useMemo(() => tiposServicio.filter(t => t.es_padre), [tiposServicio]);
+  const subtiposDelPadre = useMemo(
+    () => tiposServicio.filter(t => !t.es_padre && String(t.id_padre) === String(value.id_padre_servicio)),
+    [tiposServicio, value.id_padre_servicio]
   );
 
   return (
@@ -70,7 +80,8 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
       <div><label className="label">Distrito *</label><select className="select" required disabled={!value.provincia} value={value.codigo_ubigeo} onChange={e => set({ codigo_ubigeo: e.target.value })}><option value="">—</option>{distritos.map(d => <option key={d.codigo} value={d.codigo}>{d.distrito}</option>)}</select></div>
       <div><label className="label">Tipo de ascensor *</label><select className="select" required value={value.id_tipo_ascensor} onChange={e => set({ id_tipo_ascensor: e.target.value })}><option value="">—</option>{tiposAscensor.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
       <div className="sm:col-span-2"><label className="label">Nombre del proyecto</label><input className="input" value={value.nombre_proyecto} onChange={e => set({ nombre_proyecto: e.target.value })} /></div>
-      <div><label className="label">Tipo de servicio solicitado</label><select className="select" value={value.id_tipo_servicio_solicitado} onChange={e => set({ id_tipo_servicio_solicitado: e.target.value })}><option value="">—</option>{tiposServicio.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
+      <div><label className="label">Tipo de servicio *</label><select className="select" required value={value.id_padre_servicio} onChange={e => set({ id_padre_servicio: e.target.value, id_tipo_servicio_solicitado: '' })}><option value="">—</option>{padresServicio.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
+      <div><label className="label">Subtipo solicitado *</label><select className="select" required disabled={!value.id_padre_servicio} value={value.id_tipo_servicio_solicitado} onChange={e => set({ id_tipo_servicio_solicitado: e.target.value })}><option value="">—</option>{subtiposDelPadre.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
       <div><label className="label">Vendedor</label><select className="select" value={value.id_vendedor} onChange={e => set({ id_vendedor: e.target.value })}><option value="">—</option>{usuarios.map(u => <option key={u.id} value={u.id}>{u.nombres}</option>)}</select></div>
       <div><label className="label">¿Cliente existente?</label><select className="select" value={value.cliente_existente ? '1' : '0'} onChange={e => set({ cliente_existente: e.target.value === '1' })}><option value="0">No</option><option value="1">Sí</option></select></div>
       {value.cliente_existente && <div><label className="label">Cliente asociado</label><select className="select" value={value.id_cliente} onChange={e => set({ id_cliente: e.target.value })}><option value="">—</option>{clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>}

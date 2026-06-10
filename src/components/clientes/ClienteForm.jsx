@@ -137,10 +137,12 @@ export default function ClienteForm({
   const quitarPrecio = (idx) => {
     onChange(f => ({ ...f, precios: f.precios.filter((_, i) => i !== idx) }));
   };
+  // Solo se asignan precios a SUBTIPOS (los tipos padre no son cotizables/precios).
+  const subtiposServicio = tiposServicio.filter(t => !t.es_padre);
   // Tipos disponibles para agregar (excluye los ya elegidos en otras filas).
   const tiposDisponibles = (idx) => {
     const usados = new Set(value.precios.map((p, i) => i !== idx ? Number(p.id_tipo_servicio) : null).filter(Boolean));
-    return tiposServicio.filter(t => !usados.has(t.id));
+    return subtiposServicio.filter(t => !usados.has(t.id));
   };
 
   const enviar = (e) => {
@@ -281,9 +283,9 @@ export default function ClienteForm({
       </div>
       <div className="sm:col-span-2 border border-slate-200 rounded-lg p-3 bg-slate-50/40">
         <div className="flex items-center justify-between mb-2">
-          <label className="label !mb-0">Precios por tipo de servicio</label>
+          <label className="label !mb-0">Precios por subtipo de servicio</label>
           <button type="button" onClick={agregarPrecio} className="btn-ghost text-xs !py-1.5 !px-3"
-            disabled={tiposServicio.length === 0 || value.precios.length >= tiposServicio.length}>
+            disabled={subtiposServicio.length === 0 || value.precios.length >= subtiposServicio.length}>
             + Agregar precio
           </button>
         </div>

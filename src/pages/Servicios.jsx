@@ -16,21 +16,16 @@ const ESTADOS_FILTRO = ['', ...ESTADOS_SERVICIO];
 const TOLERANCIA_SUMA = 0.01;
 const FORM_ID = 'form-servicio';
 
+// Módulo Proyectos: aquí solo se crean/listan registros de tipo PROYECTO. La
+// clasificación (tipo_registro='proyecto') la deriva el backend del subtipo
+// seleccionado (cuyo padre es de categoría funcional PROYECTOS).
 const inicial = {
-  tipo_registro: 'servicio',
   id_tipo_servicio: '', id_cliente: '',
   ascensores_seleccion: {}, // { [id_ascensor]: { monto: string, manual: bool } }
   titulo: '', descripcion: '',
   fecha_programada: hoyISO(), hora_programada: '09:00', prioridad: 'media',
   precio_interno: '', moneda: 'PEN', observaciones: '',
-  es_borrador: false,
-  // Campos extra según modulo_asociado del tipo elegido. Solo se envían los
-  // del módulo activo; el backend ignora el resto.
-  motivo: '', falla: '', nivel_urgencia: '',
-  tipo_plan: 'ciclico', frecuencia: 'mensual', frecuencia_dias_custom: '',
-  cantidad_mantenimientos: '', cantidad_mantenimientos_gratuitos: 0,
-  fecha_inicio_plan: '',
-  nombre_contacto: '', telefono: '', mensaje_rapido: '', tipo_solicitud: ''
+  es_borrador: false
 };
 
 function listarCodigosAscensores(servicio) {
@@ -47,9 +42,8 @@ function repartirParejo(total, n) {
   return Array.from({ length: n }, (_, i) => ((base + (i === n - 1 ? sobra : 0)) / 100).toFixed(2));
 }
 
-function formToPayload(form, ascensoresSeleccionados, modulo) {
-  const base = {
-    tipo_registro: form.tipo_registro,
+function formToPayload(form, ascensoresSeleccionados) {
+  return {
     id_tipo_servicio: form.id_tipo_servicio,
     id_cliente: form.id_cliente,
     titulo: form.titulo, descripcion: form.descripcion,
@@ -62,31 +56,6 @@ function formToPayload(form, ascensoresSeleccionados, modulo) {
       monto: Number(form.ascensores_seleccion[a.id]?.monto || 0)
     }))
   };
-  if (modulo === 'emergencia') {
-    base.motivo = form.motivo || form.descripcion || form.titulo;
-    base.nivel_urgencia = form.nivel_urgencia || 'alta';
-  } else if (modulo === 'correctivo') {
-    base.falla = form.falla || form.descripcion || form.titulo;
-    base.nivel_urgencia = form.nivel_urgencia || 'media';
-  } else if (modulo === 'mantenimiento') {
-    base.tipo_plan = form.tipo_plan;
-    base.frecuencia = form.tipo_plan === 'eventual' ? null : form.frecuencia;
-    if (form.frecuencia === 'personalizada' && form.frecuencia_dias_custom) {
-      base.frecuencia_dias_custom = Number(form.frecuencia_dias_custom);
-    }
-    if (form.cantidad_mantenimientos) {
-      base.cantidad_mantenimientos = Number(form.cantidad_mantenimientos);
-    }
-    base.cantidad_mantenimientos_gratuitos = Number(form.cantidad_mantenimientos_gratuitos) || 0;
-    base.fecha_inicio_plan = form.fecha_inicio_plan || form.fecha_programada;
-  } else if (modulo === 'atencion_rapida') {
-    base.nombre_contacto = form.nombre_contacto;
-    base.telefono = form.telefono;
-    base.mensaje_rapido = form.mensaje_rapido || null;
-    base.tipo_solicitud = form.tipo_solicitud || null;
-    base.nivel_urgencia = form.nivel_urgencia || 'media';
-  }
-  return base;
 }
 
 function servicioToForm(s) {
@@ -100,7 +69,6 @@ function servicioToForm(s) {
     }
   });
   return {
-    tipo_registro: s.tipo_registro || 'servicio',
     id_tipo_servicio: String(s.id_tipo_servicio || ''),
     id_cliente: String(s.id_cliente || ''),
     ascensores_seleccion,
@@ -122,7 +90,9 @@ export default function Servicios() {
   const [ascensores, setAscensores] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [preciosCliente, setPreciosCliente] = useState([]);
-  const [filtros, setFiltros] = useState({ q: '', estado_servicio: '', tipo_registro: '', id_tipo_servicio: '', desde: '', hasta: '' });
+  // Módulo Proyectos: el backend filtra por tipo_registro='proyecto' (fuente de
+  // verdad), nunca se mezclan servicios operativos en este listado.
+  const [filtros, setFiltros] = useState({ q: '', estado_servicio: '', tipo_registro: 'proyecto', id_tipo_servicio: '', desde: '', hasta: '' });
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState(null); // null = crear, id = editar
   const [form, setForm] = useState(inicial);
@@ -214,12 +184,13 @@ export default function Servicios() {
     [ascensoresFiltrados, form.ascensores_seleccion]
   );
 
-  // Tipo elegido y su módulo asociado (null = formulario estándar).
-  const tipoSeleccionado = useMemo(
-    () => tipos.find(t => String(t.id) === String(form.id_tipo_servicio)) || null,
-    [tipos, form.id_tipo_servicio]
+  // Subtipos seleccionables en el módulo Proyectos: solo subtipos cuyo padre es
+  // de categoría funcional PROYECTOS (descriptivos). No se ofrecen subtipos de
+  // Servicios operativos: esos se gestionan desde sus propios módulos.
+  const subtiposProyecto = useMemo(
+    () => tipos.filter(t => !t.es_padre && t.categoria_funcional === 'PROYECTOS'),
+    [tipos]
   );
-  const moduloAsociado = tipoSeleccionado?.modulo_asociado || null;
 
   const sumaActual = useMemo(
     () => ascensoresSeleccionados.reduce((acc, a) => acc + Number(form.ascensores_seleccion[a.id]?.monto || 0), 0),
@@ -337,13 +308,13 @@ export default function Servicios() {
     savingRef.current = true;
     setSaving(true);
     try {
-      const payload = formToPayload(form, ascensoresSeleccionados, editando ? null : moduloAsociado);
+      const payload = formToPayload(form, ascensoresSeleccionados);
       if (editando) {
         await serviciosService.update(editando, payload);
-        toast.success('Servicio actualizado');
+        toast.success('Proyecto actualizado');
       } else {
         await serviciosService.create(payload);
-        toast.success('Servicio creado');
+        toast.success('Proyecto creado');
       }
       savingRef.current = false;
       cerrar();
@@ -357,31 +328,26 @@ export default function Servicios() {
   };
 
   const esEdicion = !!editando;
-  const tituloModal = esEdicion ? 'Editar servicio / proyecto' : 'Nuevo servicio / proyecto';
+  const tituloModal = esEdicion ? 'Editar proyecto' : 'Nuevo proyecto';
   const labelGuardar = saving
     ? (esEdicion ? 'Guardando…' : 'Creando…')
     : (esEdicion ? 'Guardar cambios' : 'Crear');
 
   return (
     <>
-      <PageHeader title="Servicios / Proyectos" subtitle={`${data.length} registro(s)`} actions={
-        puedeCrear && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo servicio</button>
+      <PageHeader title="Proyectos" subtitle={`${data.length} proyecto(s)`} actions={
+        puedeCrear && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo proyecto</button>
       } />
 
       <div className="card mb-4">
-        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input col-span-2" placeholder="Buscar por código, título, cliente, tipo de ascensor o cotización…" value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_servicio} onChange={e => setFiltros(f => ({ ...f, estado_servicio: e.target.value }))}>
             {ESTADOS_FILTRO.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
           </select>
-          <select className="select" value={filtros.tipo_registro} onChange={e => setFiltros(f => ({ ...f, tipo_registro: e.target.value }))}>
-            <option value="">Servicio y proyecto</option>
-            <option value="servicio">Solo servicios</option>
-            <option value="proyecto">Solo proyectos</option>
-          </select>
           <select className="select" value={filtros.id_tipo_servicio} onChange={e => setFiltros(f => ({ ...f, id_tipo_servicio: e.target.value }))}>
-            <option value="">Todos los tipos</option>
-            {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+            <option value="">Todos los subtipos</option>
+            {subtiposProyecto.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
           </select>
           <input type="date" className="input" value={filtros.desde} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} />
           <input type="date" className="input" value={filtros.hasta} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} />
@@ -389,7 +355,7 @@ export default function Servicios() {
       </div>
 
       <div className="card">
-        {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin servicios" /> : (
+        {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin proyectos" /> : (
           <>
             <div className="hidden md:block overflow-x-auto scroll-thin">
               <table className="table-base">
@@ -484,35 +450,31 @@ export default function Servicios() {
 
       <Modal open={open} onClose={cerrar} title={tituloModal} size="lg"
         footer={<><button type="button" className="btn-secondary" onClick={cerrar} disabled={saving}>Cancelar</button><button type="submit" form={FORM_ID} className="btn-primary" disabled={saving || !sumaOk}>{labelGuardar}</button></>}>
-        {!esEdicion && !moduloAsociado && (
+        {!esEdicion && (
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs p-3 flex items-start gap-2">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><circle cx="12" cy="16.5" r="0.5"/></svg>
             <div>
-              Para trabajos planificados es preferible iniciar con una <Link to="/cotizaciones" className="font-semibold underline">cotización</Link>; al aprobarse se generará el servicio automáticamente con su monto y trazabilidad comercial.
-              Crea aquí solo servicios de emergencia, mantenimiento del plan o atención rápida.
+              Para proyectos con trazabilidad comercial es preferible iniciar con una <Link to="/cotizaciones" className="font-semibold underline">cotización</Link>; al aprobarse se generará el proyecto automáticamente con su monto. Los servicios operativos (emergencias, correctivos, mantenimientos, atención rápida) se gestionan desde sus propios módulos.
             </div>
           </div>
         )}
         <form id={FORM_ID} onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Tipo de registro</label>
-            <select className="select" value={form.tipo_registro} onChange={e => setForm(f => ({ ...f, tipo_registro: e.target.value }))}>
-              <option value="servicio">Servicio</option><option value="proyecto">Proyecto</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Tipo de servicio *</label>
+          <div className="sm:col-span-2">
+            <label className="label">Subtipo de proyecto *</label>
             <select className="select" required value={form.id_tipo_servicio} onChange={e => setForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}>
               <option value="">— Seleccione —</option>
-              {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+              {subtiposProyecto.map(t => <option key={t.id} value={t.id}>{t.padre?.nombre ? `${t.padre.nombre} · ` : ''}{t.nombre}</option>)}
             </select>
+            {subtiposProyecto.length === 0 && (
+              <p className="text-[11px] text-amber-700 mt-0.5">No hay subtipos de Proyectos. Créelos en <Link to="/tipos-servicio" className="underline">Tipos de servicio</Link>.</p>
+            )}
           </div>
           <div className="sm:col-span-2">
             <label className="label">{labelCampoCliente} *</label>
             <ClienteAutocomplete
               clientes={clientes}
               value={form.id_cliente}
-              onChange={cambiarCliente}
+              onChange={cambiarCliente}
               required
               placeholder="Escriba para buscar por nombre de edificio / obra…"
             />
@@ -607,143 +569,6 @@ export default function Servicios() {
             )}
             <button type="button" onClick={repartirAhora} className="btn-secondary text-xs ml-auto" disabled={ascensoresSeleccionados.length === 0 || !form.precio_interno}>Repartir parejo</button>
           </div>
-
-          {!editando && moduloAsociado === 'emergencia' && (
-            <div className="sm:col-span-2 rounded-md bg-rose-50 ring-1 ring-rose-200 p-3 space-y-2">
-              <div className="text-xs font-semibold text-rose-800">Datos para el módulo Emergencias</div>
-              <div>
-                <label className="label">Motivo *</label>
-                <textarea className="textarea" rows="2" required value={form.motivo}
-                  placeholder="Describe el motivo de la emergencia"
-                  onChange={e => setForm(f => ({ ...f, motivo: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label">Nivel de urgencia</label>
-                <select className="select" value={form.nivel_urgencia || 'alta'}
-                  onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}>
-                  <option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          {!editando && moduloAsociado === 'correctivo' && (
-            <div className="sm:col-span-2 rounded-md bg-amber-50 ring-1 ring-amber-200 p-3 space-y-2">
-              <div className="text-xs font-semibold text-amber-800">Datos para el módulo Correctivos</div>
-              <div>
-                <label className="label">Descripción de la falla *</label>
-                <textarea className="textarea" rows="2" required value={form.falla}
-                  placeholder="Describe la falla a corregir"
-                  onChange={e => setForm(f => ({ ...f, falla: e.target.value }))} />
-              </div>
-              <div>
-                <label className="label">Nivel de urgencia</label>
-                <select className="select" value={form.nivel_urgencia || 'media'}
-                  onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}>
-                  <option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          {!editando && moduloAsociado === 'mantenimiento' && (
-            <div className="sm:col-span-2 rounded-md bg-emerald-50 ring-1 ring-emerald-200 p-3 space-y-2">
-              <div className="text-xs font-semibold text-emerald-800">Datos del plan de mantenimiento</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Tipo de plan</label>
-                  <select className="select" value={form.tipo_plan}
-                    onChange={e => setForm(f => ({ ...f, tipo_plan: e.target.value }))}>
-                    <option value="ciclico">Cíclico</option>
-                    <option value="continuo">Continuo</option>
-                    <option value="eventual">Eventual</option>
-                  </select>
-                </div>
-                {form.tipo_plan !== 'eventual' && (
-                  <div>
-                    <label className="label">Frecuencia</label>
-                    <select className="select" value={form.frecuencia}
-                      onChange={e => setForm(f => ({ ...f, frecuencia: e.target.value }))}>
-                      <option value="mensual">Mensual</option>
-                      <option value="bimestral">Bimestral</option>
-                      <option value="trimestral">Trimestral</option>
-                      <option value="semestral">Semestral</option>
-                      <option value="anual">Anual</option>
-                      <option value="personalizada">Personalizada (días)</option>
-                    </select>
-                  </div>
-                )}
-              </div>
-              {form.tipo_plan !== 'eventual' && form.frecuencia === 'personalizada' && (
-                <div>
-                  <label className="label">Frecuencia en días *</label>
-                  <input type="number" min="1" className="input" value={form.frecuencia_dias_custom}
-                    onChange={e => setForm(f => ({ ...f, frecuencia_dias_custom: e.target.value }))} />
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Cantidad de mantenimientos</label>
-                  <input type="number" min="1" className="input" value={form.cantidad_mantenimientos}
-                    placeholder="opcional (sin tope)"
-                    onChange={e => setForm(f => ({ ...f, cantidad_mantenimientos: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="label">Cupo gratuitos inicial</label>
-                  <input type="number" min="0" className="input" value={form.cantidad_mantenimientos_gratuitos}
-                    onChange={e => setForm(f => ({ ...f, cantidad_mantenimientos_gratuitos: e.target.value }))} />
-                </div>
-              </div>
-              <div>
-                <label className="label">Fecha de inicio del plan</label>
-                <input type="date" className="input" value={form.fecha_inicio_plan}
-                  placeholder={form.fecha_programada}
-                  onChange={e => setForm(f => ({ ...f, fecha_inicio_plan: e.target.value }))} />
-                <p className="text-[11px] text-slate-500 mt-0.5">Si lo dejas vacío usa la fecha programada del servicio.</p>
-              </div>
-              {ascensoresSeleccionados.length > 1 && (
-                <p className="text-[11px] text-emerald-700">Se crearán {ascensoresSeleccionados.length} planes independientes (uno por ascensor) con los mismos parámetros.</p>
-              )}
-            </div>
-          )}
-
-          {!editando && moduloAsociado === 'atencion_rapida' && (
-            <div className="sm:col-span-2 rounded-md bg-sky-50 ring-1 ring-sky-200 p-3 space-y-2">
-              <div className="text-xs font-semibold text-sky-800">Datos para el módulo Atención Rápida</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Nombre de contacto *</label>
-                  <input className="input" required value={form.nombre_contacto}
-                    onChange={e => setForm(f => ({ ...f, nombre_contacto: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="label">Teléfono *</label>
-                  <input className="input" required value={form.telefono}
-                    onChange={e => setForm(f => ({ ...f, telefono: e.target.value }))} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Tipo de solicitud</label>
-                  <input className="input" value={form.tipo_solicitud}
-                    placeholder="Consulta, queja, etc."
-                    onChange={e => setForm(f => ({ ...f, tipo_solicitud: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="label">Nivel de urgencia</label>
-                  <select className="select" value={form.nivel_urgencia || 'media'}
-                    onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}>
-                    <option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="label">Mensaje rápido</label>
-                <textarea className="textarea" rows="2" value={form.mensaje_rapido}
-                  onChange={e => setForm(f => ({ ...f, mensaje_rapido: e.target.value }))} />
-              </div>
-            </div>
-          )}
 
           <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={form.observaciones} onChange={e => setForm(f => ({ ...f, observaciones: e.target.value }))} /></div>
           {!esEdicion && (

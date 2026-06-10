@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { atencionesRapidasService, clientesService, ascensoresService, tiposServicioService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
@@ -13,7 +13,7 @@ import { esAtencionRapidaConvertida } from '../utils/estadoServicio.js';
 
 const FORM_ID = 'form-atencion-rapida';
 const inicial = { nombre_contacto: '', telefono: '', mensaje_rapido: '', tipo_solicitud: '', nivel_urgencia: 'media' };
-const inicialConv = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', tipo_conversion: 'servicio', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN' };
+const inicialConv = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', id_subtipo_servicio: '', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN' };
 
 export default function AtencionesRapidas() {
   const [clientes, setClientes] = useState([]);
@@ -40,6 +40,12 @@ export default function AtencionesRapidas() {
   }, []);
   const ascensoresF = convForm.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(convForm.id_cliente)) : ascensores;
   const labelCampoCliente = 'Cliente';
+  // Jerarquía padre → subtipo para la conversión (el subtipo define el módulo destino).
+  const padresConv = useMemo(() => tipos.filter(t => t.es_padre), [tipos]);
+  const subtiposConv = useMemo(
+    () => tipos.filter(t => !t.es_padre && String(t.id_padre) === String(convForm.id_tipo_servicio)),
+    [tipos, convForm.id_tipo_servicio]
+  );
 
   const abrirNuevo = () => {
     setEditando(null);
@@ -172,14 +178,14 @@ export default function AtencionesRapidas() {
       <Modal open={!!openConv} onClose={() => setOpenConv(null)} title={`Convertir: ${openConv?.nombre_contacto}`} size="lg"
         footer={<><button className="btn-secondary" onClick={() => setOpenConv(null)}>Cancelar</button><button className="btn-primary" onClick={convertir}>Convertir</button></>}>
         <form onSubmit={(e) => { e.preventDefault(); convertir(); }} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div><label className="label">Tipo de conversión</label><select className="select" value={convForm.tipo_conversion} onChange={e => setConvForm(f => ({ ...f, tipo_conversion: e.target.value }))}><option value="servicio">Servicio</option><option value="emergencia">Emergencia</option></select></div>
-          <div><label className="label">Tipo de servicio *</label><select className="select" required value={convForm.id_tipo_servicio} onChange={e => setConvForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}><option value="">—</option>{tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
+          <div><label className="label">Tipo de servicio (padre) *</label><select className="select" required value={convForm.id_tipo_servicio} onChange={e => setConvForm(f => ({ ...f, id_tipo_servicio: e.target.value, id_subtipo_servicio: '' }))}><option value="">—</option>{padresConv.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
+          <div><label className="label">Subtipo *</label><select className="select" required value={convForm.id_subtipo_servicio} disabled={!convForm.id_tipo_servicio} onChange={e => setConvForm(f => ({ ...f, id_subtipo_servicio: e.target.value }))}><option value="">{convForm.id_tipo_servicio ? '—' : 'Elige el padre'}</option>{subtiposConv.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
           <div>
             <label className="label">{labelCampoCliente} *</label>
             <ClienteAutocomplete
               clientes={clientes}
               value={convForm.id_cliente}
-              onChange={(id) => setConvForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+              onChange={(id) => setConvForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
               required
               placeholder="Escriba para buscar por nombre de edificio / obra…"
             />

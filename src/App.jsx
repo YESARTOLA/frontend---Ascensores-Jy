@@ -77,8 +77,8 @@ export default function App() {
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/clientes" element={<Clientes />} />
-        <Route path="/clientes/:id" element={<Cliente360 />} />
+        <Route path="/clientes" element={<RequireRole allow={['super_admin','admin','coordinador','contabilidad']}><Clientes /></RequireRole>} />
+        <Route path="/clientes/:id" element={<RequireRole allow={['super_admin','admin','coordinador','contabilidad']}><Cliente360 /></RequireRole>} />
         <Route path="/ascensores" element={<Ascensores />} />
         <Route path="/ascensores/:id" element={<AscensorHistorial />} />
         <Route path="/tecnicos" element={<Tecnicos />} />
@@ -98,7 +98,7 @@ export default function App() {
         <Route path="/emergencias" element={<Emergencias />} />
         <Route path="/correctivos" element={<Correctivos />} />
         <Route path="/mantenimientos" element={<Mantenimientos />} />
-        <Route path="/leads" element={<Leads />} />
+        <Route path="/leads" element={<RequireRole allow={['super_admin','admin','coordinador']}><Leads /></RequireRole>} />
         <Route path="/atenciones-rapidas" element={<AtencionesRapidas />} />
         <Route path="/calendario" element={<Calendario />} />
         <Route path="/recordatorios" element={<Recordatorios />} />

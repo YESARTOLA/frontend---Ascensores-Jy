@@ -252,7 +252,8 @@ export default function Dashboard() {
             <KpiCard label="Emergencias activas"  value={data.emergenciasActivas}  tone="red"    icon={Icons.alert}   delay={200} href="/emergencias" />
             <KpiCard label="Técnicos disponibles" value={data.tecnicosDisponibles} tone="slate"  icon={Icons.users}   delay={250} href="/tecnicos" />
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mt-3 sm:mt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mt-3 sm:mt-4">
+            <KpiCard label="Proyectos activos"    value={data.proyectosActivos}       tone="brand"  icon={Icons.briefcase || Icons.check} delay={290} href="/servicios" />
             <KpiCard label="Mant. activos"        value={data.mantenimientosProximos} tone="brand"  icon={Icons.cal}   delay={300} href="/mantenimientos" />
             <KpiCard label="Leads del mes"        value={data.leadsMes}               tone="violet" icon={Icons.users} delay={340} href="/leads" />
             <KpiCard label="Cobros vencidos"      value={data.cobrosVencidos}         tone="red"    icon={Icons.money} delay={380} href="/cobros" />

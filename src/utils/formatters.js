@@ -260,6 +260,17 @@ export function nombreCliente(cliente) {
 }
 
 /**
+ * Nombre del edificio / obra de una cotización, inferido de sus ascensores
+ * (la cotización es a nivel cliente; la ubicación física vive en el edificio).
+ * Toma el primer ascensor con edificio; si no hay (p. ej. todos "nuevos"), cae
+ * al nombre comercial del cliente y, en último caso, al código.
+ */
+export function nombreEdificioCotizacion(cot) {
+  const nombre = cot?.ascensores?.map(a => nombreEdificio(a.ascensor?.edificio)).find(Boolean);
+  return nombre || nombreCliente(cot?.cliente) || cot?.codigo || '';
+}
+
+/**
  * Etiqueta del campo nombre, adaptada al tipo del edificio elegido
  * (Edificio / Obra). `tipos` es el catálogo TIPOS_EDIFICIO del backend
  * (`{ codigo, etiqueta, nombre_label }`), única fuente de verdad de los textos.

@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   cotizacionesService,
-  clientesService,
-  ascensoresService,
-  tiposServicioService,
   configuracionService,
   archivosService,
   assetUrl
@@ -14,7 +11,7 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, nombreEdificioCotizacion } from '../utils/formatters.js';
 import CuotasEditor, { planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
 
 const itemVacio = () => ({
@@ -38,6 +35,7 @@ function calcImporte(it) {
 
 export default function CotizacionDetalle() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [cot, setCot] = useState(null);
   const [loading, setLoading] = useState(true);
   const [igvTasa, setIgvTasa] = useState(0.18);
@@ -59,20 +57,17 @@ export default function CotizacionDetalle() {
   const [motivoRechazo, setMotivoRechazo] = useState('');
   const [openAprobar, setOpenAprobar] = useState(false);
   const [aprobarForm, setAprobarForm] = useState({
-    fecha_programada: hoyISO(), hora_programada: '09:00', prioridad: 'media',
+    // La fecha/hora de programación y la prioridad ya NO se registran al aprobar:
+    // el servicio nace sin programar y el área las define luego desde su detalle.
     observaciones: '', id_archivo_respaldo: null,
     // Campos extra según categoría del tipo_servicio:
     motivo: '', falla: '', nivel_urgencia: '',
     tipo_plan: 'ciclico', frecuencia: 'mensual', frecuencia_dias_custom: '',
     cantidad_mantenimientos: '', cantidad_mantenimientos_gratuitos: 0,
-    fecha_inicio_plan: ''
+    fecha_inicio_plan: hoyISO()
   });
   const [archivoRespaldo, setArchivoRespaldo] = useState(null);
   const [subiendoRespaldo, setSubiendoRespaldo] = useState(false);
-
-  const [clientes, setClientes] = useState([]);
-  const [ascensores, setAscensores] = useState([]);
-  const [tipos, setTipos] = useState([]);
 
   // Reapertura
   const [openReabrir, setOpenReabrir] = useState(false);
@@ -102,17 +97,9 @@ export default function CotizacionDetalle() {
   useEffect(() => { cargar(); }, [id]);
 
   useEffect(() => {
-    Promise.all([
-      configuracionService.get('IGV_RATE').catch(() => ({ valor: 0.18 })),
-      clientesService.list(),
-      ascensoresService.list(),
-      tiposServicioService.list()
-    ]).then(([igv, cs, as, ts]) => {
-      setIgvTasa(Number(igv.valor) || 0.18);
-      setClientes(cs);
-      setAscensores(as);
-      setTipos(ts);
-    });
+    configuracionService.get('IGV_RATE')
+      .catch(() => ({ valor: 0.18 }))
+      .then(igv => setIgvTasa(Number(igv.valor) || 0.18));
   }, []);
 
   const versionActiva = useMemo(() => {
@@ -122,9 +109,11 @@ export default function CotizacionDetalle() {
 
   const totalesEdit = useMemo(() => {
     const sub = round2(itemsForm.reduce((acc, it) => acc + calcImporte(it), 0));
-    const igvC = round2(sub * igvTasa);
+    // Una versión sin IGV no afecta el subtotal (igv = 0). Respetarlo aquí para
+    // que el total —y la validación del plan de cuotas— coincida con el backend.
+    const igvC = versionActiva?.sin_igv ? 0 : round2(sub * igvTasa);
     return { subtotal: sub, igv: igvC, total: round2(sub + igvC) };
-  }, [itemsForm, igvTasa]);
+  }, [itemsForm, igvTasa, versionActiva?.sin_igv]);
 
   if (loading) return <Loader />;
   if (!cot) return <div className="p-6 text-center text-carbon-500">Cotización no encontrada</div>;
@@ -223,21 +212,22 @@ export default function CotizacionDetalle() {
   const aprobarVersion = async (e) => {
     e.preventDefault();
     try {
-      const cat = String(cot?.tipo_servicio?.categoria || '').trim().toLowerCase();
+      // El módulo destino lo define el SUBTIPO de la cotización (SSoT), no la
+      // categoría libre (eliminada). Si el padre es Proyectos, modulo = null.
+      const modulo = cot?.subtipo_servicio?.modulo_asociado || null;
+      // Sin fecha/hora/prioridad: el servicio nace sin programar y el área los
+      // registra después desde el detalle del servicio ("Programar fecha").
       const payload = {
-        fecha_programada: aprobarForm.fecha_programada,
-        hora_programada: aprobarForm.hora_programada,
-        prioridad: aprobarForm.prioridad,
         observaciones: aprobarForm.observaciones || null,
         id_archivo_respaldo: aprobarForm.id_archivo_respaldo
       };
-      if (cat === 'emergencia') {
+      if (modulo === 'emergencia') {
         payload.motivo = aprobarForm.motivo;
         payload.nivel_urgencia = aprobarForm.nivel_urgencia || 'alta';
-      } else if (cat === 'mantenimiento correctivo' || cat === 'correctivo') {
+      } else if (modulo === 'correctivo') {
         payload.falla = aprobarForm.falla;
         payload.nivel_urgencia = aprobarForm.nivel_urgencia || 'media';
-      } else if (cat === 'mantenimiento preventivo') {
+      } else if (modulo === 'mantenimiento') {
         payload.tipo_plan = aprobarForm.tipo_plan;
         payload.frecuencia = aprobarForm.tipo_plan === 'eventual' ? null : aprobarForm.frecuencia;
         if (aprobarForm.frecuencia === 'personalizada' && aprobarForm.frecuencia_dias_custom) {
@@ -247,7 +237,7 @@ export default function CotizacionDetalle() {
           payload.cantidad_mantenimientos = Number(aprobarForm.cantidad_mantenimientos);
         }
         payload.cantidad_mantenimientos_gratuitos = Number(aprobarForm.cantidad_mantenimientos_gratuitos) || 0;
-        payload.fecha_inicio_plan = aprobarForm.fecha_inicio_plan || aprobarForm.fecha_programada;
+        payload.fecha_inicio_plan = aprobarForm.fecha_inicio_plan || null;
       }
       const r = await cotizacionesService.aprobar(id, versionActiva.numero_version, payload);
       toast.success(`Aprobada. Servicio ${r.codigo_servicio} creado.`);
@@ -353,9 +343,12 @@ export default function CotizacionDetalle() {
     <>
       <PageHeader
         title={cot.codigo}
-        subtitle={`${cot.cliente?.nombre} • ${cot.tipo_servicio?.nombre}`}
+        subtitle={`${cot.cliente?.nombre} • ${cot.subtipo_servicio?.nombre || cot.tipo_servicio?.nombre || ''}`}
         actions={
           <div className="flex flex-wrap gap-2">
+            {puedeEditar && (
+              <button onClick={() => navigate(`/cotizaciones?duplicar=${cot.id}`)} className="btn-ghost text-xs !py-1.5 !px-3" title="Crea una cotización nueva precargada con estos datos">Duplicar</button>
+            )}
             {puedeEditar && cotizacionDecidible && versionEditable && !editandoItems && (
               <button onClick={iniciarEdicion} className="btn-ghost text-xs !py-1.5 !px-3">Editar items</button>
             )}
@@ -391,7 +384,7 @@ export default function CotizacionDetalle() {
         <div className="card p-4 lg:col-span-2 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-bold text-carbon-900">{cot.ascensores?.map(a => nombreEdificio(a.ascensor?.edificio)).find(Boolean) || nombreCliente(cot.cliente) || cot.codigo}</h2>
+              <h2 className="text-lg font-bold text-carbon-900">{nombreEdificioCotizacion(cot)}</h2>
               {cot.descripcion && <p className="text-sm text-carbon-600 mt-1">{cot.descripcion}</p>}
             </div>
             <div className="flex flex-col items-end gap-1">
@@ -667,17 +660,18 @@ export default function CotizacionDetalle() {
       >
         <form id="form-aprobar" onSubmit={aprobarVersion} className="space-y-3">
           {(() => {
-            const cat = String(cot?.tipo_servicio?.categoria || '').trim().toLowerCase();
+            const modulo = cot?.subtipo_servicio?.modulo_asociado || null;
             const nAsc = cot.ascensores?.length || 1;
-            const moduloDestino = cat === 'emergencia' ? 'Emergencias'
-              : (cat === 'mantenimiento correctivo' || cat === 'correctivo') ? 'Correctivos'
-              : cat === 'mantenimiento preventivo' ? 'Mantenimientos'
+            const moduloDestino = modulo === 'emergencia' ? 'Emergencias'
+              : modulo === 'correctivo' ? 'Correctivos'
+              : modulo === 'mantenimiento' ? 'Mantenimientos'
+              : modulo === 'atencion_rapida' ? 'Atención rápida'
               : null;
             return (
               <div className="text-sm text-carbon-700">
                 Al aprobar se creará automáticamente:
                 <ul className="list-disc list-inside text-xs text-carbon-600 mt-1">
-                  <li>El servicio en estado Pendiente con precio {formatMonto(versionActiva.monto_total, versionActiva.moneda)}</li>
+                  <li>El servicio en estado Pendiente con precio {formatMonto(versionActiva.monto_total, versionActiva.moneda)} <span className="text-carbon-500">(sin fecha de programación: se registra luego desde el detalle del servicio)</span></li>
                   <li>
                     El cobro en gestión de cobros
                     {versionActiva.tiene_cuotas && Array.isArray(versionActiva.plan_cuotas) && versionActiva.plan_cuotas.length > 0
@@ -697,31 +691,13 @@ export default function CotizacionDetalle() {
               </div>
             );
           })()}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Fecha programada *</label>
-              <input type="date" className="input" value={aprobarForm.fecha_programada}
-                onChange={e => setAprobarForm(f => ({ ...f, fecha_programada: e.target.value }))} required />
-            </div>
-            <div>
-              <label className="label">Hora</label>
-              <input type="time" className="input" value={aprobarForm.hora_programada}
-                onChange={e => setAprobarForm(f => ({ ...f, hora_programada: e.target.value }))} />
-            </div>
-          </div>
-          <div>
-            <label className="label">Prioridad</label>
-            <select className="select" value={aprobarForm.prioridad}
-              onChange={e => setAprobarForm(f => ({ ...f, prioridad: e.target.value }))}>
-              <option value="baja">Baja</option>
-              <option value="media">Media</option>
-              <option value="alta">Alta</option>
-            </select>
-          </div>
+          {/* La fecha de programación se registra después, cuando el servicio
+              llega al área correspondiente (detalle del servicio → "Programar
+              fecha"). Por eso ya no se piden fecha/hora/prioridad al aprobar. */}
 
           {(() => {
-            const cat = String(cot?.tipo_servicio?.categoria || '').trim().toLowerCase();
-            if (cat === 'emergencia') {
+            const modulo = cot?.subtipo_servicio?.modulo_asociado || null;
+            if (modulo === 'emergencia') {
               return (
                 <div className="rounded-md bg-rose-50 ring-1 ring-rose-200 p-3 space-y-2">
                   <div className="text-xs font-semibold text-rose-800">Datos para el módulo Emergencias</div>
@@ -744,7 +720,7 @@ export default function CotizacionDetalle() {
                 </div>
               );
             }
-            if (cat === 'mantenimiento correctivo' || cat === 'correctivo') {
+            if (modulo === 'correctivo') {
               return (
                 <div className="rounded-md bg-amber-50 ring-1 ring-amber-200 p-3 space-y-2">
                   <div className="text-xs font-semibold text-amber-800">Datos para el módulo Correctivos</div>
@@ -767,7 +743,7 @@ export default function CotizacionDetalle() {
                 </div>
               );
             }
-            if (cat === 'mantenimiento preventivo') {
+            if (modulo === 'mantenimiento') {
               return (
                 <div className="rounded-md bg-emerald-50 ring-1 ring-emerald-200 p-3 space-y-2">
                   <div className="text-xs font-semibold text-emerald-800">Datos del plan de mantenimiento</div>
@@ -823,9 +799,8 @@ export default function CotizacionDetalle() {
                     <label className="label">Fecha de inicio del plan</label>
                     <input type="date" className="input"
                       value={aprobarForm.fecha_inicio_plan}
-                      placeholder={aprobarForm.fecha_programada}
                       onChange={e => setAprobarForm(f => ({ ...f, fecha_inicio_plan: e.target.value }))} />
-                    <p className="text-[11px] text-carbon-500 mt-0.5">Si lo dejas vacío usa la fecha programada del servicio.</p>
+                    <p className="text-[11px] text-carbon-500 mt-0.5">Define desde cuándo se calcula el cronograma. Si lo dejas vacío usa la fecha de aprobación (hoy).</p>
                   </div>
                   {(cot.ascensores?.length || 0) > 1 && (
                     <p className="text-[11px] text-emerald-700">Se crearán {cot.ascensores.length} planes independientes (uno por ascensor) con los mismos parámetros.</p>
@@ -886,8 +861,14 @@ function ItemsView({ version, igvTasa }) {
       <div className="mt-3 grid grid-cols-2 gap-1 max-w-xs ml-auto text-sm">
         <div className="text-right text-carbon-600">Subtotal</div>
         <div className="text-right font-medium">{formatMonto(version.subtotal, version.moneda)}</div>
-        <div className="text-right text-carbon-600">IGV ({Math.round((Number(version.igv_tasa) || igvTasa) * 100)}%)</div>
-        <div className="text-right font-medium">{formatMonto(version.igv, version.moneda)}</div>
+        {version.sin_igv ? (
+          <div className="col-span-2 text-right text-xs text-carbon-500">Precios sin IGV</div>
+        ) : (
+          <>
+            <div className="text-right text-carbon-600">IGV ({Math.round((Number(version.igv_tasa) || igvTasa) * 100)}%)</div>
+            <div className="text-right font-medium">{formatMonto(version.igv, version.moneda)}</div>
+          </>
+        )}
         <div className="text-right text-brand-700 font-bold">TOTAL</div>
         <div className="text-right text-brand-700 font-bold">{formatMonto(version.monto_total, version.moneda)}</div>
       </div>

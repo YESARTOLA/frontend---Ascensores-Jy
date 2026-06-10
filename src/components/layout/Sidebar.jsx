@@ -153,7 +153,7 @@ function Nav({ onClose, visibleFor }) {
       {visibleFor('super_admin', 'admin', 'contabilidad') && (
         <Link to="/cotizaciones" icon={ICONS.receipt} label="Cotizaciones" onClose={onClose} />
       )}
-      <Link to="/servicios" icon={ICONS.briefcase} label="Servicios / Proyectos" onClose={onClose} />
+      <Link to="/servicios" icon={ICONS.briefcase} label="Proyectos" onClose={onClose} />
       {visibleFor('super_admin', 'admin', 'coordinador') && (
         <Link to="/asignaciones" icon={ICONS.list} label="Asignaciones" onClose={onClose} />
       )}

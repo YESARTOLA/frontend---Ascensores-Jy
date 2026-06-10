@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   cotizacionesService,
@@ -7,6 +7,7 @@ import {
   ascensoresService,
   tiposServicioService,
   configuracionService,
+  cuentasBancariasService,
   archivosService,
   assetUrl
 } from '../services';
@@ -15,11 +16,12 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import PadreTabs from '../components/common/PadreTabs.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFecha, formatMonto, hoyISO, addDaysYMD } from '../utils/formatters.js';
-import CuotasEditor, { planCuotasInicial, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
+import { badgeEstado, formatFecha, formatMonto, hoyISO, addDaysYMD, nombreEdificioCotizacion } from '../utils/formatters.js';
+import CuotasEditor, { planCuotasInicial, planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
 
 const ESTADOS_GLOBALES = ['', 'Cotizado', 'Aceptado', 'Ejecución', 'Pendiente', 'Terminado'];
 
@@ -42,11 +44,18 @@ const formInicial = (preset = {}) => ({
   id_cliente: preset.id_cliente || '',
   id_lead: preset.id_lead || null,
   ascensores: [ascensorVacio()],
-  id_tipo_servicio: preset.id_tipo_servicio || '',
+  // id_tipo_servicio = PADRE; id_subtipo_servicio = subtipo elegido dentro del padre.
+  // El preset (p.ej. desde un lead) trae el subtipo solicitado.
+  id_tipo_servicio: '',
+  id_subtipo_servicio: preset.id_subtipo_servicio || preset.id_tipo_servicio || '',
   descripcion: '',
   fecha_validez: '',
   moneda: 'PEN',
   observaciones: '',
+  sin_igv: false,
+  // Ids de las cuentas bancarias a adjuntar en el PDF. Por defecto se marcan
+  // todas las activas al abrir el modal.
+  cuentas_pdf: [],
   items: [itemVacio()],
   cuotas: planCuotasInicial(),
   archivos: []
@@ -68,11 +77,14 @@ export default function Cotizaciones() {
   const [ascensores, setAscensores] = useState([]);
   const [edificiosCliente, setEdificiosCliente] = useState([]);
   const [tipos, setTipos] = useState([]);
+  const [cuentas, setCuentas] = useState([]);
   const [igvTasa, setIgvTasa] = useState(0.18);
   const [validezDefaultDias, setValidezDefaultDias] = useState(15);
   const [filtros, setFiltros] = useState({ q: '', estado_global: '', id_cliente: '', id_tipo_servicio: '', desde: '', hasta: '' });
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(formInicial);
+  // Código de la cotización origen cuando el modal se abre en modo "duplicar".
+  const [duplicandoDe, setDuplicandoDe] = useState(null);
   const [saving, setSaving] = useState(false);
   const [subiendoAdjuntos, setSubiendoAdjuntos] = useState(false);
   const { esSuperAdmin, esAdmin } = useAuth();
@@ -93,12 +105,25 @@ export default function Cotizaciones() {
           id_lead: searchParams.get('id_lead') ? Number(searchParams.get('id_lead')) : null,
           id_tipo_servicio: searchParams.get('id_tipo_servicio') || ''
         }),
-        fecha_validez: addDaysYMD(null, validezDefaultDias)
+        fecha_validez: addDaysYMD(null, validezDefaultDias),
+        cuentas_pdf: cuentas.map(c => c.id)
       });
       setOpen(true);
       // limpia los params para que recargar la página no reabra el modal
       const next = new URLSearchParams(searchParams);
       ['nuevo', 'id_cliente', 'id_lead', 'id_tipo_servicio'].forEach(k => next.delete(k));
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, puedeCrear, validezDefaultDias]);
+
+  // Abre el modal en modo "duplicar" si llega ?duplicar=ID (p.ej. desde el detalle).
+  useEffect(() => {
+    const dupId = searchParams.get('duplicar');
+    if (dupId && puedeCrear) {
+      duplicar(Number(dupId));
+      const next = new URLSearchParams(searchParams);
+      next.delete('duplicar');
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -110,20 +135,104 @@ export default function Cotizaciones() {
       ascensoresService.list(),
       tiposServicioService.list(),
       configuracionService.get('IGV_RATE').catch(() => ({ valor: 0.18 })),
-      configuracionService.get('COTIZACION_VALIDEZ_DIAS').catch(() => ({ valor: 15 }))
-    ]).then(([cs, as, ts, igv, val]) => {
+      configuracionService.get('COTIZACION_VALIDEZ_DIAS').catch(() => ({ valor: 15 })),
+      cuentasBancariasService.list().catch(() => [])
+    ]).then(([cs, as, ts, igv, val, ctas]) => {
       setClientes(cs);
       setAscensores(as);
       setTipos(ts);
       setIgvTasa(Number(igv.valor) || 0.18);
       setValidezDefaultDias(Number(val.valor) || 15);
+      setCuentas(Array.isArray(ctas) ? ctas : []);
     });
   }, []);
 
   const abrirModal = () => {
-    setForm({ ...formInicial(), fecha_validez: addDaysYMD(null, validezDefaultDias) });
+    setDuplicandoDe(null);
+    setForm({ ...formInicial(), fecha_validez: addDaysYMD(null, validezDefaultDias), cuentas_pdf: cuentas.map(c => c.id) });
     setOpen(true);
   };
+
+  const cerrarModal = () => {
+    setOpen(false);
+    setDuplicandoDe(null);
+  };
+
+  // Mapea una cotización (con su versión activa e items) a la forma del
+  // formulario de "Nueva cotización", para duplicarla. Todo queda editable.
+  const cotizacionAFormulario = (cot) => {
+    const v = (cot.versiones || []).find(x => x.numero_version === cot.version_activa) || (cot.versiones || [])[0] || {};
+    return {
+      ...formInicial(),
+      id_cliente: cot.id_cliente ? String(cot.id_cliente) : '',
+      id_lead: null,
+      id_tipo_servicio: cot.tipo_servicio?.id ? String(cot.tipo_servicio.id) : '',
+      id_subtipo_servicio: cot.subtipo_servicio?.id ? String(cot.subtipo_servicio.id) : '',
+      descripcion: cot.descripcion || '',
+      moneda: v.moneda || 'PEN',
+      observaciones: v.observaciones || '',
+      sin_igv: !!v.sin_igv,
+      // Si la original tenía selección de cuentas la copiamos; si era legacy
+      // (null) marcamos todas las activas, igual que una cotización nueva.
+      cuentas_pdf: Array.isArray(v.cuentas_pdf) ? v.cuentas_pdf : cuentas.map(c => c.id),
+      // Validez nueva (la original suele estar vencida) y sin adjuntos.
+      fecha_validez: addDaysYMD(null, validezDefaultDias),
+      archivos: [],
+      ascensores: (cot.ascensores || []).length
+        ? cot.ascensores.map(a => a.id_ascensor
+            ? { modo: 'existente', id_ascensor: String(a.id_ascensor), ascensor_nuevo: ascensorVacio().ascensor_nuevo }
+            : {
+                modo: 'nuevo', id_ascensor: '',
+                ascensor_nuevo: {
+                  id_edificio: a.ascensor_nuevo?.id_edificio ? String(a.ascensor_nuevo.id_edificio) : '',
+                  ubicacion: a.ascensor_nuevo?.ubicacion || '',
+                  pisos: a.ascensor_nuevo?.pisos != null ? String(a.ascensor_nuevo.pisos) : '',
+                  capacidad: a.ascensor_nuevo?.capacidad || '',
+                  marca: a.ascensor_nuevo?.marca || '',
+                  modelo: a.ascensor_nuevo?.modelo || '',
+                  descripcion: a.ascensor_nuevo?.descripcion || ''
+                }
+              })
+        : [ascensorVacio()],
+      items: (v.items || []).length
+        ? v.items.map(it => ({
+            descripcion: it.descripcion || '',
+            cantidad: Number(it.cantidad) || 1,
+            unidad: it.unidad || 'Unidad',
+            precio_unitario: Number(it.precio_unitario) || 0,
+            descuento_porcentaje: Number(it.descuento_porcentaje) || 0
+          }))
+        : [itemVacio()],
+      cuotas: planCuotasDesdeServidor(v)
+    };
+  };
+
+  const duplicar = async (id) => {
+    try {
+      const cot = await cotizacionesService.get(id);
+      setForm(cotizacionAFormulario(cot));
+      setDuplicandoDe(cot.codigo || null);
+      setOpen(true);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo cargar la cotización a duplicar');
+    }
+  };
+
+  // Jerarquía de tipos: padres y subtipos del padre seleccionado en el form.
+  const padresTipo = useMemo(() => tipos.filter(t => t.es_padre), [tipos]);
+  const subtiposDelPadre = useMemo(
+    () => tipos.filter(t => !t.es_padre && String(t.id_padre) === String(form.id_tipo_servicio)),
+    [tipos, form.id_tipo_servicio]
+  );
+
+  // Si llega un subtipo preseleccionado (p.ej. desde un lead) y aún no se resolvió
+  // su padre, derivarlo del catálogo una vez cargado.
+  useEffect(() => {
+    if (!form.id_subtipo_servicio || form.id_tipo_servicio) return;
+    const sub = tipos.find(t => String(t.id) === String(form.id_subtipo_servicio));
+    if (sub?.id_padre) setForm(f => ({ ...f, id_tipo_servicio: String(sub.id_padre) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipos, form.id_subtipo_servicio]);
 
   const ascensoresDelCliente = form.id_cliente
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
@@ -192,14 +301,15 @@ export default function Cotizaciones() {
   };
 
   const subtotal = round2(form.items.reduce((acc, it) => acc + calcImporte(it), 0));
-  const igvCalc = round2(subtotal * igvTasa);
+  const igvCalc = form.sin_igv ? 0 : round2(subtotal * igvTasa);
   const totalCalc = round2(subtotal + igvCalc);
 
   const guardar = async (e) => {
     e.preventDefault();
     if (saving) return;
     if (!form.id_cliente) return toast.error('Selecciona un cliente');
-    if (!form.id_tipo_servicio) return toast.error('Selecciona un tipo de servicio');
+    if (!form.id_tipo_servicio) return toast.error('Selecciona un tipo de servicio (padre)');
+    if (!form.id_subtipo_servicio) return toast.error('Selecciona un subtipo de servicio');
     if (!form.fecha_validez) return toast.error('Fecha de validez obligatoria');
     if (!form.ascensores.length) return toast.error('Agrega al menos un ascensor');
     for (let i = 0; i < form.ascensores.length; i++) {
@@ -244,10 +354,13 @@ export default function Cotizaciones() {
           } : null
         })),
         id_tipo_servicio: Number(form.id_tipo_servicio),
+        id_subtipo_servicio: Number(form.id_subtipo_servicio),
         descripcion: form.descripcion || null,
         fecha_validez: form.fecha_validez,
         moneda: form.moneda,
         observaciones: form.observaciones || null,
+        sin_igv: form.sin_igv,
+        cuentas_pdf: form.cuentas_pdf,
         items: form.items
           .filter(it => it.descripcion.trim())
           .map((it, i) => ({
@@ -265,6 +378,7 @@ export default function Cotizaciones() {
       });
       toast.success('Cotización creada');
       setOpen(false);
+      setDuplicandoDe(null);
       recargar();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error al crear cotización');
@@ -287,9 +401,15 @@ export default function Cotizaciones() {
         }
       />
 
+      <PadreTabs
+        padres={padresTipo}
+        value={filtros.id_tipo_servicio}
+        onChange={k => setFiltros(f => ({ ...f, id_tipo_servicio: k }))}
+      />
+
       <div className="card mb-4">
-        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
-          <input className="input col-span-2" placeholder="Buscar por código, cliente, tipo de ascensor o servicio…" value={filtros.q}
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          <input className="input col-span-2" placeholder="Buscar por código, edificio/obra, cliente, tipo de ascensor o servicio…" value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_global} onChange={e => setFiltros(f => ({ ...f, estado_global: e.target.value }))}>
             {ESTADOS_GLOBALES.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
@@ -302,10 +422,6 @@ export default function Cotizaciones() {
             allowEmpty
             emptyLabel="Todos los clientes"
           />
-          <select className="select" value={filtros.id_tipo_servicio} onChange={e => setFiltros(f => ({ ...f, id_tipo_servicio: e.target.value }))}>
-            <option value="">Todos los tipos</option>
-            {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-          </select>
           <input type="date" className="input" value={filtros.desde} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} />
           <input type="date" className="input" value={filtros.hasta} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} />
         </div>
@@ -336,8 +452,8 @@ export default function Cotizaciones() {
                     return (
                       <tr key={c.id} className="table-row-hover">
                         <td className="table-td"><Link to={`/cotizaciones/${c.id}`} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link></td>
-                        <td className="table-td">{c.cliente?.nombre || '—'}</td>
-                        <td className="table-td">{c.tipo_servicio?.nombre || '—'}</td>
+                        <td className="table-td">{nombreEdificioCotizacion(c) || '—'}</td>
+                        <td className="table-td">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre || '—'}</td>
                         <td className="table-td">v{v?.numero_version || c.version_activa}</td>
                         <td className="table-td">{formatFecha(v?.fecha_validez)}</td>
                         <td className="table-td text-right">{formatMonto(v?.monto_total, v?.moneda)}</td>
@@ -355,7 +471,10 @@ export default function Cotizaciones() {
                             </div>
                           ) : <span className="text-carbon-400">—</span>}
                         </td>
-                        <td className="table-td text-right">
+                        <td className="table-td text-right whitespace-nowrap">
+                          {puedeCrear && (
+                            <button onClick={() => duplicar(c.id)} className="btn-ghost text-xs !py-1.5 !px-3 mr-1">Duplicar</button>
+                          )}
                           <Link to={`/cotizaciones/${c.id}`} className="btn-ghost text-xs !py-1.5 !px-3">Abrir</Link>
                         </td>
                       </tr>
@@ -374,8 +493,8 @@ export default function Cotizaciones() {
                       <span className="font-mono text-sm text-brand-700">{c.codigo}</span>
                       <span className={`badge ${badgeEstado(c.estado_global)}`}>{c.estado_global}</span>
                     </div>
-                    <div className="text-sm text-carbon-800 font-medium">{c.cliente?.nombre}</div>
-                    <div className="text-xs text-carbon-500 mt-0.5">{c.tipo_servicio?.nombre} • v{v?.numero_version}</div>
+                    <div className="text-sm text-carbon-800 font-medium">{nombreEdificioCotizacion(c)}</div>
+                    <div className="text-xs text-carbon-500 mt-0.5">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre} • v{v?.numero_version}</div>
                     <div className="mt-1.5 flex justify-between text-xs">
                       <span className={`badge ${badgeEstado(v?.estado_version)}`}>{v?.estado_version}</span>
                       <span className="font-medium">{formatMonto(v?.monto_total, v?.moneda)}</span>
@@ -404,12 +523,12 @@ export default function Cotizaciones() {
 
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
-        title="Nueva cotización"
+        onClose={cerrarModal}
+        title={duplicandoDe ? `Nueva cotización (duplicada de ${duplicandoDe})` : 'Nueva cotización'}
         size="xl"
         footer={
           <>
-            <button onClick={() => setOpen(false)} className="btn-ghost">Cancelar</button>
+            <button onClick={cerrarModal} className="btn-ghost">Cancelar</button>
             <button type="submit" form="form-cotizacion" disabled={saving} className="btn-primary">
               {saving ? 'Guardando…' : 'Crear cotización'}
             </button>
@@ -436,11 +555,20 @@ export default function Cotizaciones() {
               />
             </div>
             <div>
-              <label className="label">Tipo de servicio *</label>
+              <label className="label">Tipo de servicio (padre) *</label>
               <select className="select" value={form.id_tipo_servicio}
-                onChange={e => setForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}>
+                onChange={e => setForm(f => ({ ...f, id_tipo_servicio: e.target.value, id_subtipo_servicio: '' }))}>
                 <option value="">— Selecciona —</option>
-                {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                {padresTipo.map(t => <option key={t.id} value={t.id}>{t.nombre} ({t.categoria_funcional === 'PROYECTOS' ? 'Proyectos' : 'Servicios'})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Subtipo *</label>
+              <select className="select" value={form.id_subtipo_servicio}
+                onChange={e => setForm(f => ({ ...f, id_subtipo_servicio: e.target.value }))}
+                disabled={!form.id_tipo_servicio}>
+                <option value="">{form.id_tipo_servicio ? '— Selecciona —' : 'Elige primero el tipo padre'}</option>
+                {subtiposDelPadre.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
               </select>
             </div>
           </div>
@@ -569,11 +697,24 @@ export default function Cotizaciones() {
             </div>
           </div>
 
+          <div className="flex items-center justify-end">
+            <label className="inline-flex items-center gap-2 text-sm text-carbon-700 cursor-pointer">
+              <input type="checkbox" checked={form.sin_igv}
+                onChange={e => setForm(f => ({ ...f, sin_igv: e.target.checked }))} />
+              Cotizar sin IGV
+            </label>
+          </div>
           <div className="border-t border-carbon-100 pt-3 grid grid-cols-2 gap-1 text-sm">
             <div className="text-right text-carbon-600">Subtotal</div>
             <div className="text-right font-medium">{formatMonto(subtotal, form.moneda)}</div>
-            <div className="text-right text-carbon-600">IGV ({Math.round(igvTasa * 100)}%)</div>
-            <div className="text-right font-medium">{formatMonto(igvCalc, form.moneda)}</div>
+            {form.sin_igv ? (
+              <div className="col-span-2 text-right text-xs text-carbon-500">Precios sin IGV</div>
+            ) : (
+              <>
+                <div className="text-right text-carbon-600">IGV ({Math.round(igvTasa * 100)}%)</div>
+                <div className="text-right font-medium">{formatMonto(igvCalc, form.moneda)}</div>
+              </>
+            )}
             <div className="text-right text-brand-700 font-bold">TOTAL</div>
             <div className="text-right text-brand-700 font-bold text-base">{formatMonto(totalCalc, form.moneda)}</div>
           </div>
@@ -584,6 +725,37 @@ export default function Cotizaciones() {
             total={totalCalc}
             moneda={form.moneda}
           />
+
+          {cuentas.length > 0 && (
+            <div>
+              <label className="label">Cuentas bancarias en el PDF</label>
+              <p className="text-[11px] text-slate-500 mb-2">Se imprimirán en el PDF solo las cuentas marcadas. Se gestionan en Configuración › Cuentas bancarias.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {cuentas.map(c => {
+                  const marcada = form.cuentas_pdf.includes(c.id);
+                  return (
+                    <label key={c.id} className={`flex items-start gap-2 rounded-lg ring-1 p-2.5 cursor-pointer text-sm ${marcada ? 'ring-brand-300 bg-brand-50/40' : 'ring-slate-200'}`}>
+                      <input type="checkbox" className="mt-0.5" checked={marcada}
+                        onChange={e => setForm(f => ({
+                          ...f,
+                          cuentas_pdf: e.target.checked
+                            ? [...f.cuentas_pdf, c.id]
+                            : f.cuentas_pdf.filter(id => id !== c.id)
+                        }))} />
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-800">{c.banco} <span className="text-xs text-slate-500">({c.moneda})</span></div>
+                        <div className="text-xs text-slate-500 truncate">{c.tipo_cuenta} · {c.numero_cuenta}</div>
+                        <div className="text-xs text-slate-400 truncate">{c.titular}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+              {form.cuentas_pdf.length === 0 && (
+                <p className="text-[11px] text-amber-600 mt-1">Ninguna cuenta seleccionada: el PDF no incluirá la sección de datos para pago.</p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="label">Observaciones internas</label>
