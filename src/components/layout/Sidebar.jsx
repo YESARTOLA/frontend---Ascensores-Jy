@@ -135,10 +135,10 @@ function Nav({ onClose, visibleFor }) {
     <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
       <Section label="Operación" />
       <Link to="/" icon={ICONS.dashboard} label="Dashboard" onClose={onClose} />
-      {visibleFor('super_admin', 'admin', 'coordinador', 'contabilidad') && (
+      {visibleFor('super_admin', 'admin', 'contabilidad') && (
         <Link to="/clientes" icon={ICONS.users} label="Clientes" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'coordinador', 'contabilidad') && (
+      {visibleFor('super_admin', 'admin', 'contabilidad') && (
         <Link to="/ascensores" icon={ICONS.elevator} label="Ascensores" onClose={onClose} />
       )}
       {visibleFor('super_admin', 'admin', 'coordinador') && (
@@ -153,7 +153,9 @@ function Nav({ onClose, visibleFor }) {
       {visibleFor('super_admin', 'admin', 'contabilidad') && (
         <Link to="/cotizaciones" icon={ICONS.receipt} label="Cotizaciones" onClose={onClose} />
       )}
-      <Link to="/servicios" icon={ICONS.briefcase} label="Proyectos" onClose={onClose} />
+      {visibleFor('super_admin', 'admin', 'contabilidad', 'tecnico') && (
+        <Link to="/servicios" icon={ICONS.briefcase} label="Proyectos" onClose={onClose} />
+      )}
       {visibleFor('super_admin', 'admin', 'coordinador') && (
         <Link to="/asignaciones" icon={ICONS.list} label="Asignaciones" onClose={onClose} />
       )}
@@ -174,7 +176,7 @@ function Nav({ onClose, visibleFor }) {
       {visibleFor('super_admin', 'admin', 'coordinador') && (
         <Link to="/atenciones-rapidas" icon={ICONS.doc} label="Atención rápida" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'coordinador') && (
+      {visibleFor('super_admin', 'admin') && (
         <Link to="/leads" icon={ICONS.briefcase} label="Leads" onClose={onClose} />
       )}
 

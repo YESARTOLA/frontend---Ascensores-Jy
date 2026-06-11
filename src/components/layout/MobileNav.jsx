@@ -16,6 +16,13 @@ export default function MobileNav() {
       { to: '/panel-tecnico', label: 'Mis servicios', icon: 'briefcase' },
       { to: '/calendario', label: 'Agenda', icon: 'calendar' }
     ];
+  } else if (rol === 'coordinador') {
+    items = [
+      { to: '/', label: 'Inicio', icon: 'home' },
+      { to: '/asignaciones', label: 'Asignaciones', icon: 'briefcase' },
+      { to: '/calendario', label: 'Agenda', icon: 'calendar' },
+      { to: '/recordatorios', label: 'Recordatorios', icon: 'doc' }
+    ];
   } else if (rol === 'contabilidad') {
     items = [
       { to: '/', label: 'Inicio', icon: 'home' },

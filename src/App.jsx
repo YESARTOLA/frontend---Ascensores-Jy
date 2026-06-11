@@ -77,16 +77,16 @@ export default function App() {
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/clientes" element={<RequireRole allow={['super_admin','admin','coordinador','contabilidad']}><Clientes /></RequireRole>} />
-        <Route path="/clientes/:id" element={<RequireRole allow={['super_admin','admin','coordinador','contabilidad']}><Cliente360 /></RequireRole>} />
-        <Route path="/ascensores" element={<Ascensores />} />
-        <Route path="/ascensores/:id" element={<AscensorHistorial />} />
+        <Route path="/clientes" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Clientes /></RequireRole>} />
+        <Route path="/clientes/:id" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Cliente360 /></RequireRole>} />
+        <Route path="/ascensores" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Ascensores /></RequireRole>} />
+        <Route path="/ascensores/:id" element={<RequireRole allow={['super_admin','admin','contabilidad']}><AscensorHistorial /></RequireRole>} />
         <Route path="/tecnicos" element={<Tecnicos />} />
         <Route path="/tipos-servicio" element={<TiposServicio />} />
         <Route path="/tipos-ascensor" element={<TiposAscensor />} />
         <Route path="/cotizaciones" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Cotizaciones /></RequireRole>} />
         <Route path="/cotizaciones/:id" element={<RequireRole allow={['super_admin','admin','contabilidad']}><CotizacionDetalle /></RequireRole>} />
-        <Route path="/servicios" element={<Servicios />} />
+        <Route path="/servicios" element={<RequireRole allow={['super_admin','admin','contabilidad','tecnico']}><Servicios /></RequireRole>} />
         <Route path="/servicios/:id" element={<ServicioDetalle />} />
         <Route path="/panel-tecnico" element={<PanelTecnico />} />
         <Route path="/asignaciones" element={<Asignaciones />} />
@@ -98,7 +98,7 @@ export default function App() {
         <Route path="/emergencias" element={<Emergencias />} />
         <Route path="/correctivos" element={<Correctivos />} />
         <Route path="/mantenimientos" element={<Mantenimientos />} />
-        <Route path="/leads" element={<RequireRole allow={['super_admin','admin','coordinador']}><Leads /></RequireRole>} />
+        <Route path="/leads" element={<RequireRole allow={['super_admin','admin']}><Leads /></RequireRole>} />
         <Route path="/atenciones-rapidas" element={<AtencionesRapidas />} />
         <Route path="/calendario" element={<Calendario />} />
         <Route path="/recordatorios" element={<Recordatorios />} />

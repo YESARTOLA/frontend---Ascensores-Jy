@@ -199,7 +199,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
             <KpiCard label="Agenda hoy"           value={data.coordinador?.agendaHoy?.length || 0} tone="brand"  icon={Icons.cal}     delay={0}   href="/calendario" />
             <KpiCard label="Emergencias activas"  value={data.emergenciasActivas}                  tone="red"    icon={Icons.alert}   delay={60}  href="/emergencias" />
-            <KpiCard label="Servicios pendientes" value={data.pendientes}                          tone="amber"  icon={Icons.pending} delay={120} href="/servicios" />
+            <KpiCard label="Servicios pendientes" value={data.pendientes}                          tone="amber"  icon={Icons.pending} delay={120} href="/asignaciones" />
             <KpiCard label="Técnicos disponibles" value={data.tecnicosDisponibles}                 tone="slate"  icon={Icons.users}   delay={180} href="/tecnicos" />
             <KpiCard label="Mant. activos"        value={data.mantenimientosProximos}              tone="violet" icon={Icons.cal}     delay={240} href="/mantenimientos" />
           </div>

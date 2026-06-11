@@ -553,7 +553,7 @@ export default function ServicioDetalle() {
               ? `${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`.trim()
               : <span className="text-amber-600">Sin programar</span>} />
             <Info label="Prioridad" value={s.prioridad} />
-            <Info label="Cliente" value={esTecnico
+            <Info label="Cliente" value={(esTecnico || esCoordinador)
               ? <span className="text-slate-800">{nombreCliente(s.cliente)}</span>
               : <Link to={`/clientes/${s.cliente?.id}`} className="text-brand-700 hover:underline">{nombreCliente(s.cliente)}</Link>} cols={2} />
             <Info label={`Ascensores · ${(s.ascensores || []).length}`} value={
@@ -562,7 +562,7 @@ export default function ServicioDetalle() {
                 : <div className="space-y-1">
                     {s.ascensores.map(sa => (
                       <div key={sa.id} className="flex items-baseline justify-between gap-3">
-                        {esTecnico
+                        {(esTecnico || esCoordinador)
                           ? <span className="font-mono text-slate-800">{sa.ascensor?.codigo}</span>
                           : <Link to={`/ascensores/${sa.ascensor?.id}`} className="font-mono text-brand-700 hover:underline">{sa.ascensor?.codigo}</Link>}
                         <span className="text-xs text-slate-500 truncate flex-1">{sa.ascensor?.ubicacion || ''}</span>
