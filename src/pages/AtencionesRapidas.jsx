@@ -9,10 +9,16 @@ import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { badgeEstado, formatFechaHora, hoyISO, sanearTelefono, formatTelefono } from '../utils/formatters.js';
-import { esAtencionRapidaConvertida } from '../utils/estadoServicio.js';
+import { esAtencionRapidaConvertida, ESTADOS_ATENCION_RAPIDA } from '../utils/estadoServicio.js';
 
 const FORM_ID = 'form-atencion-rapida';
-const inicial = { nombre_contacto: '', telefono: '', mensaje_rapido: '', tipo_solicitud: '', nivel_urgencia: 'media' };
+// SSoT de niveles de urgencia del módulo: alimenta tanto el filtro como el
+// <select> del formulario. "seguimiento" es un estado de baja prioridad para
+// casos que solo requieren acompañamiento, no atención inmediata.
+const NIVELES_URGENCIA = ['alta', 'media', 'baja', 'seguimiento'];
+const badgeUrgencia = (n) =>
+  n === 'alta' ? 'badge-red' : n === 'media' ? 'badge-amber' : n === 'seguimiento' ? 'badge-blue' : 'badge-gray';
+const inicial = { nombre_contacto: '', telefono: '', mensaje_rapido: '', tipo_solicitud: '', responsable: '', nivel_urgencia: 'media' };
 const inicialConv = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', id_subtipo_servicio: '', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN' };
 
 export default function AtencionesRapidas() {
@@ -31,8 +37,9 @@ export default function AtencionesRapidas() {
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
 
+  const [filtros, setFiltros] = useState({ q: '', estado_atencion: '', nivel_urgencia: '' });
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
-    usePaginatedList(atencionesRapidasService.paginate, {}, { initialPageSize: 25 });
+    usePaginatedList(atencionesRapidasService.paginate, filtros, { initialPageSize: 25 });
 
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list()])
@@ -64,6 +71,7 @@ export default function AtencionesRapidas() {
       telefono: a.telefono || '',
       mensaje_rapido: a.mensaje_rapido || '',
       tipo_solicitud: a.tipo_solicitud || '',
+      responsable: a.responsable || '',
       nivel_urgencia: a.nivel_urgencia || 'media'
     });
     setOpen(true);
@@ -106,14 +114,30 @@ export default function AtencionesRapidas() {
 
   return (
     <>
-      <PageHeader title="Atención rápida" subtitle={`${data.length} atención(es)`} actions={puedeCrear && <button onClick={abrirNuevo} className="btn-primary">+ Nueva atención</button>} />
+      <PageHeader title="Atención rápida" subtitle={`${total} atención(es)`} actions={puedeCrear && <button onClick={abrirNuevo} className="btn-primary">+ Nueva atención</button>} />
+      <div className="card mb-4">
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <input className="input sm:col-span-2" placeholder="Buscar por contacto, teléfono, cliente, edificio o mensaje…"
+            value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
+          <select className="select" value={filtros.estado_atencion}
+            onChange={e => setFiltros(f => ({ ...f, estado_atencion: e.target.value }))}>
+            <option value="">Todos los estados</option>
+            {ESTADOS_ATENCION_RAPIDA.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select className="select" value={filtros.nivel_urgencia}
+            onChange={e => setFiltros(f => ({ ...f, nivel_urgencia: e.target.value }))}>
+            <option value="">Todas las urgencias</option>
+            {NIVELES_URGENCIA.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin atenciones rápidas" /> : (
           <div className="overflow-x-auto scroll-thin">
             <table className="table-base">
               <thead><tr>
                 <th className="table-th">Contacto</th><th className="table-th">Mensaje</th>
-                <th className="table-th">Tipo</th><th className="table-th">Urgencia</th>
+                <th className="table-th">Tipo</th><th className="table-th">Responsable</th><th className="table-th">Urgencia</th>
                 <th className="table-th">Estado</th><th className="table-th">Registrada</th>
                 <th className="table-th text-right">Acciones</th>
               </tr></thead>
@@ -125,7 +149,8 @@ export default function AtencionesRapidas() {
                     <td className="table-td"><div className="text-sm">{a.nombre_contacto}</div><div className="text-xs font-mono text-slate-500">{formatTelefono(a.telefono)}</div></td>
                     <td className="table-td text-xs max-w-xs truncate">{a.mensaje_rapido}</td>
                     <td className="table-td text-xs">{a.tipo_solicitud || '—'}</td>
-                    <td className="table-td"><span className={a.nivel_urgencia === 'alta' ? 'badge-red' : a.nivel_urgencia === 'media' ? 'badge-amber' : 'badge-gray'}>{a.nivel_urgencia}</span></td>
+                    <td className="table-td text-xs">{a.responsable || '—'}</td>
+                    <td className="table-td"><span className={badgeUrgencia(a.nivel_urgencia)}>{a.nivel_urgencia}</span></td>
                     <td className="table-td"><span className={badgeEstado(a.estado_atencion)}>{a.estado_atencion}</span></td>
                     <td className="table-td text-xs">{formatFechaHora(a.date_time_registration)}</td>
                     <td className="table-td text-right whitespace-nowrap">
@@ -171,7 +196,8 @@ export default function AtencionesRapidas() {
           /></div>
           <div className="sm:col-span-2"><label className="label">Mensaje rápido</label><textarea className="textarea" rows="2" value={form.mensaje_rapido} onChange={e => setForm(f => ({ ...f, mensaje_rapido: e.target.value }))} /></div>
           <div><label className="label">Tipo de solicitud</label><input className="input" value={form.tipo_solicitud} onChange={e => setForm(f => ({ ...f, tipo_solicitud: e.target.value }))} /></div>
-          <div><label className="label">Urgencia</label><select className="select" value={form.nivel_urgencia} onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}><option>alta</option><option>media</option><option>baja</option></select></div>
+          <div><label className="label">Responsable</label><input className="input" value={form.responsable} onChange={e => setForm(f => ({ ...f, responsable: e.target.value }))} /></div>
+          <div><label className="label">Urgencia</label><select className="select" value={form.nivel_urgencia} onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}>{NIVELES_URGENCIA.map(n => <option key={n} value={n}>{n}</option>)}</select></div>
         </form>
       </Modal>
 

@@ -35,7 +35,7 @@ export default function Correctivos() {
   const [clientes, setClientes] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
-  const [filtros, setFiltros] = useState({ estado_correctivo: '', nivel_urgencia: '' });
+  const [filtros, setFiltros] = useState({ q: '', estado_correctivo: '', nivel_urgencia: '' });
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(inicial);
@@ -165,7 +165,9 @@ export default function Correctivos() {
       />
 
       <div className="card mb-4">
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o falla…"
+            value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_correctivo}
             onChange={e => setFiltros(f => ({ ...f, estado_correctivo: e.target.value }))}>
             {ESTADOS_FILTRO_CORRECTIVO.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
@@ -265,7 +267,7 @@ export default function Correctivos() {
               <ClienteAutocomplete
                 clientes={clientes}
                 value={form.id_cliente}
-                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
                 required
                 placeholder="Escriba para buscar por nombre de edificio / obra…"
               />

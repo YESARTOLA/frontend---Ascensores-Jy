@@ -9,6 +9,7 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensores, resumenAscensores, hoyISO } from '../utils/formatters.js';
 import { generarReportePDF } from '../utils/pdfReport.js';
 import { esFacturado } from '../utils/estadoFactura.js';
+import { ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
 
 // Categoría agrupa los reportes operativos por entidad del negocio. El selector
 // superior actúa como filtro de la lista de tabs. "todos" muestra todos.
@@ -338,7 +339,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
                 <label className="label">Estado emergencia</label>
                 <select className="select" value={filtros.estado_emergencia || ''} onChange={e => setF('estado_emergencia', e.target.value)}>
                   <option value="">Todos</option>
-                  <option>Reportada</option><option>En atención</option><option>Atendida</option><option>Cerrada</option>
+                  {ESTADOS_EMERGENCIA.map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
             )}

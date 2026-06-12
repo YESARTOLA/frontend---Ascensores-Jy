@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { leadsService, clientesService, edificiosService, ascensoresService, tiposServicioService, tiposAscensorService, ubigeoService, usuariosService, archivosService } from '../services';
+import { leadsService, clientesService, edificiosService, ascensoresService, tiposServicioService, tiposAscensorService, ubigeoService, usuariosService, tecnicosService, archivosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -17,7 +17,7 @@ import EdificioForm, { edificioFormInicial } from '../components/edificios/Edifi
 import AscensorForm, { ascensorFormInicial } from '../components/ascensores/AscensorForm.jsx';
 import LeadForm, { leadFormInicial, leadAFormulario } from '../components/leads/LeadForm.jsx';
 
-const inicialConvertir = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN', titulo: '', descripcion: '' };
+const inicialConvertir = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN', id_tecnico: '', titulo: '', descripcion: '' };
 
 export default function Leads() {
   const [clientes, setClientes] = useState([]);
@@ -27,6 +27,7 @@ export default function Leads() {
   const [ubigeo, setUbigeo] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [vendedores, setVendedores] = useState([]);
+  const [tecnicos, setTecnicos] = useState([]);
   // Filtros de la lista (server-side): buscador libre + vendedor + ubicación.
   const [filtros, setFiltros] = useState({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '', id_padre: '' });
   const [open, setOpen] = useState(false);
@@ -62,9 +63,13 @@ export default function Leads() {
   const [catalogosConv, setCatalogosConv] = useState(null);
   const toast = useToast();
   const navigate = useNavigate();
-  const { esSuperAdmin, esAdmin, esCoordinador, puedeVerPrecio } = useAuth();
+  const { esSuperAdmin, esAdmin, esCoordinador, esVendedora, puedeVerPrecio } = useAuth();
+  // Gestión del lead (editar datos, cambiar estado, adjuntar cotizaciones): la
+  // Vendedora NO la tiene — solo da de alta y convierte (el backend lo refuerza).
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
-  const puedeConvertir = esSuperAdmin || esAdmin;
+  // Alta de nuevos leads y conversión: incluye a la Vendedora.
+  const puedeAltaLead = puedeCrear || esVendedora;
+  const puedeConvertir = esSuperAdmin || esAdmin || esVendedora;
   const puedeCotizar = esSuperAdmin || esAdmin;
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
@@ -77,11 +82,12 @@ export default function Leads() {
     const aplicar = (setter) => (r) => { if (r.status === 'fulfilled') setter(r.value); };
     Promise.allSettled([
       clientesService.list(), ascensoresService.list(), tiposServicioService.list(),
-      tiposAscensorService.list(), ubigeoService.list(), usuariosService.list(), leadsService.vendedores()
-    ]).then(([c, a, t, ta, ub, u, v]) => {
+      tiposAscensorService.list(), ubigeoService.list(), usuariosService.list(), leadsService.vendedores(),
+      tecnicosService.list()
+    ]).then(([c, a, t, ta, ub, u, v, te]) => {
       aplicar(setClientes)(c); aplicar(setAscensores)(a); aplicar(setTipos)(t);
       aplicar(setTiposAscensor)(ta); aplicar(setUbigeo)(ub); aplicar(setUsuarios)(u);
-      aplicar(setVendedores)(v);
+      aplicar(setVendedores)(v); aplicar(setTecnicos)(te);
     });
   }, []);
 
@@ -127,8 +133,10 @@ export default function Leads() {
 
   const abrirConvertir = (l) => {
     setOpenConv(l);
-    setConvMode('existente');
-    setConvStep('servicio');
+    // La Vendedora solo crea clientes nuevos: el wizard arranca en el paso
+    // "Cliente" y no se le ofrece la pestaña "Cliente existente".
+    setConvMode(esVendedora ? 'nuevo' : 'existente');
+    setConvStep(esVendedora ? 'cliente' : 'servicio');
     setNuevoCliente(null);
     setConvForm({ ...inicialConvertir, id_cliente: l.id_cliente || '', id_tipo_servicio: l.id_tipo_servicio_solicitado || '' });
     setNuevoEdificio(null);
@@ -178,10 +186,24 @@ export default function Leads() {
 
   // Paso 1 (cliente nuevo): crea el cliente real vía POST /clientes. Si el
   // usuario abandona después, el cliente persiste y puede usarse como existente.
+  // Antes de crear, detecta por documento (RUC/DNI): si ya existe un cliente con
+  // ese documento, se VINCULA a ese cliente en vez de crear un duplicado.
   const crearClienteConv = async (payload) => {
     if (convGuardando) return;
     setConvGuardando(true);
     try {
+      const doc = (payload.numero_documento || '').trim();
+      if (doc) {
+        const existente = await clientesService.porDocumento(doc);
+        if (existente) {
+          setNuevoCliente(existente);
+          setClientes(prev => prev.some(c => c.id === existente.id) ? prev : [...prev, existente]);
+          setConvForm(f => ({ ...f, id_cliente: String(existente.id), id_ascensor: '' }));
+          toast.info(`El documento ${doc} ya pertenece al cliente «${existente.nombre}»: se vinculó a ese cliente.`);
+          setConvStep('edificio');
+          return;
+        }
+      }
       const cliente = await clientesService.create(payload);
       setNuevoCliente(cliente);
       setClientes(prev => [...prev, cliente]);
@@ -304,7 +326,7 @@ export default function Leads() {
 
   return (
     <>
-      <PageHeader title="Leads" subtitle={`${total} lead(s)`} actions={puedeCrear && <button onClick={() => setOpen(true)} className="btn-primary">+ Nuevo lead</button>} />
+      <PageHeader title="Leads" subtitle={`${total} lead(s)`} actions={puedeAltaLead && <button onClick={() => setOpen(true)} className="btn-primary">+ Nuevo lead</button>} />
 
       <PadreTabs
         padres={tipos.filter(t => t.es_padre)}
@@ -620,23 +642,26 @@ export default function Leads() {
             </button>
           )}
         </>}>
-        {/* Selector de origen del cliente */}
+        {/* Selector de origen del cliente. La Vendedora solo crea clientes
+            nuevos: para ella se omite la pestaña "Cliente existente". */}
         <div className="mb-4">
-          <div className="inline-flex rounded-lg ring-1 ring-slate-200 overflow-hidden">
-            {[
-              { modo: 'existente', etiqueta: 'Cliente existente' },
-              { modo: 'nuevo', etiqueta: 'Crear cliente nuevo' }
-            ].map(({ modo, etiqueta }) => (
-              <button key={modo} type="button"
-                onClick={() => cambiarModoConv(modo)}
-                disabled={!!nuevoCliente}
-                className={`px-4 py-2 text-sm font-medium transition ${convMode === modo
-                  ? 'bg-brand-600 text-white'
-                  : 'bg-white text-slate-600 hover:bg-slate-50'} ${nuevoCliente ? 'opacity-60 cursor-not-allowed' : ''}`}>
-                {etiqueta}
-              </button>
-            ))}
-          </div>
+          {!esVendedora && (
+            <div className="inline-flex rounded-lg ring-1 ring-slate-200 overflow-hidden">
+              {[
+                { modo: 'existente', etiqueta: 'Cliente existente' },
+                { modo: 'nuevo', etiqueta: 'Crear cliente nuevo' }
+              ].map(({ modo, etiqueta }) => (
+                <button key={modo} type="button"
+                  onClick={() => cambiarModoConv(modo)}
+                  disabled={!!nuevoCliente}
+                  className={`px-4 py-2 text-sm font-medium transition ${convMode === modo
+                    ? 'bg-brand-600 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'} ${nuevoCliente ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                  {etiqueta}
+                </button>
+              ))}
+            </div>
+          )}
           {convMode === 'nuevo' && (
             <p className="text-xs text-slate-500 mt-2">
               {convStep === 'cliente' && 'Paso 1 de 4 — Datos del nuevo cliente'}
@@ -714,6 +739,14 @@ export default function Leads() {
             <div><label className="label">Fecha programada *</label><input type="date" required className="input" value={convForm.fecha_programada} onChange={e => setConvForm(f => ({ ...f, fecha_programada: e.target.value }))} /></div>
             <div><label className="label">Hora</label><input type="time" className="input" value={convForm.hora_programada} onChange={e => setConvForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>
             {puedeVerPrecio && <div><label className="label">Precio (S/) *</label><input type="number" step="0.01" required className="input" value={convForm.precio_interno} onChange={e => setConvForm(f => ({ ...f, precio_interno: e.target.value }))} /></div>}
+            <div>
+              <label className="label">Técnico asignado</label>
+              <select className="select" value={convForm.id_tecnico} onChange={e => setConvForm(f => ({ ...f, id_tecnico: e.target.value }))}>
+                <option value="">— Sin asignar —</option>
+                {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-0.5">Opcional: se registra como responsable principal del servicio.</p>
+            </div>
             <div className="sm:col-span-2"><label className="label">Título</label><input className="input" value={convForm.titulo} onChange={e => setConvForm(f => ({ ...f, titulo: e.target.value }))} /></div>
             <div className="sm:col-span-2"><label className="label">Descripción</label><textarea className="textarea" rows="2" value={convForm.descripcion} onChange={e => setConvForm(f => ({ ...f, descripcion: e.target.value }))} /></div>
           </form>

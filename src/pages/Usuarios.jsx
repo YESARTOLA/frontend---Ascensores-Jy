@@ -6,8 +6,9 @@ import Modal from '../components/common/Modal.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFecha, sanearTelefono, formatTelefono } from '../utils/formatters.js';
+import { ROLES_CON_ALCANCE } from '../features/auth/alcance.js';
 
-const inicial = { nombres: '', correo: '', contrasena: '', id_rol: '', id_tecnico: '', telefono: '' };
+const inicial = { nombres: '', correo: '', contrasena: '', id_rol: '', id_tecnico: '', telefono: '', acceso_servicios: 1, acceso_proyectos: 1 };
 
 export default function Usuarios() {
   const [roles, setRoles] = useState([]);
@@ -38,6 +39,13 @@ export default function Usuarios() {
     return r?.codigo === 'tecnico';
   }, [roles, form.id_rol]);
 
+  // Los checkboxes de ámbito (Servicios/Proyectos) solo aplican a roles con
+  // alcance configurable (Administrador / Coordinador).
+  const esRolConAlcance = useMemo(() => {
+    const r = roles.find(r => String(r.id) === String(form.id_rol));
+    return r ? ROLES_CON_ALCANCE.includes(r.codigo) : false;
+  }, [roles, form.id_rol]);
+
   const cambiarRol = (idRol) => {
     setForm(f => {
       const nuevoRol = roles.find(r => String(r.id) === String(idRol));
@@ -62,7 +70,8 @@ export default function Usuarios() {
   const abrirEdit = (u) => {
     setForm({
       nombres: u.nombres, correo: u.correo, contrasena: '',
-      id_rol: u.id_rol, id_tecnico: u.id_tecnico || '', telefono: sanearTelefono(u.telefono || '')
+      id_rol: u.id_rol, id_tecnico: u.id_tecnico || '', telefono: sanearTelefono(u.telefono || ''),
+      acceso_servicios: u.acceso_servicios ?? 1, acceso_proyectos: u.acceso_proyectos ?? 1
     });
     setEditId(u.id);
     setOpen(true);
@@ -70,6 +79,10 @@ export default function Usuarios() {
 
   const guardar = async (e) => {
     e.preventDefault();
+    if (esRolConAlcance && !form.acceso_servicios && !form.acceso_proyectos) {
+      toast.error('Marca al menos un ámbito: Servicios o Proyectos');
+      return;
+    }
     try {
       const payload = { ...form };
       if (editId && !payload.contrasena) delete payload.contrasena;
@@ -137,6 +150,24 @@ export default function Usuarios() {
           <div><label className="label">Rol *</label><select className="select" required value={form.id_rol} onChange={e => cambiarRol(e.target.value)}><option value="">—</option>{roles.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}</select></div>
           {esRolTecnico && (
             <div><label className="label">Técnico vinculado</label><select className="select" value={form.id_tecnico} onChange={e => setForm(f => ({ ...f, id_tecnico: e.target.value }))}><option value="">—</option>{tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
+          )}
+          {esRolConAlcance && (
+            <div className="sm:col-span-2">
+              <label className="label">Ámbito de acceso *</label>
+              <div className="flex flex-wrap gap-x-6 gap-y-2 mt-1">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={!!form.acceso_servicios}
+                    onChange={e => setForm(f => ({ ...f, acceso_servicios: e.target.checked ? 1 : 0 }))} />
+                  Servicios
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={!!form.acceso_proyectos}
+                    onChange={e => setForm(f => ({ ...f, acceso_proyectos: e.target.checked ? 1 : 0 }))} />
+                  Proyectos
+                </label>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Define a qué clientes y módulos accede el usuario. Marca al menos uno.</p>
+            </div>
           )}
           <div><label className="label">Teléfono</label><input
             className="input"

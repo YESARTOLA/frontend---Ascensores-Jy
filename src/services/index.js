@@ -25,7 +25,10 @@ export const clientesService = {
   exportar: (params, formato = 'excel') =>
     api.get('/clientes/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   tiposAscensor: () => api.get('/clientes/tipos-ascensor').then(r => r.data?.data ?? r.data),
-  clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data)
+  clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data),
+  // Detecta un cliente activo por RUC/DNI (devuelve el cliente o null) para
+  // vincularlo en la conversión de leads en vez de crear un duplicado.
+  porDocumento: (numero) => api.get(`/clientes/por-documento/${encodeURIComponent(numero)}`).then(r => r.data?.data ?? r.data)
 };
 
 // Edificios u obras de un cliente (ubicación física que agrupa ascensores).
@@ -69,6 +72,7 @@ export const tiposServicioService = {
   create: (d) => api.post('/tipos-servicio', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/tipos-servicio/${id}`, d).then(r => r.data?.data ?? r.data),
   setEstado: (id, estado) => api.patch(`/tipos-servicio/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data),
+  remove: (id) => api.delete(`/tipos-servicio/${id}`).then(r => r.data),
   listarTecnicos: (id) => api.get(`/tipos-servicio/${id}/tecnicos`).then(r => r.data?.data ?? r.data),
   vincularTecnico: (id, id_tecnico) => api.post(`/tipos-servicio/${id}/tecnicos`, { id_tecnico }).then(r => r.data),
   desvincularTecnico: (id, id_tecnico) => api.delete(`/tipos-servicio/${id}/tecnicos/${id_tecnico}`).then(r => r.data)
@@ -85,6 +89,7 @@ export const serviciosService = {
   iniciar: (id, accion) => api.post(`/servicios/${id}/iniciar`, { accion }).then(r => r.data),
   finalizar: (id, payload) => api.post(`/servicios/${id}/finalizar`, payload).then(r => r.data),
   cancelar: (id, motivo) => api.post(`/servicios/${id}/cancelar`, { motivo }).then(r => r.data),
+  remove: (id) => api.delete(`/servicios/${id}`).then(r => r.data),
   promover: (id) => api.post(`/servicios/${id}/promover`).then(r => r.data),
   revisar: (id, observaciones) => api.post(`/servicios/${id}/revisar`, { observaciones }).then(r => r.data),
   realizados: () => api.get('/servicios/realizados').then(r => r.data?.data ?? r.data),
@@ -136,7 +141,8 @@ export const emergenciasService = {
   list: (params) => api.get('/emergencias', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/emergencias', { params }).then(r => r.data),
   create: (d) => api.post('/emergencias', d).then(r => r.data?.data ?? r.data),
-  update: (id, d) => api.put(`/emergencias/${id}`, d).then(r => r.data?.data ?? r.data)
+  update: (id, d) => api.put(`/emergencias/${id}`, d).then(r => r.data?.data ?? r.data),
+  remove: (id) => api.delete(`/emergencias/${id}`).then(r => r.data)
 };
 
 export const correctivosService = {

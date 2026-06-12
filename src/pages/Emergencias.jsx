@@ -10,7 +10,9 @@ import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { badgeEstado, formatFechaHora, formatDiasEjecucion, nombreCliente } from '../utils/formatters.js';
-import { esServicioEditable, esEmergenciaCerrada } from '../utils/estadoServicio.js';
+import { esServicioEditable, esEmergenciaCerrada, ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
+
+const NIVELES_URGENCIA = ['alta', 'media', 'baja'];
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
@@ -35,9 +37,12 @@ export default function Emergencias() {
   const { esSuperAdmin, esAdmin, esCoordinador, puedeVerPrecio } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
+  // Eliminar una emergencia (y su servicio vinculado) queda restringido al superadministrador.
+  const puedeEliminar = esSuperAdmin;
 
+  const [filtros, setFiltros] = useState({ q: '', estado_emergencia: '', nivel_urgencia: '' });
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
-    usePaginatedList(emergenciasService.paginate, {}, { initialPageSize: 25 });
+    usePaginatedList(emergenciasService.paginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tecnicosService.list()])
@@ -86,6 +91,20 @@ export default function Emergencias() {
     setAsignaciones([]);
     setItems([]);
     setOpen(true);
+  };
+
+  const eliminar = async (em) => {
+    const aviso = em.servicio
+      ? `¿Eliminar la emergencia y su servicio vinculado ${em.servicio.codigo}? Se dará de baja también del calendario y, si existía, del folder contable.`
+      : '¿Eliminar esta emergencia?';
+    if (!window.confirm(aviso)) return;
+    try {
+      await emergenciasService.remove(em.id);
+      toast.success('Emergencia eliminada');
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al eliminar');
+    }
   };
 
   const cerrarModal = () => {
@@ -144,7 +163,24 @@ export default function Emergencias() {
 
   return (
     <>
-      <PageHeader title="Emergencias" subtitle={`${data.length} emergencia(s)`} actions={puedeCrear && <button onClick={abrirNuevo} className="btn-danger">+ Nueva emergencia</button>} />
+      <PageHeader title="Emergencias" subtitle={`${total} emergencia(s)`} actions={puedeCrear && <button onClick={abrirNuevo} className="btn-danger">+ Nueva emergencia</button>} />
+
+      <div className="card mb-4">
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
+            value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
+          <select className="select" value={filtros.estado_emergencia}
+            onChange={e => setFiltros(f => ({ ...f, estado_emergencia: e.target.value }))}>
+            <option value="">Todos los estados</option>
+            {ESTADOS_EMERGENCIA.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select className="select" value={filtros.nivel_urgencia}
+            onChange={e => setFiltros(f => ({ ...f, nivel_urgencia: e.target.value }))}>
+            <option value="">Todas las urgencias</option>
+            {NIVELES_URGENCIA.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
 
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin emergencias" /> : (
@@ -198,7 +234,13 @@ export default function Emergencias() {
                           <button type="button" onClick={() => abrirEditar(e)} className="text-brand-700 text-xs hover:underline">Editar</button>
                         </>
                       )}
-                      {!e.servicio && !editable && <span className="text-slate-400 text-xs">—</span>}
+                      {puedeEliminar && (
+                        <>
+                          {(e.servicio || editable) && <span className="text-slate-300 mx-1.5">·</span>}
+                          <button type="button" onClick={() => eliminar(e)} className="text-rose-600 text-xs hover:underline">Eliminar</button>
+                        </>
+                      )}
+                      {!e.servicio && !editable && !puedeEliminar && <span className="text-slate-400 text-xs">—</span>}
                     </td>
                   </tr>
                   );
@@ -234,7 +276,7 @@ export default function Emergencias() {
               <ClienteAutocomplete
                 clientes={clientes}
                 value={form.id_cliente}
-                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+                onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
                 required
                 placeholder="Escriba para buscar por nombre de edificio / obra…"
               />

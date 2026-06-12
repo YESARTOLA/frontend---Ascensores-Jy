@@ -101,6 +101,8 @@ export default function Servicios() {
   const { esSuperAdmin, esAdmin, puedeVerPrecio } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
   const puedeEditar = esSuperAdmin || esAdmin;
+  // Eliminar un proyecto queda restringido al superadministrador.
+  const puedeEliminar = esSuperAdmin;
   const toast = useToast();
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
@@ -327,6 +329,17 @@ export default function Servicios() {
     }
   };
 
+  const eliminar = async (s) => {
+    if (!window.confirm(`¿Eliminar el proyecto ${s.codigo}${s.titulo ? ` — ${s.titulo}` : ''}? Se dará de baja junto con su evento de calendario y folder contable.`)) return;
+    try {
+      await serviciosService.remove(s.id);
+      toast.success('Proyecto eliminado');
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al eliminar');
+    }
+  };
+
   const esEdicion = !!editando;
   const tituloModal = esEdicion ? 'Editar proyecto' : 'Nuevo proyecto';
   const labelGuardar = saving
@@ -399,6 +412,16 @@ export default function Servicios() {
                               >Editar</button>
                             </>
                           )}
+                          {puedeEliminar && (
+                            <>
+                              <span className="text-slate-300 mx-1.5">·</span>
+                              <button
+                                type="button"
+                                onClick={() => eliminar(s)}
+                                className="text-rose-600 text-xs hover:underline"
+                              >Eliminar</button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     );
@@ -429,13 +452,22 @@ export default function Servicios() {
                         {puedeVerPrecio && <span className="font-mono">{formatMonto(s.precio_interno, s.moneda)}</span>}
                       </div>
                     </Link>
-                    {editable && (
-                      <div className="mt-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => abrirEditar(s)}
-                          className="text-brand-700 text-xs hover:underline"
-                        >Editar</button>
+                    {(editable || puedeEliminar) && (
+                      <div className="mt-2 text-right space-x-3">
+                        {editable && (
+                          <button
+                            type="button"
+                            onClick={() => abrirEditar(s)}
+                            className="text-brand-700 text-xs hover:underline"
+                          >Editar</button>
+                        )}
+                        {puedeEliminar && (
+                          <button
+                            type="button"
+                            onClick={() => eliminar(s)}
+                            className="text-rose-600 text-xs hover:underline"
+                          >Eliminar</button>
+                        )}
                       </div>
                     )}
                   </div>

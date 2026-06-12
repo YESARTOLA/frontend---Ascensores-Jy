@@ -2,11 +2,13 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
 
 export default function MobileNav() {
-  const { rol } = useAuth();
+  const { rol, accesoProyectos } = useAuth();
 
+  // El ítem Proyectos apunta a /servicios (módulo Proyectos): solo se muestra si
+  // el usuario tiene ese ámbito, para no redirigir a un admin acotado a Servicios.
   let items = [
     { to: '/', label: 'Inicio', icon: 'home' },
-    { to: '/servicios', label: 'Servicios', icon: 'briefcase' },
+    ...(accesoProyectos ? [{ to: '/servicios', label: 'Proyectos', icon: 'briefcase' }] : []),
     { to: '/calendario', label: 'Agenda', icon: 'calendar' },
     { to: '/clientes', label: 'Clientes', icon: 'users' }
   ];

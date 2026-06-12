@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { authService } from '../../services';
+import { tieneAcceso } from './alcance.js';
 
 const AuthContext = createContext(null);
 
@@ -50,7 +51,11 @@ export function AuthProvider({ children }) {
     esCoordinador: rol === 'coordinador',
     esTecnico: rol === 'tecnico',
     esContabilidad: rol === 'contabilidad',
-    puedeVerPrecio: ['super_admin', 'admin', 'contabilidad'].includes(rol)
+    esVendedora: rol === 'vendedora',
+    puedeVerPrecio: ['super_admin', 'admin', 'contabilidad'].includes(rol),
+    // Ámbito (Servicios/Proyectos) del usuario. Roles sin alcance → ambos true.
+    accesoServicios: tieneAcceso(user, 'servicios'),
+    accesoProyectos: tieneAcceso(user, 'proyectos')
   }), [user, loading, rol]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

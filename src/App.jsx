@@ -1,9 +1,32 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './features/auth/AuthContext.jsx';
+import { tieneAcceso } from './features/auth/alcance.js';
 
 function RequireRole({ allow, children }) {
   const { rol } = useAuth();
   if (!allow.includes(rol)) return <Navigate to="/" replace />;
+  return children;
+}
+
+// Confina a un Administrador/Coordinador acotado a su ámbito ('servicios' |
+// 'proyectos'). Los roles sin alcance siempre pasan. El backend hace el
+// filtrado real; esto evita el acceso por URL a módulos fuera del ámbito.
+function RequireAlcance({ ambito, children }) {
+  const { user } = useAuth();
+  if (!tieneAcceso(user, ambito)) return <Navigate to="/" replace />;
+  return children;
+}
+
+// La Vendedora solo opera Leads y consulta el Calendario (solo lectura, para
+// validar disponibilidad de técnicos). Este guard la confina a esas rutas:
+// cualquier otra (incluido el Dashboard y las rutas sin RequireRole) la redirige,
+// garantizando el aislamiento también por URL, no solo por menú.
+const RUTAS_VENDEDORA = ['/leads', '/calendario'];
+function VendedoraGate({ children }) {
+  const { esVendedora } = useAuth();
+  const { pathname } = useLocation();
+  const permitida = RUTAS_VENDEDORA.some(p => pathname === p || pathname.startsWith(p + '/'));
+  if (esVendedora && !permitida) return <Navigate to="/leads" replace />;
   return children;
 }
 import AppLayout from './components/layout/AppLayout.jsx';
@@ -75,18 +98,18 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-      <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+      <Route element={<RequireAuth><VendedoraGate><AppLayout /></VendedoraGate></RequireAuth>}>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/clientes" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Clientes /></RequireRole>} />
-        <Route path="/clientes/:id" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Cliente360 /></RequireRole>} />
-        <Route path="/ascensores" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Ascensores /></RequireRole>} />
-        <Route path="/ascensores/:id" element={<RequireRole allow={['super_admin','admin','contabilidad']}><AscensorHistorial /></RequireRole>} />
+        <Route path="/clientes" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Clientes /></RequireRole>} />
+        <Route path="/clientes/:id" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Cliente360 /></RequireRole>} />
+        <Route path="/ascensores" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Ascensores /></RequireRole>} />
+        <Route path="/ascensores/:id" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><AscensorHistorial /></RequireRole>} />
         <Route path="/tecnicos" element={<Tecnicos />} />
         <Route path="/tipos-servicio" element={<TiposServicio />} />
         <Route path="/tipos-ascensor" element={<TiposAscensor />} />
         <Route path="/cotizaciones" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Cotizaciones /></RequireRole>} />
         <Route path="/cotizaciones/:id" element={<RequireRole allow={['super_admin','admin','contabilidad']}><CotizacionDetalle /></RequireRole>} />
-        <Route path="/servicios" element={<RequireRole allow={['super_admin','admin','contabilidad','tecnico']}><Servicios /></RequireRole>} />
+        <Route path="/servicios" element={<RequireRole allow={['super_admin','admin','contabilidad','tecnico','coordinador']}><RequireAlcance ambito="proyectos"><Servicios /></RequireAlcance></RequireRole>} />
         <Route path="/servicios/:id" element={<ServicioDetalle />} />
         <Route path="/panel-tecnico" element={<PanelTecnico />} />
         <Route path="/asignaciones" element={<Asignaciones />} />
@@ -95,11 +118,11 @@ export default function App() {
         <Route path="/cobros" element={<Cobros />} />
         <Route path="/cobros/:id" element={<CobroDetalle />} />
         <Route path="/facturas" element={<Facturas />} />
-        <Route path="/emergencias" element={<Emergencias />} />
-        <Route path="/correctivos" element={<Correctivos />} />
-        <Route path="/mantenimientos" element={<Mantenimientos />} />
-        <Route path="/leads" element={<RequireRole allow={['super_admin','admin']}><Leads /></RequireRole>} />
-        <Route path="/atenciones-rapidas" element={<AtencionesRapidas />} />
+        <Route path="/emergencias" element={<RequireAlcance ambito="servicios"><Emergencias /></RequireAlcance>} />
+        <Route path="/correctivos" element={<RequireAlcance ambito="servicios"><Correctivos /></RequireAlcance>} />
+        <Route path="/mantenimientos" element={<RequireAlcance ambito="servicios"><Mantenimientos /></RequireAlcance>} />
+        <Route path="/leads" element={<RequireRole allow={['super_admin','admin','vendedora','coordinador']}><Leads /></RequireRole>} />
+        <Route path="/atenciones-rapidas" element={<RequireAlcance ambito="servicios"><AtencionesRapidas /></RequireAlcance>} />
         <Route path="/calendario" element={<Calendario />} />
         <Route path="/recordatorios" element={<Recordatorios />} />
         <Route path="/contabilidad" element={<Contabilidad />} />

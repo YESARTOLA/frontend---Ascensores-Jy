@@ -96,6 +96,15 @@ export default function TiposServicio() {
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
+  const eliminar = async (t) => {
+    const etiqueta = t.es_padre ? 'tipo padre' : 'subtipo';
+    if (!window.confirm(`¿Eliminar el ${etiqueta} “${t.nombre}”?`)) return;
+    try {
+      await tiposServicioService.remove(t.id);
+      toast.success('Tipo eliminado'); cargar();
+    } catch (err) { toast.error(err.response?.data?.error || 'Error al eliminar'); }
+  };
+
   const refrescarTecs = async (idActual) => {
     const tipos = await tiposServicioService.list();
     setData(tipos);
@@ -153,6 +162,7 @@ export default function TiposServicio() {
                     <div className="flex gap-3 text-xs whitespace-nowrap">
                       <button onClick={() => abrirNuevoSubtipo(p.id)} className="text-emerald-700 hover:underline">+ Subtipo</button>
                       <button onClick={() => abrirEditar(p)} className="text-brand-700 hover:underline">Editar padre</button>
+                      <button onClick={() => eliminar(p)} className="text-rose-600 hover:underline">Eliminar</button>
                     </div>
                   )}
                 </div>
@@ -183,6 +193,7 @@ export default function TiposServicio() {
                         <td className="table-td text-right space-x-3 whitespace-nowrap">
                           {puedeEditar && <button onClick={() => setOpenTecs(t)} className="text-xs text-emerald-700 hover:underline">Técnicos</button>}
                           {puedeEditar && <button onClick={() => abrirEditar(t)} className="text-xs text-brand-700 hover:underline">Editar</button>}
+                          {puedeEditar && <button onClick={() => eliminar(t)} className="text-xs text-rose-600 hover:underline">Eliminar</button>}
                         </td>
                       </tr>
                     ))}

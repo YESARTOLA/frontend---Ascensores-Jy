@@ -67,8 +67,9 @@ function Link({ to, icon, label, onClose }) {
 }
 
 export default function Sidebar({ open, onClose }) {
-  const { rol } = useAuth();
+  const { rol, accesoServicios, accesoProyectos } = useAuth();
   const visibleFor = (...roles) => roles.includes(rol);
+  const alcance = { accesoServicios, accesoProyectos };
 
   return (
     <>
@@ -78,7 +79,7 @@ export default function Sidebar({ open, onClose }) {
         <aside className={`absolute inset-y-0 left-0 w-72 shadow-panel transform transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'} flex flex-col`}>
           <SidebarSurface>
             <Header />
-            <Nav onClose={onClose} visibleFor={visibleFor} />
+            <Nav onClose={onClose} visibleFor={visibleFor} rol={rol} {...alcance} />
             <Footer />
           </SidebarSurface>
         </aside>
@@ -88,7 +89,7 @@ export default function Sidebar({ open, onClose }) {
       <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 z-30 flex-col">
         <SidebarSurface>
           <Header />
-          <Nav visibleFor={visibleFor} />
+          <Nav visibleFor={visibleFor} rol={rol} {...alcance} />
           <Footer />
         </SidebarSurface>
       </aside>
@@ -130,15 +131,26 @@ function Header() {
   );
 }
 
-function Nav({ onClose, visibleFor }) {
+function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
+  // La Vendedora solo opera Leads y consulta el Calendario (solo lectura): su
+  // menú se reduce a esas dos entradas.
+  if (rol === 'vendedora') {
+    return (
+      <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
+        <Section label="Comercial" />
+        <Link to="/leads" icon={ICONS.briefcase} label="Leads" onClose={onClose} />
+        <Link to="/calendario" icon={ICONS.calendar} label="Calendario" onClose={onClose} />
+      </nav>
+    );
+  }
   return (
     <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
       <Section label="Operación" />
       <Link to="/" icon={ICONS.dashboard} label="Dashboard" onClose={onClose} />
-      {visibleFor('super_admin', 'admin', 'contabilidad') && (
+      {visibleFor('super_admin', 'admin', 'contabilidad', 'coordinador') && (
         <Link to="/clientes" icon={ICONS.users} label="Clientes" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'contabilidad') && (
+      {visibleFor('super_admin', 'admin', 'contabilidad', 'coordinador') && (
         <Link to="/ascensores" icon={ICONS.elevator} label="Ascensores" onClose={onClose} />
       )}
       {visibleFor('super_admin', 'admin', 'coordinador') && (
@@ -153,7 +165,7 @@ function Nav({ onClose, visibleFor }) {
       {visibleFor('super_admin', 'admin', 'contabilidad') && (
         <Link to="/cotizaciones" icon={ICONS.receipt} label="Cotizaciones" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'contabilidad', 'tecnico') && (
+      {visibleFor('super_admin', 'admin', 'contabilidad', 'tecnico', 'coordinador') && accesoProyectos && (
         <Link to="/servicios" icon={ICONS.briefcase} label="Proyectos" onClose={onClose} />
       )}
       {visibleFor('super_admin', 'admin', 'coordinador') && (
@@ -166,17 +178,19 @@ function Nav({ onClose, visibleFor }) {
       <Link to="/recordatorios" icon={ICONS.bell} label="Recordatorios" onClose={onClose} />
 
       <Section label="Atención" />
-      <Link to="/emergencias" icon={ICONS.alert} label="Emergencias" onClose={onClose} />
-      {visibleFor('super_admin', 'admin', 'coordinador', 'contabilidad', 'tecnico') && (
+      {accesoServicios && (
+        <Link to="/emergencias" icon={ICONS.alert} label="Emergencias" onClose={onClose} />
+      )}
+      {visibleFor('super_admin', 'admin', 'coordinador', 'contabilidad', 'tecnico') && accesoServicios && (
         <Link to="/correctivos" icon={ICONS.wrench} label="Correctivos" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'coordinador', 'contabilidad', 'tecnico') && (
+      {visibleFor('super_admin', 'admin', 'coordinador', 'contabilidad', 'tecnico') && accesoServicios && (
         <Link to="/mantenimientos" icon={ICONS.bolt} label="Mantenimientos" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'coordinador') && (
+      {visibleFor('super_admin', 'admin', 'coordinador') && accesoServicios && (
         <Link to="/atenciones-rapidas" icon={ICONS.doc} label="Atención rápida" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin') && (
+      {visibleFor('super_admin', 'admin', 'coordinador') && (
         <Link to="/leads" icon={ICONS.briefcase} label="Leads" onClose={onClose} />
       )}
 

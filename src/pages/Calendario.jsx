@@ -116,8 +116,11 @@ export default function Calendario() {
   const [materializarEv, setMaterializarEv] = useState(null); // evento a materializar
   const [materializarForm, setMaterializarForm] = useState({ fecha: '', hora: '', precio: '', moneda: 'PEN' });
   const toast = useToast();
-  const { esSuperAdmin, esAdmin, esCoordinador, rol } = useAuth();
+  const { esSuperAdmin, esAdmin, esCoordinador, esVendedora, rol } = useAuth();
   const puedeMaterializar = esSuperAdmin || esAdmin || esCoordinador;
+  // La Vendedora consulta la agenda en modo lectura: NO navega al detalle del
+  // servicio/proyecto (solo valida disponibilidad de técnicos).
+  const puedeAbrirServicio = !esVendedora;
 
   const tiposOpciones = useMemo(
     () => [{ value: '', label: 'Todos' }, ...tiposEventoVisibles(rol).map(t => ({ value: t.value, label: t.label }))],
@@ -325,7 +328,7 @@ export default function Calendario() {
                 <li key={e.id} className="p-3 sm:p-4 flex items-start gap-3">
                   <div className="h-2 w-2 mt-2 rounded-full" style={{ backgroundColor: e.color || colorPorTipo(e.tipo_evento) }} />
                   <div className="flex-1 min-w-0">
-                    {e.servicio
+                    {e.servicio && puedeAbrirServicio
                       ? <Link to={`/servicios/${e.servicio.id}`} className="block hover:bg-slate-50/60 rounded">{contenido}</Link>
                       : contenido}
                   </div>
@@ -392,7 +395,7 @@ export default function Calendario() {
                 <li key={e.id} className="py-3 flex items-start gap-3">
                   <div className="h-2 w-2 mt-2 rounded-full shrink-0" style={{ backgroundColor: e.color || colorPorTipo(e.tipo_evento) }} />
                   <div className="flex-1 min-w-0">
-                    {e.servicio ? (
+                    {e.servicio && puedeAbrirServicio ? (
                       <Link
                         to={`/servicios/${e.servicio.id}`}
                         onClick={cerrarModal}
