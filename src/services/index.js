@@ -91,7 +91,7 @@ export const serviciosService = {
   cancelar: (id, motivo) => api.post(`/servicios/${id}/cancelar`, { motivo }).then(r => r.data),
   remove: (id) => api.delete(`/servicios/${id}`).then(r => r.data),
   promover: (id) => api.post(`/servicios/${id}/promover`).then(r => r.data),
-  revisar: (id, observaciones) => api.post(`/servicios/${id}/revisar`, { observaciones }).then(r => r.data),
+  revisar: (id, payload) => api.post(`/servicios/${id}/revisar`, payload).then(r => r.data),
   realizados: () => api.get('/servicios/realizados').then(r => r.data?.data ?? r.data),
   realizadosPaginate: (params) => api.get('/servicios/realizados', { params }).then(r => r.data),
   observaciones: (idServicio) => api.get(`/servicios/${idServicio}/observaciones`).then(r => r.data?.data ?? r.data),
@@ -125,7 +125,8 @@ export const cobrosService = {
   recordatorio: (id) => api.post(`/cobros/${id}/recordatorio`).then(r => r.data?.data ?? r.data),
   cerrar: (id) => api.patch(`/cobros/${id}/cerrar`).then(r => r.data),
   cuotasCalendario: (params) => api.get('/cobros/cuotas-calendario', { params }).then(r => r.data?.data ?? r.data),
-  proyectos: () => api.get('/cobros/proyectos').then(r => r.data?.data ?? r.data)
+  proyectos: () => api.get('/cobros/proyectos').then(r => r.data?.data ?? r.data),
+  remove: (id) => api.delete(`/cobros/${id}`).then(r => r.data)
 };
 
 export const facturasService = {
@@ -134,7 +135,8 @@ export const facturasService = {
   get: (id) => api.get(`/facturas/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/facturas', d).then(r => r.data?.data ?? r.data),
   cambiarEstado: (id, estado_factura) =>
-    api.patch(`/facturas/${id}/estado`, { estado_factura }).then(r => r.data?.data ?? r.data)
+    api.patch(`/facturas/${id}/estado`, { estado_factura }).then(r => r.data?.data ?? r.data),
+  remove: (id) => api.delete(`/facturas/${id}`).then(r => r.data)
 };
 
 export const emergenciasService = {
@@ -149,7 +151,8 @@ export const correctivosService = {
   list: (params) => api.get('/correctivos', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/correctivos', { params }).then(r => r.data),
   create: (d) => api.post('/correctivos', d).then(r => r.data?.data ?? r.data),
-  update: (id, d) => api.put(`/correctivos/${id}`, d).then(r => r.data?.data ?? r.data)
+  update: (id, d) => api.put(`/correctivos/${id}`, d).then(r => r.data?.data ?? r.data),
+  remove: (id) => api.delete(`/correctivos/${id}`).then(r => r.data)
 };
 
 export const mantenimientosService = {
@@ -163,7 +166,8 @@ export const mantenimientosService = {
   exportar: (params, formato = 'excel') =>
     api.get('/mantenimientos/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   exportarDatos: (params) =>
-    api.get('/mantenimientos/exportar', { params: { ...params, formato: 'json' } }).then(r => r.data?.data ?? r.data)
+    api.get('/mantenimientos/exportar', { params: { ...params, formato: 'json' } }).then(r => r.data?.data ?? r.data),
+  remove: (id) => api.delete(`/mantenimientos/${id}`).then(r => r.data)
 };
 
 export const leadsService = {

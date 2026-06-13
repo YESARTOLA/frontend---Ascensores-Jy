@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { cobrosService, archivosService, facturasService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
@@ -43,6 +44,9 @@ export default function CobroDetalle() {
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
   const { esSuperAdmin } = useAuth();
+  const navigate = useNavigate();
+  const [openEliminar, setOpenEliminar] = useState(false);
+  const [facturaAEliminar, setFacturaAEliminar] = useState(null);
 
   const cargar = async () => { setLoading(true); try { setData(await cobrosService.get(id)); } finally { setLoading(false); } };
   useEffect(() => { cargar(); }, [id]);
@@ -333,6 +337,7 @@ export default function CobroDetalle() {
             {Number(data.saldo_pendiente) > 0 && <button onClick={recordar} className="btn-secondary">Recordatorio WhatsApp</button>}
             {Number(data.saldo_pendiente) === 0 && data.estado_cobro !== 'Cerrado' && <button onClick={cerrar} className="btn-primary">Cerrar cobro</button>}
             <button onClick={abrirModalFactura} className="btn-secondary">+ Factura</button>
+            {esSuperAdmin && <button onClick={() => setOpenEliminar(true)} className="btn-secondary !text-rose-600 !border-rose-200 hover:!bg-rose-50">Eliminar cobro</button>}
           </>
         } />
 
@@ -541,6 +546,12 @@ export default function CobroDetalle() {
                         <span className="text-emerald-700 text-xs font-medium">✓ Enviada</span>
                       ) : (
                         <span className="text-slate-300">—</span>
+                      )}
+                      {esSuperAdmin && (
+                        <>
+                          <span className="text-slate-300 mx-1.5">·</span>
+                          <button type="button" onClick={() => setFacturaAEliminar(f)} className="text-rose-600 text-xs hover:underline">Eliminar</button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -752,6 +763,56 @@ export default function CobroDetalle() {
           <div><label className="label">Archivo de factura</label><input type="file" className="input" onChange={subirArchivoFactura} /></div>
         </div>
       </Modal>
+
+      <ConfirmarEliminacion
+        open={openEliminar}
+        onClose={() => setOpenEliminar(false)}
+        titulo="Eliminar cobro"
+        palabraClave={data.servicio?.codigo || 'ELIMINAR'}
+        descripcion={
+          <>
+            Se dará de baja el cobro completo del servicio <span className="font-mono font-semibold">{data.servicio?.codigo}</span>:
+            cuotas, abonos, recordatorios y facturas asociadas. El servicio quedará como <strong>Sin cobro</strong>.
+            {Number(data.total_abonado) > 0 && (
+              <> <br /><strong className="text-rose-700">Atención:</strong> este cobro tiene {formatMonto(data.total_abonado, data.moneda)} ya abonados que se perderán del registro.</>
+            )}
+          </>
+        }
+        onConfirmar={async () => {
+          try {
+            await cobrosService.remove(id);
+            toast.success('Cobro eliminado');
+            setOpenEliminar(false);
+            navigate('/cobros');
+          } catch (err) {
+            toast.error(err.response?.data?.error || 'Error al eliminar cobro');
+          }
+        }}
+      />
+
+      <ConfirmarEliminacion
+        open={!!facturaAEliminar}
+        onClose={() => setFacturaAEliminar(null)}
+        titulo="Eliminar factura"
+        palabraClave={facturaAEliminar?.numero_factura || 'ELIMINAR'}
+        descripcion={
+          <>
+            Se dará de baja la factura <span className="font-mono font-semibold">{facturaAEliminar?.numero_factura}</span>
+            {facturaAEliminar?.estado_factura === ESTADO_FACTURA_ENVIADA && <> (que ya figura como <strong>Enviada</strong> al cliente)</>}.
+            Se recalculará el estado de facturación del servicio y se eliminará su PDF. Acción auditada y recuperable.
+          </>
+        }
+        onConfirmar={async () => {
+          try {
+            await facturasService.remove(facturaAEliminar.id);
+            toast.success('Factura eliminada');
+            setFacturaAEliminar(null);
+            cargar();
+          } catch (err) {
+            toast.error(err.response?.data?.error || 'Error al eliminar factura');
+          }
+        }}
+      />
     </>
   );
 }

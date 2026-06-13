@@ -326,7 +326,7 @@ export default function Calendario() {
               );
               return (
                 <li key={e.id} className="p-3 sm:p-4 flex items-start gap-3">
-                  <div className="h-2 w-2 mt-2 rounded-full" style={{ backgroundColor: e.color || colorPorTipo(e.tipo_evento) }} />
+                  <div className="h-2 w-2 mt-2 rounded-full" style={{ backgroundColor: colorPorTipo(e.tipo_evento) }} />
                   <div className="flex-1 min-w-0">
                     {e.servicio && puedeAbrirServicio
                       ? <Link to={`/servicios/${e.servicio.id}`} className="block hover:bg-slate-50/60 rounded">{contenido}</Link>
@@ -360,7 +360,7 @@ export default function Calendario() {
                   <div className={`text-right ${esHoy ? 'inline-block bg-brand-600 text-white rounded-full h-6 w-6 leading-6 text-center font-semibold' : ''}`}>{d.dia}</div>
                   <div className="mt-1 space-y-0.5 max-h-24 overflow-hidden">
                     {evs.slice(0, 3).map(e => (
-                      <div key={e.id} className="block truncate rounded px-1.5 py-0.5 text-white text-[10px]" style={{ backgroundColor: e.color || colorPorTipo(e.tipo_evento) }}>
+                      <div key={e.id} className="block truncate rounded px-1.5 py-0.5 text-white text-[10px]" style={{ backgroundColor: colorPorTipo(e.tipo_evento) }}>
                         {tituloSinCorrelativo(e)}
                       </div>
                     ))}
@@ -393,7 +393,7 @@ export default function Calendario() {
               const titulo = tituloSinCorrelativo(e);
               return (
                 <li key={e.id} className="py-3 flex items-start gap-3">
-                  <div className="h-2 w-2 mt-2 rounded-full shrink-0" style={{ backgroundColor: e.color || colorPorTipo(e.tipo_evento) }} />
+                  <div className="h-2 w-2 mt-2 rounded-full shrink-0" style={{ backgroundColor: colorPorTipo(e.tipo_evento) }} />
                   <div className="flex-1 min-w-0">
                     {e.servicio && puedeAbrirServicio ? (
                       <Link
@@ -449,8 +449,8 @@ export default function Calendario() {
                   <div className="text-slate-800 font-medium">{plan?.cliente?.nombre || '—'}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase tracking-wider text-slate-400">Ascensor</div>
-                  <div className="text-slate-800 font-mono">{plan?.ascensor?.codigo || '—'}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400">Ascensores</div>
+                  <div className="text-slate-800 font-mono">{(plan?.ascensores || []).map(a => a.ascensor?.codigo).filter(Boolean).join(', ') || '—'}</div>
                 </div>
                 <div className="col-span-2">
                   <div className="text-[10px] uppercase tracking-wider text-slate-400">Tipo de servicio</div>

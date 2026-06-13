@@ -447,10 +447,23 @@ export default function ServicioDetalle() {
     catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
-  const revisar = async () => {
-    const obs = prompt('Observaciones de la revisión (opcional):') || '';
-    try { await serviciosService.revisar(id, obs); toast.success('Servicio revisado y enviado a cobros'); cargar(); }
-    catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+  const revisar = async (resultado = 'aprobado') => {
+    const pedirMotivo = resultado !== 'aprobado';
+    const observaciones = prompt(
+      pedirMotivo ? 'Motivo (obligatorio para observar/rechazar):' : 'Observaciones de la revisión (opcional):'
+    );
+    if (pedirMotivo && !String(observaciones || '').trim()) {
+      return toast.error('Debe indicar el motivo al observar o rechazar');
+    }
+    try {
+      await serviciosService.revisar(id, { resultado, observaciones: observaciones || '' });
+      toast.success(
+        resultado === 'aprobado' ? 'Servicio aprobado y habilitado para cobro'
+        : resultado === 'observado' ? 'Servicio observado y devuelto a corrección'
+        : 'Servicio rechazado y devuelto a corrección'
+      );
+      cargar();
+    } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
   // Registrar/editar la fecha de programación cuando el servicio llega al área.
@@ -515,7 +528,9 @@ export default function ServicioDetalle() {
             {puedeIniciar && s.estado_servicio === 'Listo para salida' && <button onClick={() => iniciarAccion('en_camino')} className="btn-secondary">En camino</button>}
             {puedeIniciar && ['Listo para salida', 'En camino'].includes(s.estado_servicio) && <button onClick={() => iniciarAccion('iniciar_servicio')} className="btn-primary">Iniciar servicio</button>}
             {puedeFinalizar && <button onClick={iniciarFinalizacion} className="btn-primary">Finalizar</button>}
-            {puedeRevisar && <button onClick={revisar} className="btn-primary">Marcar revisado</button>}
+            {puedeRevisar && <button onClick={() => revisar('aprobado')} className="btn-primary">Aprobar revisión</button>}
+            {puedeRevisar && <button onClick={() => revisar('observado')} className="btn-secondary !text-amber-700 !border-amber-200">Observar</button>}
+            {puedeRevisar && <button onClick={() => revisar('rechazado')} className="btn-secondary !text-rose-700 !border-rose-200">Rechazar</button>}
             {puedeGestionarEntregas && <button onClick={() => setOpenEntrega(true)} className="btn-secondary">+ Entrega</button>}
             {(esSuperAdmin || esAdmin) && !['Cerrado', 'Cancelado'].includes(s.estado_servicio) && <button onClick={cancelar} className="btn-danger">Cancelar</button>}
           </>

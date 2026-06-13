@@ -37,6 +37,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Clientes from './pages/Clientes.jsx';
 import Cliente360 from './pages/Cliente360.jsx';
 import Ascensores from './pages/Ascensores.jsx';
+import Edificios from './pages/Edificios.jsx';
 import AscensorHistorial from './pages/AscensorHistorial.jsx';
 import Tecnicos from './pages/Tecnicos.jsx';
 import TiposServicio from './pages/TiposServicio.jsx';
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="/clientes" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Clientes /></RequireRole>} />
         <Route path="/clientes/:id" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Cliente360 /></RequireRole>} />
         <Route path="/ascensores" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Ascensores /></RequireRole>} />
+        <Route path="/edificios" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Edificios /></RequireRole>} />
         <Route path="/ascensores/:id" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><AscensorHistorial /></RequireRole>} />
         <Route path="/tecnicos" element={<Tecnicos />} />
         <Route path="/tipos-servicio" element={<TiposServicio />} />

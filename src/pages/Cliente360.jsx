@@ -279,7 +279,7 @@ export default function Cliente360() {
               <ul className="space-y-2">
                 {data.mantenimientos.map(m => (
                   <li key={m.id} className="text-xs">
-                    <div className="text-slate-700">{m.ascensor?.codigo} · {m.tipo_servicio?.nombre}</div>
+                    <div className="text-slate-700">{(m.ascensores || []).map(a => a.ascensor?.codigo).filter(Boolean).join(', ') || '—'} · {m.tipo_servicio?.nombre}</div>
                     <div className="text-slate-400">{m.tipo_plan === 'eventual' ? 'Eventual' : `${m.frecuencia} (${m.tipo_plan})`} · <span className={badgeEstado(m.estado_plan)}>{m.estado_plan}</span></div>
                   </li>
                 ))}

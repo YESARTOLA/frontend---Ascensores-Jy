@@ -12,6 +12,9 @@ const ICONS = {
   elevator: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M9 8l3-3 3 3M9 16l3 3 3-3" /></svg>
   ),
+  building: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" /><line x1="9" y1="6" x2="9" y2="6" /><line x1="15" y1="6" x2="15" y2="6" /><line x1="9" y1="10" x2="9" y2="10" /><line x1="15" y1="10" x2="15" y2="10" /><line x1="9" y1="14" x2="9" y2="14" /><line x1="15" y1="14" x2="15" y2="14" /><path d="M10 22v-4h4v4" /></svg>
+  ),
   briefcase: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></svg>
   ),
@@ -152,6 +155,9 @@ function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
       )}
       {visibleFor('super_admin', 'admin', 'contabilidad', 'coordinador') && (
         <Link to="/ascensores" icon={ICONS.elevator} label="Ascensores" onClose={onClose} />
+      )}
+      {visibleFor('super_admin', 'admin', 'contabilidad', 'coordinador') && (
+        <Link to="/edificios" icon={ICONS.building} label="Edificios / Obras" onClose={onClose} />
       )}
       {visibleFor('super_admin', 'admin', 'coordinador') && (
         <Link to="/tecnicos" icon={ICONS.users} label="Técnicos" onClose={onClose} />

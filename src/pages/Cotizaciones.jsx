@@ -14,6 +14,7 @@ import {
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import PadreTabs from '../components/common/PadreTabs.jsx';
@@ -89,6 +90,7 @@ export default function Cotizaciones() {
   const [subiendoAdjuntos, setSubiendoAdjuntos] = useState(false);
   const { esSuperAdmin, esAdmin } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
+  const [aEliminar, setAEliminar] = useState(null);
   const toast = useToast();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -476,6 +478,9 @@ export default function Cotizaciones() {
                             <button onClick={() => duplicar(c.id)} className="btn-ghost text-xs !py-1.5 !px-3 mr-1">Duplicar</button>
                           )}
                           <Link to={`/cotizaciones/${c.id}`} className="btn-ghost text-xs !py-1.5 !px-3">Abrir</Link>
+                          {esSuperAdmin && c.estado_global === 'Cotizado' && (
+                            <button onClick={() => setAEliminar(c)} className="btn-ghost text-xs !py-1.5 !px-3 ml-1 !text-rose-600">Eliminar</button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -790,6 +795,30 @@ export default function Cotizaciones() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmarEliminacion
+        open={!!aEliminar}
+        onClose={() => setAEliminar(null)}
+        titulo="Eliminar cotización"
+        palabraClave={aEliminar?.codigo || 'ELIMINAR'}
+        descripcion={
+          <>
+            Se dará de baja la cotización <span className="font-mono font-semibold">{aEliminar?.codigo}</span> con todas sus versiones,
+            ítems, ascensores y archivos adjuntos (incluidos los PDFs en almacenamiento). Solo es posible mientras no haya generado un
+            servicio. Acción auditada y recuperable.
+          </>
+        }
+        onConfirmar={async () => {
+          try {
+            await cotizacionesService.remove(aEliminar.id);
+            toast.success('Cotización eliminada');
+            setAEliminar(null);
+            recargar();
+          } catch (err) {
+            toast.error(err.response?.data?.error || 'Error al eliminar cotización');
+          }
+        }}
+      />
     </>
   );
 }

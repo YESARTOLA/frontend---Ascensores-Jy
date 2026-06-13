@@ -1,45 +1,111 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { serviciosService } from '../services';
+import { serviciosService, clientesService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Modal from '../components/common/Modal.jsx';
+import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores } from '../utils/formatters.js';
+import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
+import { ESTADOS_FACTURACION } from '../utils/estadoFactura.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
+
+const FILTROS_INICIALES = { q: '', id_cliente: '', estado_cobro: '', estado_facturacion: '', desde: '', hasta: '' };
 
 export default function ServiciosRealizados() {
   const [openDetalle, setOpenDetalle] = useState(null);
+  const [filtros, setFiltros] = useState(FILTROS_INICIALES);
+  const [clientes, setClientes] = useState([]);
   const toast = useToast();
   const { puedeVerPrecio, esSuperAdmin, esAdmin, esContabilidad, esTecnico } = useAuth();
   const puedeRevisar = esSuperAdmin || esAdmin || esContabilidad;
   const verCobroFactura = !esTecnico;
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
-    usePaginatedList(serviciosService.realizadosPaginate, {}, { initialPageSize: 25 });
+    usePaginatedList(serviciosService.realizadosPaginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
 
-  const revisar = async (id) => {
-    const obs = prompt('Observaciones de la revisión (opcional):') || '';
+  const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
+
+  // El filtro por cliente se ofrece solo a roles que ya ven datos de cobro/factura;
+  // el técnico (acceso restringido a Clientes) filtra por búsqueda libre y fecha.
+  useEffect(() => {
+    if (!verCobroFactura) return;
+    clientesService.list().then(setClientes).catch(() => setClientes([]));
+  }, [verCobroFactura]);
+
+  // Modal de revisión administrativa: aprobar / observar / rechazar + motivo.
+  const [revisarEv, setRevisarEv] = useState(null); // servicio realizado en revisión
+  const [revisando, setRevisando] = useState(false);
+
+  const enviarRevision = async (resultado, observaciones) => {
+    if (!revisarEv) return;
+    setRevisando(true);
     try {
-      await serviciosService.revisar(id, obs);
-      toast.success('Servicio revisado');
+      await serviciosService.revisar(revisarEv.id_servicio, { resultado, observaciones });
+      toast.success(
+        resultado === 'aprobado' ? 'Servicio aprobado y habilitado para cobro'
+        : resultado === 'observado' ? 'Servicio observado y devuelto a corrección'
+        : 'Servicio rechazado y devuelto a corrección'
+      );
+      setRevisarEv(null);
       cargar();
-    } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al revisar');
+    } finally {
+      setRevisando(false);
+    }
   };
 
   return (
     <>
       <PageHeader title="Servicios realizados" subtitle={`${total.toLocaleString('es-PE')} servicio(s) finalizado(s)`} />
+
+      <div className="card mb-4">
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          <input className="input lg:col-span-2"
+            placeholder="Buscar por código de servicio o cliente…"
+            value={filtros.q}
+            onChange={e => setF('q', e.target.value)} />
+          {verCobroFactura && (
+            <select className="select" value={filtros.id_cliente} onChange={e => setF('id_cliente', e.target.value)}>
+              <option value="">Todos los clientes</option>
+              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          )}
+          {verCobroFactura && (
+            <select className="select" value={filtros.estado_cobro} onChange={e => setF('estado_cobro', e.target.value)}>
+              <option value="">Estado cobro (todos)</option>
+              {ESTADOS_COBRO.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          {verCobroFactura && (
+            <select className="select" value={filtros.estado_facturacion} onChange={e => setF('estado_facturacion', e.target.value)}>
+              <option value="">Estado factura (todos)</option>
+              {ESTADOS_FACTURACION.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          <DateRangePicker
+            desde={filtros.desde}
+            hasta={filtros.hasta}
+            onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, desde, hasta }))}
+            placeholder="Rango de realización"
+          />
+          <button onClick={() => setFiltros(FILTROS_INICIALES)} className="btn-secondary lg:col-span-6">Limpiar filtros</button>
+        </div>
+      </div>
+
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin servicios realizados" /> : (
           <div className="overflow-x-auto scroll-thin">
             <table className="table-base">
               <thead><tr>
                 <th className="table-th">Fecha</th><th className="table-th">Código</th>
+                <th className="table-th">Origen</th>
                 <th className="table-th">Cliente / Ascensor</th><th className="table-th">Tipo</th>
                 <th className="table-th">Técnicos</th><th className="table-th">Resp. doc</th>
                 <th className="table-th text-center">Guía</th>
@@ -60,6 +126,11 @@ export default function ServiciosRealizados() {
                     <tr key={r.id} className="table-row-hover">
                       <td className="table-td text-xs">{formatFecha(r.fecha_realizacion)}</td>
                       <td className="table-td"><Link to={`/servicios/${r.id_servicio}`} className="font-mono text-xs text-brand-700">{r.servicio?.codigo}</Link></td>
+                      <td className="table-td text-xs">
+                        {r.servicio?.id_cotizacion
+                          ? <span className="badge-violet text-[10px]">Cotización</span>
+                          : <span className="badge-gray text-[10px]">Operativo</span>}
+                      </td>
                       <td className="table-td text-xs"><div>{r.servicio?.cliente?.nombre}</div><div className="font-mono text-slate-500" title={codigosAscensores(r.servicio).join(', ')}>{resumenAscensores(r.servicio)}</div></td>
                       <td className="table-td text-xs">{r.servicio?.tipo_servicio?.nombre}</td>
                       <td className="table-td text-xs">{r.servicio?.asignaciones?.map(a => a.tecnico?.nombre).join(', ') || '—'}</td>
@@ -84,7 +155,7 @@ export default function ServiciosRealizados() {
                           <button onClick={() => setOpenDetalle(r)} className="text-brand-700 text-xs hover:underline">Notas</button>
                         )}
                         {puedeRevisar && r.servicio?.estado_servicio === 'En revisión administrativa' && (
-                          <button onClick={() => revisar(r.id_servicio)} className="text-emerald-700 text-xs hover:underline">Revisar</button>
+                          <button onClick={() => setRevisarEv(r)} className="text-emerald-700 text-xs hover:underline">Revisar</button>
                         )}
                       </td>
                     </tr>
@@ -116,6 +187,58 @@ export default function ServiciosRealizados() {
           )}
         </div>
       </Modal>
+
+      <ModalRevision
+        servicio={revisarEv}
+        cargando={revisando}
+        onClose={() => !revisando && setRevisarEv(null)}
+        onEnviar={enviarRevision}
+      />
     </>
+  );
+}
+
+/**
+ * Modal de revisión administrativa: aprobar (habilita Contabilidad), observar o
+ * rechazar (devuelve el servicio a corrección). Observar/Rechazar exigen motivo.
+ */
+function ModalRevision({ servicio, cargando, onClose, onEnviar }) {
+  const [motivo, setMotivo] = useState('');
+  useEffect(() => { if (!servicio) setMotivo(''); }, [servicio]);
+  if (!servicio) return null;
+  const motivoRequerido = motivo.trim().length === 0;
+  return (
+    <Modal open={!!servicio} onClose={onClose} title={`Revisión administrativa · ${servicio.servicio?.codigo || ''}`} size="sm">
+      <div className="space-y-4">
+        <p className="text-sm text-slate-600">
+          Aprueba el servicio para habilitarlo en Contabilidad, u observa/rechaza para devolverlo al técnico a corrección.
+        </p>
+        <div>
+          <label className="label">Motivo / observaciones {' '}
+            <span className="text-xs text-slate-400">(obligatorio si observa o rechaza)</span>
+          </label>
+          <textarea className="textarea" rows="3" value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+            placeholder="Detalle de la revisión…" />
+        </div>
+        <div className="flex flex-wrap gap-2 justify-end">
+          <button type="button" disabled={cargando || motivoRequerido}
+            onClick={() => onEnviar('rechazado', motivo)}
+            className="inline-flex items-center rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-40">
+            Rechazar
+          </button>
+          <button type="button" disabled={cargando || motivoRequerido}
+            onClick={() => onEnviar('observado', motivo)}
+            className="inline-flex items-center rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-40">
+            Observar
+          </button>
+          <button type="button" disabled={cargando}
+            onClick={() => onEnviar('aprobado', motivo)}
+            className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+            {cargando ? 'Procesando…' : 'Aprobar'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

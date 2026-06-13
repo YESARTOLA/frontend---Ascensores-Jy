@@ -4,12 +4,13 @@ import { emergenciasService, clientesService, ascensoresService, tecnicosService
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFechaHora, formatDiasEjecucion, nombreCliente } from '../utils/formatters.js';
+import { badgeEstado, formatFechaHora, formatDiasEjecucion, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { esServicioEditable, esEmergenciaCerrada, ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
 
 const NIVELES_URGENCIA = ['alta', 'media', 'baja'];
@@ -93,14 +94,12 @@ export default function Emergencias() {
     setOpen(true);
   };
 
-  const eliminar = async (em) => {
-    const aviso = em.servicio
-      ? `¿Eliminar la emergencia y su servicio vinculado ${em.servicio.codigo}? Se dará de baja también del calendario y, si existía, del folder contable.`
-      : '¿Eliminar esta emergencia?';
-    if (!window.confirm(aviso)) return;
+  const [aEliminar, setAEliminar] = useState(null);
+  const eliminar = async () => {
     try {
-      await emergenciasService.remove(em.id);
+      await emergenciasService.remove(aEliminar.id);
       toast.success('Emergencia eliminada');
+      setAEliminar(null);
       cargar();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error al eliminar');
@@ -208,7 +207,7 @@ export default function Emergencias() {
                   return (
                   <tr key={e.id} className="table-row-hover">
                     <td className="table-td text-xs">{formatFechaHora(e.fecha_reporte)}</td>
-                    <td className="table-td text-xs"><div>{nombreCliente(e.cliente)}</div><div className="font-mono text-slate-500">{e.ascensor?.codigo}</div></td>
+                    <td className="table-td text-xs"><div>{nombreEdificio(e.ascensor?.edificio) || nombreCliente(e.cliente)}</div><div className="font-mono text-slate-500">{e.ascensor?.codigo}</div></td>
                     <td className="table-td text-sm">{e.motivo}</td>
                     <td className="table-td"><span className={e.nivel_urgencia === 'alta' ? 'badge-red' : 'badge-amber'}>{e.nivel_urgencia}</span></td>
                     <td className="table-td">
@@ -237,7 +236,7 @@ export default function Emergencias() {
                       {puedeEliminar && (
                         <>
                           {(e.servicio || editable) && <span className="text-slate-300 mx-1.5">·</span>}
-                          <button type="button" onClick={() => eliminar(e)} className="text-rose-600 text-xs hover:underline">Eliminar</button>
+                          <button type="button" onClick={() => setAEliminar(e)} className="text-rose-600 text-xs hover:underline">Eliminar</button>
                         </>
                       )}
                       {!e.servicio && !editable && !puedeEliminar && <span className="text-slate-400 text-xs">—</span>}
@@ -387,6 +386,19 @@ export default function Emergencias() {
           )}
         </div>
       </Modal>
+
+      <ConfirmarEliminacion
+        open={!!aEliminar}
+        onClose={() => setAEliminar(null)}
+        titulo="Eliminar emergencia"
+        palabraClave={aEliminar?.servicio?.codigo || 'ELIMINAR'}
+        descripcion={
+          aEliminar?.servicio
+            ? `Se dará de baja la emergencia y su servicio vinculado ${aEliminar.servicio.codigo}, incluyendo asignaciones, checklist, evidencias, cobro, eventos de calendario y recordatorios. Esta acción revierte todo el flujo.`
+            : 'Se dará de baja la emergencia y todo lo que generó en cascada.'
+        }
+        onConfirmar={eliminar}
+      />
     </>
   );
 }

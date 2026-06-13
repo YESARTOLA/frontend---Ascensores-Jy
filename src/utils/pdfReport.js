@@ -562,8 +562,8 @@ export async function generarReportePorClientePDF(opciones) {
         theme: 'grid',
         head: [['Ascensor', 'Ubicación', 'Tipo servicio', 'Modalidad', 'Frecuencia', 'Cantidad', 'Ejecutados', 'Inicio', 'Precio', 'Estado']],
         body: grupo.planes.map(p => [
-          p.ascensor?.codigo || '',
-          p.ascensor?.ubicacion || '—',
+          (p.ascensores || []).map(a => a.ascensor?.codigo).filter(Boolean).join(', ') || '',
+          (p.ascensores || []).map(a => a.ascensor?.ubicacion).filter(Boolean).join(', ') || '—',
           p.tipo_servicio?.nombre || '',
           (p.tipo_plan || '').charAt(0).toUpperCase() + (p.tipo_plan || '').slice(1),
           labelFrecuencia(p),

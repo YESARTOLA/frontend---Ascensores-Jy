@@ -11,6 +11,15 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO, toYMDLima, nombreCliente } from '../utils/formatters.js';
 import { ESTADOS_SERVICIO, esServicioEditable } from '../utils/estadoServicio.js';
+import AscensoresChecklist from '../components/common/AscensoresChecklist.jsx';
+import {
+  repartirParejo,
+  sumaMontos,
+  toggleAscensor as selToggle,
+  cambiarMonto as selMonto,
+  repartirSegunTotal,
+  repartirForzado
+} from '../utils/ascensoresSeleccion.js';
 
 const ESTADOS_FILTRO = ['', ...ESTADOS_SERVICIO];
 const TOLERANCIA_SUMA = 0.01;
@@ -32,14 +41,6 @@ function listarCodigosAscensores(servicio) {
   return (servicio?.ascensores || [])
     .map(a => a.ascensor?.codigo)
     .filter(Boolean);
-}
-
-function repartirParejo(total, n) {
-  if (n === 0) return [];
-  const totalCentavos = Math.round(Number(total || 0) * 100);
-  const base = Math.floor(totalCentavos / n);
-  const sobra = totalCentavos - base * n;
-  return Array.from({ length: n }, (_, i) => ((base + (i === n - 1 ? sobra : 0)) / 100).toFixed(2));
 }
 
 function formToPayload(form, ascensoresSeleccionados) {
@@ -195,8 +196,8 @@ export default function Servicios() {
   );
 
   const sumaActual = useMemo(
-    () => ascensoresSeleccionados.reduce((acc, a) => acc + Number(form.ascensores_seleccion[a.id]?.monto || 0), 0),
-    [ascensoresSeleccionados, form.ascensores_seleccion]
+    () => sumaMontos(form.ascensores_seleccion),
+    [form.ascensores_seleccion]
   );
 
   const precio = Number(form.precio_interno || 0);
@@ -253,52 +254,19 @@ export default function Servicios() {
     Math.abs(Number(form.precio_interno || 0) - Number(precioConfigurado.precio || 0)) < 0.01;
 
   const toggleAscensor = (idAsc) => {
-    setForm(f => {
-      const sel = { ...f.ascensores_seleccion };
-      if (sel[idAsc]) delete sel[idAsc];
-      else sel[idAsc] = { monto: '0.00', manual: false };
-      const ids = Object.keys(sel);
-      const algunoManual = ids.some(k => sel[k].manual);
-      if (!algunoManual && Number(f.precio_interno || 0) > 0) {
-        const montos = repartirParejo(f.precio_interno, ids.length);
-        ids.forEach((k, i) => { sel[k] = { ...sel[k], monto: montos[i] }; });
-      }
-      return { ...f, ascensores_seleccion: sel };
-    });
+    setForm(f => ({ ...f, ascensores_seleccion: selToggle(f.ascensores_seleccion, idAsc, f.precio_interno) }));
   };
 
   const cambiarMontoAscensor = (idAsc, valor) => {
-    setForm(f => ({
-      ...f,
-      ascensores_seleccion: {
-        ...f.ascensores_seleccion,
-        [idAsc]: { monto: valor, manual: true }
-      }
-    }));
+    setForm(f => ({ ...f, ascensores_seleccion: selMonto(f.ascensores_seleccion, idAsc, valor) }));
   };
 
   const cambiarPrecioTotal = (valor) => {
-    setForm(f => {
-      const sel = { ...f.ascensores_seleccion };
-      const ids = Object.keys(sel);
-      const algunoManual = ids.some(k => sel[k].manual);
-      if (ids.length > 0 && !algunoManual) {
-        const montos = repartirParejo(valor, ids.length);
-        ids.forEach((k, i) => { sel[k] = { ...sel[k], monto: montos[i] }; });
-      }
-      return { ...f, precio_interno: valor, ascensores_seleccion: sel };
-    });
+    setForm(f => ({ ...f, precio_interno: valor, ascensores_seleccion: repartirSegunTotal(f.ascensores_seleccion, valor) }));
   };
 
   const repartirAhora = () => {
-    setForm(f => {
-      const sel = { ...f.ascensores_seleccion };
-      const ids = Object.keys(sel);
-      if (ids.length === 0) return f;
-      const montos = repartirParejo(f.precio_interno, ids.length);
-      ids.forEach((k, i) => { sel[k] = { monto: montos[i], manual: false }; });
-      return { ...f, ascensores_seleccion: sel };
-    });
+    setForm(f => ({ ...f, ascensores_seleccion: repartirForzado(f.ascensores_seleccion, f.precio_interno) }));
   };
 
   const guardar = async (e) => {
@@ -514,41 +482,13 @@ export default function Servicios() {
 
           <div className="sm:col-span-2">
             <label className="label">Ascensores *</label>
-            {!form.id_cliente ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 text-slate-500 text-xs p-3">Seleccione primero un cliente.</div>
-            ) : ascensoresFiltrados.length === 0 ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 text-slate-500 text-xs p-3">Este cliente no tiene ascensores registrados.</div>
-            ) : (
-              <div className="rounded-lg ring-1 ring-slate-200 divide-y divide-slate-100 max-h-64 overflow-y-auto scroll-thin">
-                {ascensoresFiltrados.map(a => {
-                  const sel = form.ascensores_seleccion[a.id];
-                  const marcado = !!sel;
-                  return (
-                    <label key={a.id} className={`flex items-center gap-3 p-2.5 cursor-pointer ${marcado ? 'bg-brand-50/60' : 'bg-white'}`}>
-                      <input type="checkbox" checked={marcado} onChange={() => toggleAscensor(a.id)} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-mono text-sm text-slate-800">{a.codigo}</div>
-                        <div className="text-xs text-slate-500 truncate">{a.ubicacion || a.tipo || '—'}</div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs text-slate-500">S/</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          className="input w-28 text-right font-mono"
-                          value={sel?.monto || ''}
-                          onChange={e => cambiarMontoAscensor(a.id, e.target.value)}
-                          disabled={!marcado}
-                          placeholder="0.00"
-                        />
-                        {sel?.manual && <span className="text-[10px] uppercase tracking-wider text-amber-700">manual</span>}
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
+            <AscensoresChecklist
+              ascensores={ascensoresFiltrados}
+              seleccion={form.ascensores_seleccion}
+              onToggle={toggleAscensor}
+              onMonto={cambiarMontoAscensor}
+              hayCliente={!!form.id_cliente}
+            />
           </div>
 
           <div className="sm:col-span-2"><label className="label">Título *</label><input className="input" required value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} /></div>

@@ -3,7 +3,7 @@
 
 export const VISIBILIDAD_POR_ROL = {
   super_admin:  { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
-  admin:        { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'servicio_finalizado_aviso'] },
+  admin:        { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'servicio_finalizado_aviso'] },
   coordinador:  { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'observacion', 'cotizacion_urgente', 'servicio_finalizado_revisar'] },
   tecnico:      { operativos: 'asignados', tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia'] },
   contabilidad: { operativos: 'todos',     tipos_recordatorio: ['cobro', 'observacion_alerta', 'servicio_finalizado_facturar'] },
@@ -16,19 +16,22 @@ export const VISIBILIDAD_POR_ROL = {
 // `value` coincide con `tbl_calendario_eventos.tipo_evento` y con
 // `tbl_recordatorios.tipo`. El color es el fallback cuando el evento no trae
 // uno propio (los eventos suelen traer su color desde la BD).
+// Paleta de 12 tonos elegidos para ser distinguibles entre sí (sin duplicados ni
+// pares casi iguales). Cada tipo tiene un matiz propio bien separado en el
+// espectro; es la fuente única de color del calendario (ver colorPorTipo).
 export const CATALOGO_TIPOS_EVENTO = [
-  { value: 'servicio',           label: 'Servicio',           label_plural: 'servicios',            color: '#0ea5e9', dominio: 'operativo' },
-  { value: 'proyecto',           label: 'Proyecto',           label_plural: 'proyectos',            color: '#1e40af', dominio: 'operativo' },
-  { value: 'mantenimiento',      label: 'Mantenimiento',      label_plural: 'mantenimientos',       color: '#22c55e', dominio: 'operativo' },
-  { value: 'emergencia',         label: 'Emergencia',         label_plural: 'emergencias',          color: '#ef4444', dominio: 'operativo' },
-  { value: 'correctivo',         label: 'Correctivo',         label_plural: 'correctivos',          color: '#f59e0b', dominio: 'operativo' },
-  { value: 'cobro',              label: 'Cobro',              label_plural: 'cobros',               color: '#8b5cf6', dominio: 'recordatorio' },
-  { value: 'observacion',        label: 'Observación',        label_plural: 'observaciones',        color: '#f97316', dominio: 'recordatorio' },
-  { value: 'observacion_alerta', label: 'Alerta de observación', label_plural: 'alertas de observación', color: '#dc2626', dominio: 'recordatorio' },
-  { value: 'cotizacion_urgente', label: 'Cotización urgente', label_plural: 'cotizaciones urgentes', color: '#dc2626', dominio: 'recordatorio' },
-  { value: 'servicio_finalizado_revisar',  label: 'Revisar servicio',  label_plural: 'revisiones de servicio',   color: '#f59e0b', dominio: 'recordatorio' },
-  { value: 'servicio_finalizado_facturar', label: 'Facturar servicio', label_plural: 'facturaciones pendientes', color: '#8b5cf6', dominio: 'recordatorio' },
-  { value: 'servicio_finalizado_aviso',    label: 'Servicio finalizado', label_plural: 'servicios finalizados',  color: '#0ea5e9', dominio: 'recordatorio' }
+  { value: 'servicio',           label: 'Servicio',           label_plural: 'servicios',            color: '#0ea5e9', dominio: 'operativo' },   // celeste
+  { value: 'proyecto',           label: 'Proyecto',           label_plural: 'proyectos',            color: '#1d4ed8', dominio: 'operativo' },   // azul
+  { value: 'mantenimiento',      label: 'Mantenimiento',      label_plural: 'mantenimientos',       color: '#16a34a', dominio: 'operativo' },   // verde
+  { value: 'emergencia',         label: 'Emergencia',         label_plural: 'emergencias',          color: '#dc2626', dominio: 'operativo' },   // rojo
+  { value: 'correctivo',         label: 'Correctivo',         label_plural: 'correctivos',          color: '#f59e0b', dominio: 'operativo' },   // ámbar
+  { value: 'cobro',              label: 'Cobro',              label_plural: 'cobros',               color: '#9333ea', dominio: 'recordatorio' }, // púrpura
+  { value: 'observacion',        label: 'Observación',        label_plural: 'observaciones',        color: '#0d9488', dominio: 'recordatorio' }, // turquesa
+  { value: 'observacion_alerta', label: 'Alerta de observación', label_plural: 'alertas de observación', color: '#e11d48', dominio: 'recordatorio' }, // rosa-rojo
+  { value: 'cotizacion_urgente', label: 'Cotización urgente', label_plural: 'cotizaciones urgentes', color: '#c026d3', dominio: 'recordatorio' }, // fucsia
+  { value: 'servicio_finalizado_revisar',  label: 'Revisar servicio',  label_plural: 'revisiones de servicio',   color: '#65a30d', dominio: 'recordatorio' }, // lima
+  { value: 'servicio_finalizado_facturar', label: 'Facturar servicio', label_plural: 'facturaciones pendientes', color: '#4f46e5', dominio: 'recordatorio' }, // índigo
+  { value: 'servicio_finalizado_aviso',    label: 'Servicio finalizado', label_plural: 'servicios finalizados',  color: '#475569', dominio: 'recordatorio' }  // gris pizarra
 ];
 
 const COLOR_FALLBACK = '#0ea5e9';

@@ -4,24 +4,44 @@ import { mantenimientosService, clientesService, ascensoresService, tiposServici
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima, nombreCliente } from '../utils/formatters.js';
+import AscensoresChecklist from '../components/common/AscensoresChecklist.jsx';
+import {
+  sumaMontos,
+  toggleAscensor as selToggle,
+  cambiarMonto as selMonto,
+  repartirSegunTotal,
+  repartirForzado
+} from '../utils/ascensoresSeleccion.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { generarReportePorClientePDF } from '../utils/pdfReport.js';
 
 const FORM_ID = 'form-nuevo-plan-mantenimiento';
 
 const inicial = {
-  id_cliente: '', id_ascensor: '', id_tipo_servicio: '', tipo_plan: 'continuo',
+  id_cliente: '', ascensores_seleccion: {}, id_tipo_servicio: '', tipo_plan: 'continuo',
   frecuencia: 'mensual', frecuencia_dias_custom: '', cantidad_mantenimientos: '12',
   cantidad_mantenimientos_gratuitos: '0',
   fecha_inicio: hoyISO(), hora_programada: '09:00',
+  precio_interno: '', moneda: 'PEN',
   observaciones: ''
 };
+
+const TOLERANCIA_SUMA = 0.01;
+
+// Resume los ascensores de un plan (junction) para listas/detalle: nombre del
+// edificio/obra (del primero con dato, cae a la razón social) y los ascensores.
+function resumenAscensoresPlan(plan) {
+  const ascs = (plan?.ascensores || []).map(a => a.ascensor).filter(Boolean);
+  const edificio = ascs.map(a => nombreEdificio(a.edificio)).find(Boolean) || nombreCliente(plan?.cliente) || '—';
+  return { edificio, ascensores: ascs };
+}
 
 export default function Mantenimientos() {
   const [tabActiva, setTabActiva] = useState('mantenimientos'); // 'mantenimientos' | 'planes'
@@ -47,11 +67,14 @@ export default function Mantenimientos() {
   const [openExportar, setOpenExportar] = useState(false);
   const [exportForm, setExportForm] = useState({ ids_cliente: [], ids_ascensor: [], estado_ejecucion: '', desde: '', hasta: '', formato: 'excel' });
   const [exportando, setExportando] = useState(false);
+  const [preciosCliente, setPreciosCliente] = useState([]);
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esCoordinador, esContabilidad, puedeVerPrecio } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
   const puedeExportar = esSuperAdmin || esAdmin || esCoordinador || esContabilidad;
   const puedeEditarPlan = esSuperAdmin || esAdmin;
+  const puedeEliminarPlan = esSuperAdmin;
+  const [planAEliminar, setPlanAEliminar] = useState(null);
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(mantenimientosService.paginate, filtroPlanes, { initialPageSize: 25 });
@@ -101,6 +124,46 @@ export default function Mantenimientos() {
   const esTipoPreventivo = !!tipoSeleccionado?.es_preventivo;
   const cupoMaximoGratuitos = esContinuo ? Number(form.cantidad_mantenimientos || 0) : 1;
 
+  // Ascensores del plan con reparto del precio (el del catálogo del cliente,
+  // repartido entre los ascensores elegidos; editable por ascensor).
+  const ascensoresSeleccionados = ascensoresF.filter(a => form.ascensores_seleccion[a.id]);
+  const sumaActual = sumaMontos(form.ascensores_seleccion);
+  const precioTotal = Number(form.precio_interno || 0);
+  const diferenciaSuma = sumaActual - precioTotal;
+  const sumaOk = ascensoresSeleccionados.length > 0 && Math.abs(diferenciaSuma) <= TOLERANCIA_SUMA;
+  const precioConfigurado = (form.id_cliente && form.id_tipo_servicio)
+    ? preciosCliente.find(p => String(p.id_tipo_servicio) === String(form.id_tipo_servicio)) || null
+    : null;
+
+  // Catálogo de precios del cliente seleccionado (para fijar el total del plan).
+  useEffect(() => {
+    if (!form.id_cliente) { setPreciosCliente([]); return; }
+    let cancelado = false;
+    clientesService.get(form.id_cliente)
+      .then(c => { if (!cancelado) setPreciosCliente(c?.precios || []); })
+      .catch(() => { if (!cancelado) setPreciosCliente([]); });
+    return () => { cancelado = true; };
+  }, [form.id_cliente]);
+
+  // Al crear: aplica el precio del catálogo como total y lo reparte entre los
+  // ascensores marcados (si ninguno fue editado a mano). No corre en edición.
+  useEffect(() => {
+    if (editando || !precioConfigurado) return;
+    const valor = Number(precioConfigurado.precio || 0).toFixed(2);
+    const moneda = precioConfigurado.moneda || 'PEN';
+    setForm(f => {
+      if (f.precio_interno === valor && f.moneda === moneda) return f;
+      return { ...f, precio_interno: valor, moneda, ascensores_seleccion: repartirSegunTotal(f.ascensores_seleccion, valor) };
+    });
+  }, [precioConfigurado, editando]);
+
+  const toggleAscensorPlan = (idAsc) =>
+    setForm(f => ({ ...f, ascensores_seleccion: selToggle(f.ascensores_seleccion, idAsc, f.precio_interno) }));
+  const cambiarMontoAscensorPlan = (idAsc, valor) =>
+    setForm(f => ({ ...f, ascensores_seleccion: selMonto(f.ascensores_seleccion, idAsc, valor) }));
+  const repartirAhoraPlan = () =>
+    setForm(f => ({ ...f, ascensores_seleccion: repartirForzado(f.ascensores_seleccion, f.precio_interno) }));
+
   const abrirNuevo = () => {
     setEditando(null);
     setForm(inicial);
@@ -109,9 +172,13 @@ export default function Mantenimientos() {
 
   const abrirEditar = (plan) => {
     setEditando(plan.id);
+    const seleccion = {};
+    (plan.ascensores || []).forEach(pa => {
+      if (pa.ascensor) seleccion[pa.ascensor.id] = { monto: Number(pa.monto || 0).toFixed(2), manual: true };
+    });
     setForm({
       id_cliente: String(plan.id_cliente || ''),
-      id_ascensor: String(plan.id_ascensor || ''),
+      ascensores_seleccion: seleccion,
       id_tipo_servicio: String(plan.id_tipo_servicio || ''),
       tipo_plan: plan.tipo_plan || 'continuo',
       frecuencia: plan.frecuencia || 'mensual',
@@ -120,6 +187,8 @@ export default function Mantenimientos() {
       cantidad_mantenimientos_gratuitos: plan.cantidad_mantenimientos_gratuitos != null ? String(plan.cantidad_mantenimientos_gratuitos) : '0',
       fecha_inicio: toYMDLima(plan.fecha_inicio) || hoyISO(),
       hora_programada: plan.hora_programada || '09:00',
+      precio_interno: String(sumaMontos(seleccion).toFixed(2)),
+      moneda: (plan.ascensores || [])[0]?.moneda || 'PEN',
       observaciones: plan.observaciones || ''
     });
     setOpen(true);
@@ -135,6 +204,9 @@ export default function Mantenimientos() {
   const guardar = async (e) => {
     e.preventDefault();
     if (guardandoRef.current) return;
+    if (!editando && !sumaOk) {
+      return toast.error(`La suma por ascensor (S/ ${sumaActual.toFixed(2)}) no coincide con el precio del catálogo (S/ ${precioTotal.toFixed(2)})`);
+    }
     guardandoRef.current = true;
     setGuardando(true);
     try {
@@ -148,10 +220,13 @@ export default function Mantenimientos() {
           ? Number(form.cantidad_mantenimientos_gratuitos || 0)
           : 0
       };
-      // Cliente/ascensor solo se mandan en creación (inmutables en edición)
+      // Cliente/ascensores solo se mandan en creación (inmutables en edición)
       if (!editando) {
         payload.id_cliente = form.id_cliente;
-        payload.id_ascensor = form.id_ascensor;
+        payload.ascensores = ascensoresSeleccionados.map(a => ({
+          id_ascensor: a.id,
+          monto: Number(form.ascensores_seleccion[a.id]?.monto || 0)
+        }));
       }
       if (esContinuo) {
         payload.frecuencia = form.frecuencia;
@@ -463,7 +538,7 @@ export default function Mantenimientos() {
         <div className="card mb-4">
           <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
             <input className="input sm:col-span-2"
-              placeholder="Buscar por cliente, código o tipo de ascensor o código de servicio…"
+              placeholder="Buscar por edificio/obra, cliente, código o tipo de ascensor o código de servicio…"
               value={filtroPlanes.q}
               onChange={e => setFiltroPlanes({ q: e.target.value })} />
             <button
@@ -491,9 +566,11 @@ export default function Mantenimientos() {
                       ? 1
                       : (m.cantidad_mantenimientos != null ? Number(m.cantidad_mantenimientos) : null);
                     const ejecutadosTotal = Number(m.mantenimientos_ejecutados_total || 0);
+                    const resumenAsc = resumenAscensoresPlan(m);
+                    const codigosAsc = resumenAsc.ascensores.map(a => a.codigo).filter(Boolean);
                     return (
                       <tr key={m.id} className="table-row-hover">
-                        <td className="table-td text-xs"><div>{nombreCliente(m.cliente)}</div><div className="font-mono text-slate-500">{m.ascensor?.codigo}</div></td>
+                        <td className="table-td text-xs"><div>{resumenAsc.edificio}</div><div className="font-mono text-slate-500">{codigosAsc.length ? codigosAsc.join(', ') : '—'}</div></td>
                         <td className="table-td text-xs">{m.tipo_servicio?.nombre}</td>
                         <td className="table-td text-xs">{labelFrecuencia(m)} ({m.tipo_plan})</td>
                         <td className="table-td text-xs">{formatFecha(m.fecha_inicio)} {m.hora_programada || ''}</td>
@@ -508,6 +585,12 @@ export default function Mantenimientos() {
                             <>
                               <span className="text-slate-300 mx-1.5">·</span>
                               <button type="button" onClick={() => abrirEditar(m)} className="text-brand-700 text-xs hover:underline">Editar</button>
+                            </>
+                          )}
+                          {puedeEliminarPlan && (
+                            <>
+                              <span className="text-slate-300 mx-1.5">·</span>
+                              <button type="button" onClick={() => setPlanAEliminar(m)} className="text-rose-600 text-xs hover:underline">Eliminar</button>
                             </>
                           )}
                         </td>
@@ -540,11 +623,22 @@ export default function Mantenimientos() {
                   <div className="text-slate-800">{nombreCliente(planDetalle.cliente) || '—'}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-500">Ascensor</div>
-                  <div className="text-slate-800 font-mono">
-                    {planDetalle.ascensor?.codigo || '—'}
-                    {planDetalle.ascensor?.ubicacion && <span className="text-slate-500 font-sans"> · {planDetalle.ascensor.ubicacion}</span>}
-                  </div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Ascensores</div>
+                  {(planDetalle.ascensores || []).length === 0 ? (
+                    <div className="text-slate-800">—</div>
+                  ) : (
+                    <ul className="text-slate-800 space-y-0.5">
+                      {planDetalle.ascensores.map(pa => (
+                        <li key={pa.id} className="flex items-center justify-between gap-3">
+                          <span className="font-mono">
+                            {pa.ascensor?.codigo}
+                            {pa.ascensor?.ubicacion && <span className="text-slate-500 font-sans"> · {pa.ascensor.ubicacion}</span>}
+                          </span>
+                          {puedeVerPrecio && <span className="font-mono text-slate-600">{formatMonto(pa.monto, pa.moneda)}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 <div>
                   <div className="text-xs uppercase tracking-wide text-slate-500">Tipo de servicio</div>
@@ -686,7 +780,7 @@ export default function Mantenimientos() {
         footer={
           <>
             <button type="button" className="btn-secondary" onClick={cerrarModal} disabled={guardando}>Cancelar</button>
-            <button type="submit" form={FORM_ID} className="btn-primary" disabled={guardando}>
+            <button type="submit" form={FORM_ID} className="btn-primary" disabled={guardando || (!editando && !sumaOk)}>
               {guardando
                 ? (editando ? 'Guardando…' : 'Creando…')
                 : (editando ? 'Guardar cambios' : 'Crear')}
@@ -696,7 +790,7 @@ export default function Mantenimientos() {
         <form id={FORM_ID} onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {editando && (
             <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs p-3">
-              Cliente y ascensor del plan son inmutables. Los cambios <strong>solo afectan a los mantenimientos futuros no materializados</strong>; los servicios ya creados conservan sus datos originales.
+              Cliente y ascensores del plan son inmutables. Los cambios <strong>solo afectan a los mantenimientos futuros no materializados</strong>; los servicios ya creados conservan sus datos originales.
             </div>
           )}
           <div>
@@ -704,19 +798,44 @@ export default function Mantenimientos() {
             <ClienteAutocomplete
               clientes={clientes}
               value={form.id_cliente}
-              onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
+              onChange={(id) => setForm(f => ({ ...f, id_cliente: id, ascensores_seleccion: {}, precio_interno: '' }))}
               required
               disabled={!!editando}
               placeholder="Escriba para buscar por nombre de edificio / obra…"
             />
           </div>
           <div>
-            <label className="label">Ascensor *</label>
-            <select className="select" required disabled={!!editando} value={form.id_ascensor} onChange={e => setForm(f => ({ ...f, id_ascensor: e.target.value }))}><option value="">—</option>{ascensoresF.map(a => <option key={a.id} value={a.id}>{a.codigo}</option>)}</select>
-          </div>
-          <div>
             <label className="label">Tipo de servicio *</label>
             <select className="select" required value={form.id_tipo_servicio} onChange={e => setForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}><option value="">—</option>{tiposF.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">Ascensores *</label>
+            <AscensoresChecklist
+              ascensores={ascensoresF}
+              seleccion={form.ascensores_seleccion}
+              onToggle={toggleAscensorPlan}
+              onMonto={cambiarMontoAscensorPlan}
+              disabled={!!editando}
+              hayCliente={!!form.id_cliente}
+            />
+            {puedeVerPrecio && (
+              <div className="mt-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs flex flex-wrap items-center gap-3">
+                <span className="text-slate-600">Precio del catálogo: <strong className="font-mono">{precioConfigurado ? formatMonto(precioConfigurado.precio, precioConfigurado.moneda) : '—'}</strong></span>
+                <span className="text-slate-600">Suma actual: <strong className="font-mono">S/ {sumaActual.toFixed(2)}</strong></span>
+                {ascensoresSeleccionados.length > 0 && (
+                  sumaOk ? <span className="text-emerald-700">✓ coincide con el precio</span>
+                  : <span className="text-rose-700">{diferenciaSuma > 0 ? `Sobran S/ ${diferenciaSuma.toFixed(2)}` : `Faltan S/ ${(-diferenciaSuma).toFixed(2)}`}</span>
+                )}
+                {!editando && (
+                  <button type="button" onClick={repartirAhoraPlan} className="btn-secondary text-xs ml-auto" disabled={ascensoresSeleccionados.length === 0 || !form.precio_interno}>Repartir parejo</button>
+                )}
+              </div>
+            )}
+            {!editando && !precioConfigurado && form.id_cliente && form.id_tipo_servicio && (
+              <p className="text-[11px] text-amber-700 mt-1">
+                No hay precio configurado para este cliente y tipo de servicio. Configúrelo en el módulo Clientes antes de crear el plan.
+              </p>
+            )}
           </div>
           <div>
             <label className="label">Tipo de plan *</label>
@@ -874,6 +993,24 @@ export default function Mantenimientos() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmarEliminacion
+        open={!!planAEliminar}
+        onClose={() => setPlanAEliminar(null)}
+        titulo="Eliminar plan de mantenimiento"
+        palabraClave="ELIMINAR"
+        descripcion="Se dará de baja el plan y todos sus mantenimientos pendientes (eventos de calendario futuros, servicios aún no ejecutados y recordatorios). Si algún mantenimiento del plan ya fue ejecutado o tiene abonos, la eliminación se bloqueará: gestiona esa instancia primero. Acción auditada y recuperable."
+        onConfirmar={async () => {
+          try {
+            await mantenimientosService.remove(planAEliminar.id);
+            toast.success('Plan eliminado');
+            setPlanAEliminar(null);
+            cargar();
+          } catch (err) {
+            toast.error(err.response?.data?.error || 'Error al eliminar plan');
+          }
+        }}
+      />
     </>
   );
 }

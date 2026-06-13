@@ -4,12 +4,13 @@ import { correctivosService, clientesService, ascensoresService, tecnicosService
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFechaHora, nombreCliente } from '../utils/formatters.js';
+import { badgeEstado, formatFechaHora, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { esServicioEditable, ESTADOS_CORRECTIVO, esCorrectivoCerrado } from '../utils/estadoServicio.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
@@ -47,6 +48,8 @@ export default function Correctivos() {
   const { esSuperAdmin, esAdmin, esCoordinador, puedeVerPrecio } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
+  const puedeEliminar = esSuperAdmin;
+  const [aEliminar, setAEliminar] = useState(null);
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(correctivosService.paginate, filtros, { initialPageSize: 25 });
@@ -204,7 +207,7 @@ export default function Correctivos() {
                   <tr key={c.id} className="table-row-hover">
                     <td className="table-td text-xs">{formatFechaHora(c.fecha_reporte)}</td>
                     <td className="table-td text-xs">
-                      <div>{nombreCliente(c.cliente)}</div>
+                      <div>{nombreEdificio(c.ascensor?.edificio) || nombreCliente(c.cliente)}</div>
                       <div className="font-mono text-slate-500">{c.ascensor?.codigo}</div>
                     </td>
                     <td className="table-td text-sm">{c.falla}</td>
@@ -228,7 +231,13 @@ export default function Correctivos() {
                           <button type="button" onClick={() => abrirEditar(c)} className="text-brand-700 text-xs hover:underline">Editar</button>
                         </>
                       )}
-                      {!c.servicio && !editable && <span className="text-slate-400 text-xs">—</span>}
+                      {puedeEliminar && (
+                        <>
+                          {(c.servicio || editable) && <span className="text-slate-300 mx-1.5">·</span>}
+                          <button type="button" onClick={() => setAEliminar(c)} className="text-rose-600 text-xs hover:underline">Eliminar</button>
+                        </>
+                      )}
+                      {!c.servicio && !editable && !puedeEliminar && <span className="text-slate-400 text-xs">—</span>}
                     </td>
                   </tr>
                   );
@@ -399,6 +408,28 @@ export default function Correctivos() {
           )}
         </div>
       </Modal>
+
+      <ConfirmarEliminacion
+        open={!!aEliminar}
+        onClose={() => setAEliminar(null)}
+        titulo="Eliminar correctivo"
+        palabraClave={aEliminar?.servicio?.codigo || 'ELIMINAR'}
+        descripcion={
+          aEliminar?.servicio
+            ? `Se dará de baja el correctivo y su servicio vinculado ${aEliminar.servicio.codigo}, incluyendo asignaciones, checklist, evidencias, cobro, eventos de calendario y recordatorios. Esta acción revierte todo el flujo.`
+            : 'Se dará de baja el correctivo y todo lo que generó en cascada.'
+        }
+        onConfirmar={async () => {
+          try {
+            await correctivosService.remove(aEliminar.id);
+            toast.success('Correctivo eliminado');
+            setAEliminar(null);
+            cargar();
+          } catch (err) {
+            toast.error(err.response?.data?.error || 'Error al eliminar correctivo');
+          }
+        }}
+      />
     </>
   );
 }

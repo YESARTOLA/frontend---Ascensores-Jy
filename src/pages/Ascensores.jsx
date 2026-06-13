@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ascensoresService, clientesService, tiposAscensorService } from '../services';
+import { ascensoresService, tiposAscensorService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -12,14 +12,11 @@ import { badgeEstado, formatFecha, nombreEdificio, nombreCliente } from '../util
 import AscensorForm, { ascensorFormInicial } from '../components/ascensores/AscensorForm.jsx';
 
 export default function Ascensores() {
-  const [clientes, setClientes] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(ascensorFormInicial);
   const [editId, setEditId] = useState(null);
-  // Cliente del edificio al editar, para precargar la lista de edificios del form.
-  const [editCliente, setEditCliente] = useState('');
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esCoordinador } = useAuth();
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
@@ -27,7 +24,6 @@ export default function Ascensores() {
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(ascensoresService.paginate, { q }, { initialPageSize: 25 });
   useEffect(() => {
-    clientesService.list().then(setClientes).catch(() => setClientes([]));
     tiposAscensorService.list().then(setTipos).catch(() => setTipos([]));
   }, []);
   const cargar = recargar;
@@ -35,7 +31,6 @@ export default function Ascensores() {
   const abrirNuevo = () => {
     setForm({ ...ascensorFormInicial, tipo: tipos[0]?.nombre || '' });
     setEditId(null);
-    setEditCliente('');
     setOpen(true);
   };
   const abrirEdit = (a) => {
@@ -46,7 +41,6 @@ export default function Ascensores() {
       estado_operativo: a.estado_operativo, proximo_mantenimiento: a.proximo_mantenimiento ? a.proximo_mantenimiento.substring(0, 10) : '',
       observaciones: a.observaciones || ''
     });
-    setEditCliente(a.edificio?.cliente?.id ? String(a.edificio.cliente.id) : '');
     setEditId(a.id);
     setOpen(true);
   };
@@ -130,9 +124,7 @@ export default function Ascensores() {
           value={form}
           onChange={setForm}
           onSubmit={guardar}
-          clientes={clientes}
           tipos={tipos}
-          clienteInicial={editCliente}
         />
       </Modal>
     </>
