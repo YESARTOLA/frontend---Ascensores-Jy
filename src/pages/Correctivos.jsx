@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { correctivosService, clientesService, ascensoresService, tecnicosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
@@ -10,7 +10,7 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFechaHora, nombreCliente, nombreEdificio } from '../utils/formatters.js';
+import { badgeEstado, formatFechaHora, nombreCliente, nombreEdificio, clientesConEdificios } from '../utils/formatters.js';
 import { esServicioEditable, ESTADOS_CORRECTIVO, esCorrectivoCerrado } from '../utils/estadoServicio.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
@@ -66,6 +66,8 @@ export default function Correctivos() {
   const ascensoresFiltrados = form.id_cliente
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
     : ascensores;
+  // Clientes enriquecidos con sus edificios para poder buscar por nombre de edificio/obra.
+  const clientesBuscables = useMemo(() => clientesConEdificios(clientes, ascensores), [clientes, ascensores]);
 
   const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
   const quitarTec = (idx) => setAsignaciones(a => a.filter((_, i) => i !== idx));
@@ -274,7 +276,7 @@ export default function Correctivos() {
             <div>
               <label className="label">{labelCampoCliente} *</label>
               <ClienteAutocomplete
-                clientes={clientes}
+                clientes={clientesBuscables}
                 value={form.id_cliente}
                 onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
                 required

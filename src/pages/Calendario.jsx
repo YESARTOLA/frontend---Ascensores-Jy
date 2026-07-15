@@ -15,6 +15,7 @@ import {
   muestraFiltroTecnico,
   muestraFiltroCliente,
   colorPorTipo,
+  etiquetaTipoEvento,
   subtituloCalendario
 } from '../utils/visibilidadCalendario.js';
 
@@ -47,13 +48,62 @@ const ESTADOS_EVENTO = [
 
 const filtrosIniciales = { q: '', tipo_evento: '', estado_evento: '', id_cliente: '', id_tecnico: '' };
 
+// Persistencia de la vista (filtros + mes) para que al abrir el detalle de un
+// item y volver al calendario se conserve lo que el usuario estableció. Se usa
+// sessionStorage (no localStorage): la selección sobrevive a la navegación
+// dentro de la sesión, pero no queda pegada en sesiones futuras.
+const VISTA_STORAGE_KEY = 'ajy_calendario_vista';
+
+function leerVistaPersistida() {
+  try {
+    const raw = sessionStorage.getItem(VISTA_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Coincide con códigos correlativos tipo "SRV-2026-000035", "COT-2026-000004", etc.
 // Quita el código y los separadores que lo acompañan (–, -, espacios).
 const RE_CODIGO_CORRELATIVO = /\b[A-Z]{2,6}-\d{4}-\d{2,8}\b\s*[–-]?\s*/g;
-function tituloSinCorrelativo(e) {
-  const base = e.servicio?.titulo || e.titulo || '';
-  const limpio = base.replace(RE_CODIGO_CORRELATIVO, '').trim();
-  return limpio || base.trim() || '—';
+
+// Edificios (tipo + nombre) alcanzables desde un evento operativo, vía los
+// ascensores del servicio / de la emergencia / del plan de mantenimiento.
+// Se deduplica por id porque un servicio puede cubrir varios ascensores del
+// mismo edificio.
+function edificiosDelEvento(e) {
+  const ascensores = [
+    ...(e.servicio?.ascensores || []),
+    ...(e.mantenimiento_plan?.ascensores || [])
+  ].map(a => a.ascensor).filter(Boolean);
+  if (e.emergencia?.ascensor) ascensores.push(e.emergencia.ascensor);
+  const porId = new Map();
+  ascensores.forEach(a => {
+    const ed = a.edificio;
+    if (ed && !porId.has(ed.id)) porId.set(ed.id, ed);
+  });
+  return [...porId.values()].map(ed => `${(ed.tipo || 'Edificio').trim()} ${ed.nombre}`.trim());
+}
+
+/**
+ * Texto que se muestra en el calendario para un evento. Para eventos operativos
+ * (Emergencia, Correctivo, Mantenimiento, Servicio, Proyecto): "Módulo - Edificio
+ * NOMBRE". Los recordatorios (cobro, observación, etc.) conservan su título.
+ */
+function tituloEvento(e) {
+  if (e.es_recordatorio) {
+    const base = (e.titulo || '').replace(RE_CODIGO_CORRELATIVO, '').trim();
+    return base || '—';
+  }
+  const modulo = etiquetaTipoEvento(e.tipo_evento);
+  const edificios = edificiosDelEvento(e);
+  const ubicacion = edificios.length
+    ? edificios.join(', ')
+    : (e.servicio?.cliente?.nombre || e.emergencia?.cliente?.nombre || e.mantenimiento_plan?.cliente?.nombre || '');
+  const titulo = ubicacion ? `${modulo} - ${ubicacion}` : modulo;
+  // Servicios multidía: cada evento es un día → "Día k/N" para distinguirlos.
+  if (e.dia && e.dia.total > 1) return `${titulo} (Día ${e.dia.orden}/${e.dia.total})`;
+  return titulo;
 }
 
 /**
@@ -104,12 +154,15 @@ function diasDelCalendario(cursor) {
 }
 
 export default function Calendario() {
-  const [cursor, setCursor] = useState(new Date());
+  const [cursor, setCursor] = useState(() => {
+    const mes = leerVistaPersistida()?.mes;
+    return mes ? fechaLima(mes) : new Date();
+  });
   const [eventos, setEventos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modoLista, setModoLista] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
-  const [filtros, setFiltros] = useState(filtrosIniciales);
+  const [filtros, setFiltros] = useState(() => ({ ...filtrosIniciales, ...(leerVistaPersistida()?.filtros || {}) }));
   const [clientes, setClientes] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [materializandoId, setMaterializandoId] = useState(null);
@@ -139,6 +192,14 @@ export default function Calendario() {
   };
 
   useEffect(() => { recargarEventos(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cursor]);
+
+  // Persistir filtros + mes en sesión: al volver del detalle de un item el
+  // calendario reabre con lo que el usuario había establecido.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(VISTA_STORAGE_KEY, JSON.stringify({ filtros, mes: ymdLima(cursor) }));
+    } catch { /* sin storage disponible: la persistencia es best-effort */ }
+  }, [filtros, cursor]);
 
   /**
    * Abre el modal de "Crear servicio desde evento" con la info del plan
@@ -205,6 +266,8 @@ export default function Calendario() {
         const q = filtros.q.toLowerCase();
         const hay = [
           e.titulo,
+          etiquetaTipoEvento(e.tipo_evento),
+          ...edificiosDelEvento(e),
           e.servicio?.codigo,
           e.servicio?.cliente?.nombre,
           ...codigosAscensores(e.servicio),
@@ -317,7 +380,7 @@ export default function Calendario() {
         <div className="card">
           <ul className="divide-y divide-slate-100">
             {eventosFiltrados.map(e => {
-              const titulo = tituloSinCorrelativo(e);
+              const titulo = tituloEvento(e);
               const contenido = (
                 <>
                   <div className="font-medium text-slate-800 text-sm truncate">{titulo}</div>
@@ -361,7 +424,7 @@ export default function Calendario() {
                   <div className="mt-1 space-y-0.5 max-h-24 overflow-hidden">
                     {evs.slice(0, 3).map(e => (
                       <div key={e.id} className="block truncate rounded px-1.5 py-0.5 text-white text-[10px]" style={{ backgroundColor: colorPorTipo(e.tipo_evento) }}>
-                        {tituloSinCorrelativo(e)}
+                        {tituloEvento(e)}
                       </div>
                     ))}
                     {evs.length > 3 && <div className="text-[10px] text-slate-500">+{evs.length - 3} más</div>}
@@ -390,7 +453,7 @@ export default function Calendario() {
                 && e.tipo_evento === 'mantenimiento'
                 && !e.servicio
                 && Boolean(e.id_mantenimiento_plan);
-              const titulo = tituloSinCorrelativo(e);
+              const titulo = tituloEvento(e);
               return (
                 <li key={e.id} className="py-3 flex items-start gap-3">
                   <div className="h-2 w-2 mt-2 rounded-full shrink-0" style={{ backgroundColor: colorPorTipo(e.tipo_evento) }} />

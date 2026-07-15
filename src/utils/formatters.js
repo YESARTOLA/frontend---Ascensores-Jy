@@ -260,6 +260,29 @@ export function nombreCliente(cliente) {
 }
 
 /**
+ * Enriquece cada cliente con `edificios`: la lista de nombres de sus edificios /
+ * obras, derivada de los ascensores ya cargados (cada ascensor trae su edificio
+ * y el cliente dueño). Sirve para que el buscador de cliente (ClienteAutocomplete)
+ * también pueda matchear por nombre de edificio sin pedir datos extra al backend.
+ */
+export function clientesConEdificios(clientes, ascensores) {
+  if (!Array.isArray(clientes)) return [];
+  const porCliente = new Map();
+  for (const a of (ascensores || [])) {
+    const idCliente = a?.edificio?.cliente?.id;
+    const nombre = a?.edificio?.nombre;
+    if (!idCliente || !nombre) continue;
+    if (!porCliente.has(idCliente)) porCliente.set(idCliente, new Set());
+    porCliente.get(idCliente).add(nombre);
+  }
+  if (porCliente.size === 0) return clientes;
+  return clientes.map(c => {
+    const set = porCliente.get(c.id);
+    return set ? { ...c, edificios: [...set] } : c;
+  });
+}
+
+/**
  * Nombre del edificio / obra de una cotización, inferido de sus ascensores
  * (la cotización es a nivel cliente; la ubicación física vive en el edificio).
  * Toma el primer ascensor con edificio; si no hay (p. ej. todos "nuevos"), cae

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import {
   cotizacionesService,
   clientesService,
@@ -31,7 +31,12 @@ const itemVacio = () => ({
   cantidad: 1,
   unidad: 'Unidad',
   precio_unitario: 0,
-  descuento_porcentaje: 0
+  descuento_porcentaje: 0,
+  // Trazabilidad cuando el ítem se "jala" desde una observación del técnico:
+  // id de la observación de origen y datos de su foto (para previsualización).
+  // La foto real se copia en el backend al crear la cotización.
+  id_observacion_origen: null,
+  foto: null
 });
 
 const ascensorVacio = (modo = 'existente') => ({
@@ -88,12 +93,15 @@ export default function Cotizaciones() {
   const [duplicandoDe, setDuplicandoDe] = useState(null);
   const [saving, setSaving] = useState(false);
   const [subiendoAdjuntos, setSubiendoAdjuntos] = useState(false);
-  const { esSuperAdmin, esAdmin } = useAuth();
+  const [exportando, setExportando] = useState(false);
+  const { esSuperAdmin, esAdmin, accesoServicios, accesoProyectos } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
   const [aEliminar, setAEliminar] = useState(null);
   const toast = useToast();
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(cotizacionesService.paginate, filtros, { initialPageSize: 25 });
@@ -118,6 +126,36 @@ export default function Cotizaciones() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, puedeCrear, validezDefaultDias]);
+
+  // Prellenado "crear cotización desde observaciones" (navegación desde el
+  // detalle del plan de mantenimiento). Llega por location.state para poder
+  // transportar ítems con foto sin ensuciar la URL.
+  useEffect(() => {
+    const prefill = location.state?.prefillObservaciones;
+    if (!prefill || !puedeCrear) return;
+    setForm({
+      ...formInicial({ id_cliente: prefill.id_cliente ? String(prefill.id_cliente) : '' }),
+      fecha_validez: addDaysYMD(null, validezDefaultDias),
+      cuentas_pdf: cuentas.map(c => c.id),
+      descripcion: prefill.origen ? `Generada desde observaciones de ${prefill.origen}` : '',
+      ascensores: (prefill.id_ascensores || []).length
+        ? prefill.id_ascensores.map(idAsc => ({ modo: 'existente', id_ascensor: String(idAsc), ascensor_nuevo: ascensorVacio().ascensor_nuevo }))
+        : [ascensorVacio()],
+      items: (prefill.items || []).length
+        ? prefill.items.map(it => ({
+            ...itemVacio(),
+            descripcion: it.descripcion || '',
+            id_observacion_origen: it.id_observacion_origen || null,
+            foto: it.foto || null
+          }))
+        : [itemVacio()]
+    });
+    setDuplicandoDe(null);
+    setOpen(true);
+    // limpia el state para que recargar/cerrar no reabra el modal
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, puedeCrear, validezDefaultDias, cuentas]);
 
   // Abre el modal en modo "duplicar" si llega ?duplicar=ID (p.ej. desde el detalle).
   useEffect(() => {
@@ -221,7 +259,13 @@ export default function Cotizaciones() {
   };
 
   // Jerarquía de tipos: padres y subtipos del padre seleccionado en el form.
-  const padresTipo = useMemo(() => tipos.filter(t => t.es_padre), [tipos]);
+  // Se ocultan los padres fuera del ámbito del usuario (Servicios/Proyectos):
+  // un Administrador acotado a Servicios no ve la pestaña ni la opción Proyectos.
+  const padresTipo = useMemo(
+    () => tipos.filter(t => t.es_padre &&
+      (t.categoria_funcional === 'PROYECTOS' ? accesoProyectos : accesoServicios)),
+    [tipos, accesoServicios, accesoProyectos]
+  );
   const subtiposDelPadre = useMemo(
     () => tipos.filter(t => !t.es_padre && String(t.id_padre) === String(form.id_tipo_servicio)),
     [tipos, form.id_tipo_servicio]
@@ -371,7 +415,10 @@ export default function Cotizaciones() {
             cantidad: Number(it.cantidad) || 1,
             unidad: it.unidad || 'Unidad',
             precio_unitario: Number(it.precio_unitario) || 0,
-            descuento_porcentaje: Number(it.descuento_porcentaje) || 0
+            descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
+            // Si el ítem viene de una observación, el backend clona su foto y
+            // marca la observación como ya cotizada.
+            id_observacion_origen: it.id_observacion_origen || null
           })),
         tiene_cuotas: payloadCuotas.tiene_cuotas,
         plan_cuotas: payloadCuotas.plan_cuotas,
@@ -389,6 +436,35 @@ export default function Cotizaciones() {
     }
   };
 
+  const exportar = async (formato) => {
+    if (exportando) return;
+    setExportando(formato);
+    try {
+      const blob = await cotizacionesService.exportar(filtros, formato).then(r => r.data);
+      const ext = formato === 'pdf' ? 'pdf' : 'xlsx';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cotizaciones-${hoyISO()}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Exportación ${ext.toUpperCase()} lista`);
+    } catch (err) {
+      // El backend puede devolver el error como blob — intentamos parsearlo
+      let msg = 'Error al exportar';
+      if (err.response?.data instanceof Blob) {
+        try { msg = JSON.parse(await err.response.data.text()).error || msg; } catch {}
+      } else if (err.response?.data?.error) {
+        msg = err.response.data.error;
+      }
+      toast.error(msg);
+    } finally {
+      setExportando(false);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -396,6 +472,12 @@ export default function Cotizaciones() {
         subtitle={`${total} registro(s)`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <button onClick={() => exportar('excel')} disabled={!!exportando} className="btn-ghost">
+              {exportando === 'excel' ? 'Generando…' : 'Exportar Excel'}
+            </button>
+            <button onClick={() => exportar('pdf')} disabled={!!exportando} className="btn-ghost">
+              {exportando === 'pdf' ? 'Generando…' : 'Exportar PDF'}
+            </button>
             {puedeCrear && (
               <button onClick={abrirModal} className="btn-primary">+ Nueva cotización</button>
             )}
@@ -438,6 +520,7 @@ export default function Cotizaciones() {
                   <tr>
                     <th className="table-th">Código</th>
                     <th className="table-th">Cliente</th>
+                    <th className="table-th">Creado por</th>
                     <th className="table-th">Tipo</th>
                     <th className="table-th">Versión</th>
                     <th className="table-th">Validez</th>
@@ -455,6 +538,7 @@ export default function Cotizaciones() {
                       <tr key={c.id} className="table-row-hover">
                         <td className="table-td"><Link to={`/cotizaciones/${c.id}`} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link></td>
                         <td className="table-td">{nombreEdificioCotizacion(c) || '—'}</td>
+                        <td className="table-td">{c.creado_por?.nombres || '—'}</td>
                         <td className="table-td">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre || '—'}</td>
                         <td className="table-td">v{v?.numero_version || c.version_activa}</td>
                         <td className="table-td">{formatFecha(v?.fecha_validez)}</td>
@@ -500,6 +584,7 @@ export default function Cotizaciones() {
                     </div>
                     <div className="text-sm text-carbon-800 font-medium">{nombreEdificioCotizacion(c)}</div>
                     <div className="text-xs text-carbon-500 mt-0.5">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre} • v{v?.numero_version}</div>
+                    {c.creado_por?.nombres && <div className="text-xs text-carbon-400 mt-0.5">Creada por {c.creado_por.nombres}</div>}
                     <div className="mt-1.5 flex justify-between text-xs">
                       <span className={`badge ${badgeEstado(v?.estado_version)}`}>{v?.estado_version}</span>
                       <span className="font-medium">{formatMonto(v?.monto_total, v?.moneda)}</span>
@@ -682,8 +767,23 @@ export default function Cotizaciones() {
             <div className="space-y-2">
               {form.items.map((it, idx) => (
                 <div key={idx} className="grid grid-cols-12 gap-2 items-start">
-                  <textarea className="textarea col-span-12 sm:col-span-5" rows="1" placeholder="Descripción del item"
-                    value={it.descripcion} onChange={e => cambiarItem(idx, 'descripcion', e.target.value)} />
+                  <div className="col-span-12 sm:col-span-5 space-y-1">
+                    <textarea className="textarea w-full" rows="1" placeholder="Descripción del item"
+                      value={it.descripcion} onChange={e => cambiarItem(idx, 'descripcion', e.target.value)} />
+                    {it.foto && (
+                      <div className="flex items-center gap-2">
+                        <a href={assetUrl(it.foto.ruta_almacenamiento)} target="_blank" rel="noreferrer" title={it.foto.nombre_original}>
+                          <img src={assetUrl(it.foto.ruta_almacenamiento)} alt={it.foto.nombre_original || 'foto'}
+                            className="h-12 w-12 rounded object-cover ring-1 ring-carbon-200" />
+                        </a>
+                        <span className="text-[11px] text-carbon-500">
+                          Foto de la observación{it.id_observacion_origen ? ` #${it.id_observacion_origen}` : ''}
+                        </span>
+                        <button type="button" onClick={() => { cambiarItem(idx, 'foto', null); cambiarItem(idx, 'id_observacion_origen', null); }}
+                          className="text-carbon-400 hover:text-red-600 text-sm leading-none" title="Quitar foto del ítem">×</button>
+                      </div>
+                    )}
+                  </div>
                   <input type="number" step="0.01" className="input col-span-3 sm:col-span-1" placeholder="Cant."
                     value={it.cantidad} onChange={e => cambiarItem(idx, 'cantidad', e.target.value)} />
                   <input className="input col-span-3 sm:col-span-1" placeholder="Unidad"

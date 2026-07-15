@@ -6,9 +6,9 @@ import Modal from '../components/common/Modal.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFecha, sanearTelefono, formatTelefono } from '../utils/formatters.js';
-import { ROLES_CON_ALCANCE } from '../features/auth/alcance.js';
+import { ROLES_CON_ALCANCE, esRolConAlcanceEdificios } from '../features/auth/alcance.js';
 
-const inicial = { nombres: '', correo: '', contrasena: '', id_rol: '', id_tecnico: '', telefono: '', acceso_servicios: 1, acceso_proyectos: 1 };
+const inicial = { nombres: '', correo: '', contrasena: '', id_rol: '', id_tecnico: '', telefono: '', acceso_servicios: 1, acceso_proyectos: 1, acceso_edificios: 1, acceso_obras: 1 };
 
 export default function Usuarios() {
   const [roles, setRoles] = useState([]);
@@ -46,6 +46,12 @@ export default function Usuarios() {
     return r ? ROLES_CON_ALCANCE.includes(r.codigo) : false;
   }, [roles, form.id_rol]);
 
+  // El alcance por tipo de ubicación (Edificios / Obras) solo aplica al Administrador.
+  const esRolConAlcanceEdif = useMemo(() => {
+    const r = roles.find(r => String(r.id) === String(form.id_rol));
+    return r ? esRolConAlcanceEdificios(r.codigo) : false;
+  }, [roles, form.id_rol]);
+
   const cambiarRol = (idRol) => {
     setForm(f => {
       const nuevoRol = roles.find(r => String(r.id) === String(idRol));
@@ -71,7 +77,8 @@ export default function Usuarios() {
     setForm({
       nombres: u.nombres, correo: u.correo, contrasena: '',
       id_rol: u.id_rol, id_tecnico: u.id_tecnico || '', telefono: sanearTelefono(u.telefono || ''),
-      acceso_servicios: u.acceso_servicios ?? 1, acceso_proyectos: u.acceso_proyectos ?? 1
+      acceso_servicios: u.acceso_servicios ?? 1, acceso_proyectos: u.acceso_proyectos ?? 1,
+      acceso_edificios: u.acceso_edificios ?? 1, acceso_obras: u.acceso_obras ?? 1
     });
     setEditId(u.id);
     setOpen(true);
@@ -81,6 +88,10 @@ export default function Usuarios() {
     e.preventDefault();
     if (esRolConAlcance && !form.acceso_servicios && !form.acceso_proyectos) {
       toast.error('Marca al menos un ámbito: Servicios o Proyectos');
+      return;
+    }
+    if (esRolConAlcanceEdif && !form.acceso_edificios && !form.acceso_obras) {
+      toast.error('Marca al menos un tipo de ubicación: Edificios u Obras');
       return;
     }
     try {
@@ -167,6 +178,24 @@ export default function Usuarios() {
                 </label>
               </div>
               <p className="text-xs text-slate-500 mt-1">Define a qué clientes y módulos accede el usuario. Marca al menos uno.</p>
+            </div>
+          )}
+          {esRolConAlcanceEdif && (
+            <div className="sm:col-span-2">
+              <label className="label">Tipo de ubicación *</label>
+              <div className="flex flex-wrap gap-x-6 gap-y-2 mt-1">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={!!form.acceso_edificios}
+                    onChange={e => setForm(f => ({ ...f, acceso_edificios: e.target.checked ? 1 : 0 }))} />
+                  Edificios
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={!!form.acceso_obras}
+                    onChange={e => setForm(f => ({ ...f, acceso_obras: e.target.checked ? 1 : 0 }))} />
+                  Obras
+                </label>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Limita al Administrador a ver solo Edificios, solo Obras o ambos (ubicaciones y todo lo que cuelga de ellas). Marca al menos uno.</p>
             </div>
           )}
           <div><label className="label">Teléfono</label><input

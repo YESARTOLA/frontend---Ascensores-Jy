@@ -32,7 +32,7 @@ const inicial = {
   id_tipo_servicio: '', id_cliente: '',
   ascensores_seleccion: {}, // { [id_ascensor]: { monto: string, manual: bool } }
   titulo: '', descripcion: '',
-  fecha_programada: hoyISO(), hora_programada: '09:00', prioridad: 'media',
+  fecha_programada: hoyISO(), hora_programada: '09:00', duracion_dias: 1, prioridad: 'media',
   precio_interno: '', moneda: 'PEN', observaciones: '',
   es_borrador: false
 };
@@ -49,6 +49,7 @@ function formToPayload(form, ascensoresSeleccionados) {
     id_cliente: form.id_cliente,
     titulo: form.titulo, descripcion: form.descripcion,
     fecha_programada: form.fecha_programada, hora_programada: form.hora_programada,
+    duracion_dias: Math.max(1, parseInt(form.duracion_dias, 10) || 1),
     prioridad: form.prioridad,
     precio_interno: form.precio_interno, moneda: form.moneda,
     observaciones: form.observaciones, es_borrador: form.es_borrador,
@@ -77,6 +78,7 @@ function servicioToForm(s) {
     descripcion: s.descripcion || '',
     fecha_programada: toYMDLima(s.fecha_programada) || hoyISO(),
     hora_programada: s.hora_programada || '09:00',
+    duracion_dias: s.duracion_dias || 1,
     prioridad: s.prioridad || 'media',
     precio_interno: s.precio_interno != null ? String(s.precio_interno) : '',
     moneda: s.moneda || 'PEN',
@@ -495,6 +497,16 @@ export default function Servicios() {
           <div className="sm:col-span-2"><label className="label">Descripción</label><textarea className="textarea" rows="2" value={form.descripcion} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} /></div>
           <div><label className="label">Fecha *</label><input type="date" className="input" required value={form.fecha_programada} onChange={e => setForm(f => ({ ...f, fecha_programada: e.target.value }))} /></div>
           <div><label className="label">Hora</label><input type="time" className="input" value={form.hora_programada} onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>
+          <div>
+            <label className="label">Duración (días)</label>
+            <input type="number" min="1" step="1" className="input" value={form.duracion_dias}
+              onChange={e => setForm(f => ({ ...f, duracion_dias: e.target.value }))} />
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {Number(form.duracion_dias) > 1
+                ? `Días corridos desde la fecha. El técnico verá ${form.duracion_dias} días en su agenda y subirá evidencia cada día.`
+                : 'Un solo día.'}
+            </p>
+          </div>
           <div>
             <label className="label">Prioridad</label>
             <select className="select" value={form.prioridad} onChange={e => setForm(f => ({ ...f, prioridad: e.target.value }))}>

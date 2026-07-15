@@ -48,6 +48,9 @@ export default function Clientes() {
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [exportando, setExportando] = useState(false);
+  // Cliente seleccionado para inactivar/reactivar todos sus edificios (solo SA).
+  const [clienteEdificios, setClienteEdificios] = useState(null);
+  const [cambiandoEdificios, setCambiandoEdificios] = useState(false);
   const [diasAviso, setDiasAviso] = useState(30);
   const [distritos, setDistritos] = useState([]);
   const [tiposAscensor, setTiposAscensor] = useState([]);
@@ -119,6 +122,24 @@ export default function Clientes() {
       toast.error(err.response?.data?.error || 'Error al guardar');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Inactiva/reactiva en bloque todos los edificios del cliente (solo SA).
+  const cambiarEstadoEdificios = async (estado) => {
+    if (!clienteEdificios || cambiandoEdificios) return;
+    setCambiandoEdificios(true);
+    try {
+      const { afectados } = await edificiosService.setEstadoCliente(clienteEdificios.id, estado);
+      toast.success(afectados > 0
+        ? `${afectados} edificio(s) ${estado === 0 ? 'inactivado(s)' : 'reactivado(s)'}`
+        : 'No había edificios para cambiar');
+      setClienteEdificios(null);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo cambiar el estado de los edificios');
+    } finally {
+      setCambiandoEdificios(false);
     }
   };
 
@@ -262,6 +283,9 @@ export default function Clientes() {
                         <td className="table-td text-right space-x-2 whitespace-nowrap">
                           <Link to={`/clientes/${c.id}`} className="text-brand-700 hover:underline text-xs font-medium">Ver 360</Link>
                           {puedeEditar && <button onClick={() => abrirEdit(c)} className="text-slate-600 hover:underline text-xs">Editar</button>}
+                          {esSuperAdmin && (c._count?.edificios ?? 0) > 0 && (
+                            <button onClick={() => setClienteEdificios(c)} className="text-slate-600 hover:underline text-xs">Edificios</button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -299,6 +323,9 @@ export default function Clientes() {
                       <div className="mt-2 flex gap-3">
                         <Link to={`/clientes/${c.id}`} className="text-xs text-brand-700 font-medium">Ver 360 →</Link>
                         {puedeEditar && <button onClick={() => abrirEdit(c)} className="text-xs text-slate-600">Editar</button>}
+                        {esSuperAdmin && (c._count?.edificios ?? 0) > 0 && (
+                          <button onClick={() => setClienteEdificios(c)} className="text-xs text-slate-600">Edificios</button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -326,6 +353,21 @@ export default function Clientes() {
           clasificaciones={clasificaciones}
           tiposServicio={tiposServicio}
         />
+      </Modal>
+
+      <Modal open={!!clienteEdificios} onClose={() => setClienteEdificios(null)} title="Edificios del cliente" size="sm"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setClienteEdificios(null)} disabled={cambiandoEdificios}>Cerrar</button>
+            <button className="btn-primary" onClick={() => cambiarEstadoEdificios(1)} disabled={cambiandoEdificios}>Reactivar todos</button>
+            <button className="btn-danger" onClick={() => cambiarEstadoEdificios(0)} disabled={cambiandoEdificios}>Inactivar todos</button>
+          </>
+        }>
+        <p className="text-sm text-slate-600">
+          Acción exclusiva del Super Admin sobre <span className="font-semibold text-slate-800">{clienteEdificios?.nombre}</span>.
+          Al inactivar todos sus edificios dejarán de verse para los demás roles, junto con sus ascensores, servicios y proyectos;
+          solo el Super Admin seguirá viéndolos. No se elimina nada y puedes reactivarlos cuando quieras.
+        </p>
       </Modal>
     </>
   );

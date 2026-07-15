@@ -175,7 +175,11 @@ export default function Facturas() {
                       <td className="table-td text-xs font-mono text-slate-500">{(page - 1) * pageSize + i + 1}</td>
                       <td className="table-td font-mono text-xs">{f.numero_factura}</td>
                       <td className="table-td text-sm">{f.cliente?.nombre}</td>
-                      <td className="table-td"><Link to={`/servicios/${f.servicio?.id}`} className="font-mono text-xs text-brand-700">{f.servicio?.codigo}</Link></td>
+                      <td className="table-td">
+                        {f.servicio
+                          ? <Link to={`/servicios/${f.servicio.id}`} className="font-mono text-xs text-brand-700">{f.servicio.codigo}</Link>
+                          : <span className="badge-blue text-[10px]">Plan de mant.{f.mantenimiento_plan ? ` #${f.mantenimiento_plan.id}` : ''}</span>}
+                      </td>
                       <td className="table-td text-xs">{formatFecha(f.fecha_emision)}</td>
                       <td className="table-td text-right font-mono">{formatMonto(f.monto)}</td>
                       <td className="table-td text-xs">

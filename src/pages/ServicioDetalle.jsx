@@ -18,6 +18,7 @@ import {
 } from '../utils/estadoServicio.js';
 import { ESTADOS_GUIA, ESTADO_GUIA_OBSERVADA, estadoGuiaSegunArchivo } from '../utils/estadoGuia.js';
 import ObservacionesServicioPanel from '../components/servicios/ObservacionesServicioPanel.jsx';
+import ChecklistFinalizacionPanel from '../components/servicios/ChecklistFinalizacionPanel.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
 import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
 
@@ -27,6 +28,78 @@ const UNIDADES = ['Unidad', 'Metro', 'Caja', 'Bolsa', 'Litro', 'Juego', 'Otro'];
 const TIPOS_EVIDENCIA = ['Foto', 'Video', 'Documento', 'Otro'];
 const TIPOS_ENTREGA = ['Entrega parcial', 'Entrega final', 'Entrega documental', 'Entrega técnica'];
 const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
+
+// Configuración del modal de revisión administrativa (aprobar / observar / rechazar).
+// Centraliza copy, obligatoriedad del motivo, estilo del botón y la tematización
+// visual (banner/icono) por resultado, alineada a la línea gráfica del app
+// (emerald = aprobar, ember = observar, rose = rechazar). `intro` se reutiliza como
+// la consecuencia mostrada en el banner: una sola fuente de verdad, sin duplicar copy.
+// Las clases del tema se escriben literales para que el JIT de Tailwind las emita.
+const REVISION_META = {
+  aprobado: {
+    titulo: 'Aprobar revisión',
+    intro: 'El servicio cumple y queda habilitado para cobro. Las observaciones son opcionales y se guardan en el historial.',
+    labelObs: 'Observaciones de la revisión',
+    obligatorio: false,
+    btnLabel: 'Aprobar',
+    btnClass: 'btn-primary',
+    placeholder: 'Comentario opcional para el historial…',
+    tema: {
+      banner: 'bg-emerald-50 ring-emerald-200/70',
+      iconWrap: 'bg-emerald-100 text-emerald-700',
+      titulo: 'text-emerald-900',
+      texto: 'text-emerald-700/90',
+      asterisco: 'text-emerald-600'
+    },
+    icono: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
+      </svg>
+    )
+  },
+  observado: {
+    titulo: 'Observar servicio',
+    intro: 'Vuelve a corrección con el técnico, que deberá subsanar tus observaciones y reenviarlo a revisión.',
+    labelObs: 'Motivo de la observación',
+    obligatorio: true,
+    btnLabel: 'Observar',
+    btnClass: 'btn-secondary !text-ember-700 !border-ember-300 !bg-ember-50',
+    placeholder: 'Detalla qué debe corregirse…',
+    tema: {
+      banner: 'bg-ember-50 ring-ember-200/70',
+      iconWrap: 'bg-ember-100 text-ember-700',
+      titulo: 'text-ember-900',
+      texto: 'text-ember-700/90',
+      asterisco: 'text-ember-600'
+    },
+    icono: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    )
+  },
+  rechazado: {
+    titulo: 'Rechazar servicio',
+    intro: 'El servicio se rechaza y vuelve a corrección. El motivo queda registrado en el historial.',
+    labelObs: 'Motivo del rechazo',
+    obligatorio: true,
+    btnLabel: 'Rechazar',
+    btnClass: 'btn-danger',
+    placeholder: 'Explica por qué se rechaza el servicio…',
+    tema: {
+      banner: 'bg-rose-50 ring-rose-200/70',
+      iconWrap: 'bg-rose-100 text-rose-700',
+      titulo: 'text-rose-900',
+      texto: 'text-rose-700/90',
+      asterisco: 'text-rose-600'
+    },
+    icono: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
+      </svg>
+    )
+  }
+};
 
 export default function ServicioDetalle() {
   const { id } = useParams();
@@ -44,11 +117,8 @@ export default function ServicioDetalle() {
   const [tecnicos, setTecnicos] = useState([]);
   const [openAsignar, setOpenAsignar] = useState(false);
   const [openFinalizar, setOpenFinalizar] = useState(false);
-  const [openChecklist, setOpenChecklist] = useState(false);
-  const [plantillaCheck, setPlantillaCheck] = useState(null);
-  const [respuestasCheck, setRespuestasCheck] = useState({});
-  const [guardandoCheck, setGuardandoCheck] = useState(false);
-  const guardandoCheckRef = useRef(false);
+  const [checklistResumen, setChecklistResumen] = useState({ completo: false });
+  const [generandoInforme, setGenerandoInforme] = useState(false);
   const [openEntrega, setOpenEntrega] = useState(false);
   const [openEvidencia, setOpenEvidencia] = useState(false);
   const [asignaciones, setAsignaciones] = useState([]);
@@ -61,8 +131,11 @@ export default function ServicioDetalle() {
   const [guardandoFinalizar, setGuardandoFinalizar] = useState(false);
   const filePreview = useFilePreview();
   const [entregaForm, setEntregaForm] = useState({ tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', id_archivo: null, estado_entrega: 'Entregada' });
-  const [evidenciaForm, setEvidenciaForm] = useState({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null });
+  const [evidenciaForm, setEvidenciaForm] = useState({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null, id_dia: '' });
   const [subiendoEvidenciaArchivo, setSubiendoEvidenciaArchivo] = useState(false);
+  const [openDuracion, setOpenDuracion] = useState(false);
+  const [duracionForm, setDuracionForm] = useState(1);
+  const [guardandoDuracion, setGuardandoDuracion] = useState(false);
   const [openProgramar, setOpenProgramar] = useState(false);
   const [programarForm, setProgramarForm] = useState({ fecha_programada: '', hora_programada: '' });
   const [guardandoProgramar, setGuardandoProgramar] = useState(false);
@@ -72,6 +145,10 @@ export default function ServicioDetalle() {
   const [subiendoArchivoGuia, setSubiendoArchivoGuia] = useState(false);
   const [guardandoGuia, setGuardandoGuia] = useState(false);
   const guardandoGuiaRef = useRef(false);
+  const [openRevisar, setOpenRevisar] = useState(false);
+  const [revisarResultado, setRevisarResultado] = useState('aprobado'); // aprobado | observado | rechazado
+  const [revisarObs, setRevisarObs] = useState('');
+  const [guardandoRevisar, setGuardandoRevisar] = useState(false);
   const toast = useToast();
   const { user, esSuperAdmin, esAdmin, esCoordinador, esTecnico, puedeVerPrecio } = useAuth();
 
@@ -105,6 +182,23 @@ export default function ServicioDetalle() {
   const puedeGestionarGuias = (esSuperAdmin || esAdmin || esCoordinador || esTecnicoResponsable) && !guiasBloqueadasPorEstado;
   const puedeEliminarGuia = (esSuperAdmin || esAdmin) && !guiasBloqueadasPorEstado;
   const checklist = s.checklists?.[0];
+
+  // Servicios multidía: la grilla de días y la evidencia esperada por día.
+  const dias = s.dias || [];
+  const esMultidia = (s.duracion_dias || 1) > 1;
+  // Evidencias "generales" del servicio: las que NO son foto de un ítem del
+  // checklist de finalización (id_respuesta). Las fotos por ítem se ven y se
+  // gestionan en el panel del checklist, no en la tarjeta de evidencias.
+  const evidenciasGenerales = (s.evidencias || []).filter(ev => !ev.id_respuesta);
+  const evidenciasPorDia = evidenciasGenerales.reduce((acc, ev) => {
+    if (ev.id_dia) acc[ev.id_dia] = (acc[ev.id_dia] || 0) + 1;
+    return acc;
+  }, {});
+  const ESTADOS_DURACION_EDITABLE = ['Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida', 'En camino', 'En curso'];
+  const puedeSubirEvidenciaDia = (esTecnico || esSuperAdmin || esAdmin)
+    && ['En camino', 'En curso'].includes(s.estado_servicio);
+  const puedeEditarDuracion = (esSuperAdmin || esAdmin) && !!s.fecha_programada
+    && ESTADOS_DURACION_EDITABLE.includes(s.estado_servicio);
 
   const iniciarAsignar = () => {
     setAsignaciones(s.asignaciones?.map(a => ({
@@ -218,60 +312,19 @@ export default function ServicioDetalle() {
   };
 
   const iniciarFinalizacion = async () => {
-    // Si ya hay un checklist con PDF generado, saltar el paso de checklist y
-    // abrir directo el modal de "Finalizar" (datos: guía, OT, evidencias).
-    if (s.finalizacion_checklist?.id_archivo_pdf) {
-      setOpenFinalizar(true);
-      return;
-    }
+    // El checklist se completa progresivamente en el panel (estado "En curso").
+    // Al pulsar Finalizar se genera el informe PDF a partir de lo persistido y,
+    // si está completo, se abre el modal de cierre (guía / OT / evidencias).
+    if (generandoInforme) return;
+    setGenerandoInforme(true);
     try {
-      const { plantilla, categoria } = await serviciosService.obtenerPlantillaFinalizacion(id);
-      setPlantillaCheck({ categoria, plantilla });
-      // Inicializar respuestas en blanco (sin valor) para forzar elección.
-      const init = {};
-      (plantilla.items || []).forEach(it => { init[it.id] = { respuesta: '', nota: '' }; });
-      setRespuestasCheck(init);
-      setOpenChecklist(true);
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'No se pudo cargar la plantilla de checklist');
-    }
-  };
-
-  const setRespuesta = (idItem, key, val) => {
-    setRespuestasCheck(prev => ({ ...prev, [idItem]: { ...prev[idItem], [key]: val } }));
-  };
-
-  const guardarChecklistFin = async (e) => {
-    if (e?.preventDefault) e.preventDefault();
-    if (guardandoCheckRef.current) return;
-    const items = plantillaCheck?.plantilla?.items || [];
-    for (const it of items) {
-      const r = respuestasCheck[it.id];
-      if (!r || !r.respuesta) {
-        toast.error(`Falta responder: "${it.texto}"`);
-        return;
-      }
-    }
-    guardandoCheckRef.current = true;
-    setGuardandoCheck(true);
-    try {
-      const payload = {
-        respuestas: items.map(it => ({
-          id_item: it.id,
-          respuesta: respuestasCheck[it.id].respuesta,
-          nota: respuestasCheck[it.id].nota?.trim() || null
-        }))
-      };
-      await serviciosService.guardarFinalizacion(id, payload);
-      toast.success('Checklist completado. Continúe con la guía y evidencias.');
-      setOpenChecklist(false);
+      await serviciosService.generarInformeFinalizacion(id);
       await cargar();
       setOpenFinalizar(true);
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al guardar el checklist');
+      toast.error(err.response?.data?.error || 'No se pudo generar el informe de finalización');
     } finally {
-      guardandoCheckRef.current = false;
-      setGuardandoCheck(false);
+      setGenerandoInforme(false);
     }
   };
 
@@ -327,13 +380,20 @@ export default function ServicioDetalle() {
     }
   };
 
+  // Abre el modal de evidencia. Si se pasa un día (servicios multidía) la
+  // evidencia queda ligada a ese día; sin día, es evidencia general del servicio.
+  const abrirEvidenciaDia = (dia = null) => {
+    setEvidenciaForm({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null, id_dia: dia ? dia.id : '' });
+    setOpenEvidencia(true);
+  };
+
   const guardarEvidencia = async () => {
     if (!evidenciaForm.id_archivo) return toast.error('Adjunte un archivo');
     try {
       await evidenciasGuiasService.subirEvidencia(id, evidenciaForm);
       toast.success('Evidencia agregada');
       setOpenEvidencia(false);
-      setEvidenciaForm({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null });
+      setEvidenciaForm({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null, id_dia: '' });
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
@@ -447,23 +507,34 @@ export default function ServicioDetalle() {
     catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
-  const revisar = async (resultado = 'aprobado') => {
-    const pedirMotivo = resultado !== 'aprobado';
-    const observaciones = prompt(
-      pedirMotivo ? 'Motivo (obligatorio para observar/rechazar):' : 'Observaciones de la revisión (opcional):'
-    );
-    if (pedirMotivo && !String(observaciones || '').trim()) {
+  // Abre el modal de revisión administrativa con el resultado preseleccionado.
+  const abrirRevisar = (resultado = 'aprobado') => {
+    setRevisarResultado(resultado);
+    setRevisarObs('');
+    setOpenRevisar(true);
+  };
+
+  const confirmarRevisar = async () => {
+    const meta = REVISION_META[revisarResultado];
+    if (meta.obligatorio && !revisarObs.trim()) {
       return toast.error('Debe indicar el motivo al observar o rechazar');
     }
+    if (guardandoRevisar) return;
+    setGuardandoRevisar(true);
     try {
-      await serviciosService.revisar(id, { resultado, observaciones: observaciones || '' });
+      await serviciosService.revisar(id, { resultado: revisarResultado, observaciones: revisarObs.trim() });
       toast.success(
-        resultado === 'aprobado' ? 'Servicio aprobado y habilitado para cobro'
-        : resultado === 'observado' ? 'Servicio observado y devuelto a corrección'
+        revisarResultado === 'aprobado' ? 'Servicio aprobado y habilitado para cobro'
+        : revisarResultado === 'observado' ? 'Servicio observado y devuelto a corrección'
         : 'Servicio rechazado y devuelto a corrección'
       );
+      setOpenRevisar(false);
       cargar();
-    } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error');
+    } finally {
+      setGuardandoRevisar(false);
+    }
   };
 
   // Registrar/editar la fecha de programación cuando el servicio llega al área.
@@ -495,6 +566,34 @@ export default function ServicioDetalle() {
     }
   };
 
+  // Editar la duración (días) de un servicio ya programado, incluso En curso.
+  const abrirDuracion = () => { setDuracionForm(s.duracion_dias || 1); setOpenDuracion(true); };
+  const guardarDuracion = async (confirmar = false) => {
+    const diasN = Math.max(1, parseInt(duracionForm, 10) || 0);
+    if (!diasN) return toast.error('Duración inválida (mínimo 1 día)');
+    if (guardandoDuracion) return;
+    setGuardandoDuracion(true);
+    try {
+      await serviciosService.cambiarDuracion(id, { duracion_dias: diasN, confirmar });
+      toast.success('Duración actualizada');
+      setOpenDuracion(false);
+      cargar();
+    } catch (err) {
+      const data = err.response?.data;
+      if (err.response?.status === 409 && data?.requiere_confirmacion) {
+        const lista = (data.dias_con_evidencia || []).map(d => `Día ${d.orden}`).join(', ');
+        if (window.confirm(`Reducir la duración dará de baja días que ya tienen evidencia (${lista}). La evidencia se conserva, pero esos días salen de la agenda. ¿Continuar?`)) {
+          setGuardandoDuracion(false);
+          return guardarDuracion(true);
+        }
+      } else {
+        toast.error(data?.error || 'Error al cambiar la duración');
+      }
+    } finally {
+      setGuardandoDuracion(false);
+    }
+  };
+
   const subirArchivoEntrega = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -523,14 +622,25 @@ export default function ServicioDetalle() {
             <button type="button" onClick={volver} className="btn-secondary">← Volver</button>
             {puedeEditarServicio && <button type="button" onClick={() => navigate(`/servicios?edit=${s.id}`)} className="btn-secondary">Editar</button>}
             {puedeEditarServicio && <button type="button" onClick={abrirProgramar} className={s.fecha_programada ? 'btn-secondary' : 'btn-primary'}>{s.fecha_programada ? 'Reprogramar' : 'Programar fecha'}</button>}
+            {puedeEditarDuracion && <button type="button" onClick={abrirDuracion} className="btn-secondary">Duración ({s.duracion_dias || 1} día{(s.duracion_dias || 1) > 1 ? 's' : ''})</button>}
             {puedePromover && <button onClick={promover} className="btn-primary">Promover borrador</button>}
             {puedeAsignar && <button onClick={iniciarAsignar} className="btn-secondary">Asignar / Checklist</button>}
             {puedeIniciar && s.estado_servicio === 'Listo para salida' && <button onClick={() => iniciarAccion('en_camino')} className="btn-secondary">En camino</button>}
             {puedeIniciar && ['Listo para salida', 'En camino'].includes(s.estado_servicio) && <button onClick={() => iniciarAccion('iniciar_servicio')} className="btn-primary">Iniciar servicio</button>}
-            {puedeFinalizar && <button onClick={iniciarFinalizacion} className="btn-primary">Finalizar</button>}
-            {puedeRevisar && <button onClick={() => revisar('aprobado')} className="btn-primary">Aprobar revisión</button>}
-            {puedeRevisar && <button onClick={() => revisar('observado')} className="btn-secondary !text-amber-700 !border-amber-200">Observar</button>}
-            {puedeRevisar && <button onClick={() => revisar('rechazado')} className="btn-secondary !text-rose-700 !border-rose-200">Rechazar</button>}
+            {puedeFinalizar && (
+              <button
+                onClick={iniciarFinalizacion}
+                disabled={generandoInforme || !checklistResumen.completo}
+                title={checklistResumen.completo ? ''
+                  : checklistResumen.plantillaVacia ? 'Un administrador debe configurar la plantilla de checklist de esta categoría antes de finalizar'
+                  : 'Complete el checklist de finalización (todos los ítems respondidos y una foto por cada "Sí")'}
+                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed">
+                {generandoInforme ? 'Generando informe…' : 'Finalizar'}
+              </button>
+            )}
+            {puedeRevisar && <button onClick={() => abrirRevisar('aprobado')} className="btn-primary">Aprobar revisión</button>}
+            {puedeRevisar && <button onClick={() => abrirRevisar('observado')} className="btn-secondary !text-ember-700 !border-ember-200">Observar</button>}
+            {puedeRevisar && <button onClick={() => abrirRevisar('rechazado')} className="btn-secondary !text-rose-700 !border-rose-200">Rechazar</button>}
             {puedeGestionarEntregas && <button onClick={() => setOpenEntrega(true)} className="btn-secondary">+ Entrega</button>}
             {(esSuperAdmin || esAdmin) && !['Cerrado', 'Cancelado'].includes(s.estado_servicio) && <button onClick={cancelar} className="btn-danger">Cancelar</button>}
           </>
@@ -567,6 +677,7 @@ export default function ServicioDetalle() {
             <Info label="Fecha programada" value={s.fecha_programada
               ? `${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`.trim()
               : <span className="text-amber-600">Sin programar</span>} />
+            <Info label="Duración" value={`${s.duracion_dias || 1} día${(s.duracion_dias || 1) > 1 ? 's' : ''}`} />
             <Info label="Prioridad" value={s.prioridad} />
             <Info label="Cliente" value={esTecnico
               ? <span className="text-slate-800">{nombreCliente(s.cliente)}</span>
@@ -685,7 +796,9 @@ export default function ServicioDetalle() {
           );
         })()}
 
-        <div className="card lg:col-span-2">
+        {/* La guía de salida no aplica al técnico: solo presenta evidencias y la OT
+            (evita confundir la guía con la Orden de Trabajo). */}
+        {!esTecnico && <div className="card lg:col-span-2">
           <div className="card-header">
             <h3 className="card-title">Guía de salida</h3>
             {puedeGestionarGuias && (
@@ -730,7 +843,7 @@ export default function ServicioDetalle() {
               </div>
             ))}
           </div>
-        </div>
+        </div>}
 
         {(s.servicio_realizado?.numero_ot || s.servicio_realizado?.archivo_ot) && (
           <div className="card">
@@ -758,17 +871,63 @@ export default function ServicioDetalle() {
           </div>
         )}
 
+        {esMultidia && (
+          <div className="card lg:col-span-3">
+            <div className="card-header">
+              <h3 className="card-title">Días del servicio · {dias.length}</h3>
+              <span className="text-xs text-slate-500">Se espera 1 evidencia por día</span>
+            </div>
+            <div className="card-body">
+              {dias.length === 0 ? (
+                <p className="text-sm text-slate-500">Aún no se han generado los días. Programe la fecha del servicio.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {dias.map(d => {
+                    const n = evidenciasPorDia[d.id] || 0;
+                    const completo = n > 0;
+                    return (
+                      <div key={d.id} className={`rounded-lg ring-1 p-3 flex items-center justify-between gap-3 ${completo ? 'ring-emerald-200 bg-emerald-50/40' : 'ring-slate-200'}`}>
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm">Día {d.orden} <span className="text-slate-400">/ {s.duracion_dias}</span></div>
+                          <div className="text-xs text-slate-500">{formatFecha(d.fecha)}</div>
+                          <div className="mt-1">
+                            {completo
+                              ? <span className="badge-green">✓ {n} evidencia{n > 1 ? 's' : ''}</span>
+                              : <span className="badge-amber">Sin evidencia</span>}
+                          </div>
+                        </div>
+                        {puedeSubirEvidenciaDia && (
+                          <button type="button" onClick={() => abrirEvidenciaDia(d)} className="btn-secondary text-xs whitespace-nowrap">+ Evidencia</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {s.estado_servicio === 'En curso' && (esSuperAdmin || esAdmin || esTecnicoResponsable) && (
+          <ChecklistFinalizacionPanel
+            idServicio={s.id}
+            dias={dias}
+            esMultidia={esMultidia}
+            onResumen={setChecklistResumen}
+          />
+        )}
+
         <div className="card lg:col-span-3">
           <div className="card-header">
-            <h3 className="card-title">Evidencias del trabajo · {s.evidencias?.length || 0}</h3>
+            <h3 className="card-title">Evidencias del trabajo · {evidenciasGenerales.length}</h3>
             {(esTecnico || esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio) && (
-              <button onClick={() => setOpenEvidencia(true)} className="btn-secondary">+ Evidencia</button>
+              <button onClick={() => abrirEvidenciaDia(null)} className="btn-secondary">+ Evidencia</button>
             )}
           </div>
           <div className="card-body">
-            {!s.evidencias?.length ? <p className="text-sm text-slate-500">Sin evidencias registradas.</p> : (
+            {!evidenciasGenerales.length ? <p className="text-sm text-slate-500">Sin evidencias registradas.</p> : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {s.evidencias.map(ev => {
+                {evidenciasGenerales.map(ev => {
                   const ruta = ev.archivo?.ruta_almacenamiento;
                   const mime = ev.archivo?.mime_type || '';
                   const esImagen = mime.startsWith('image/');
@@ -813,6 +972,10 @@ export default function ServicioDetalle() {
                       <div className="p-2">
                         <div className="text-xs text-slate-500">{formatFechaHora(ev.fecha_carga)}</div>
                         <div className="text-xs text-slate-700 truncate">{ev.tecnico?.nombre}</div>
+                        {esMultidia && ev.id_dia && (() => {
+                          const diaEv = dias.find(x => x.id === ev.id_dia);
+                          return diaEv ? <span className="badge-blue mt-0.5 inline-block">Día {diaEv.orden}</span> : null;
+                        })()}
                         {ev.descripcion && <div className="text-xs text-slate-600 truncate" title={ev.descripcion}>{ev.descripcion}</div>}
                       </div>
                     </div>
@@ -965,79 +1128,6 @@ export default function ServicioDetalle() {
         </div>
       </Modal>
 
-      <Modal open={openChecklist} onClose={() => !guardandoCheck && setOpenChecklist(false)}
-        title={`Checklist de finalización · ${plantillaCheck?.categoria ? plantillaCheck.categoria.charAt(0).toUpperCase() + plantillaCheck.categoria.slice(1) : ''}`}
-        size="lg"
-        footer={<>
-          <button type="button" className="btn-secondary" onClick={() => setOpenChecklist(false)} disabled={guardandoCheck}>Cancelar</button>
-          <button type="submit" form="form-checklist-fin" className="btn-primary" disabled={guardandoCheck}>
-            {guardandoCheck ? 'Generando informe…' : 'Guardar checklist y continuar'}
-          </button>
-        </>}>
-        {plantillaCheck && (
-          <form id="form-checklist-fin" onSubmit={guardarChecklistFin} className="space-y-4">
-            <p className="text-xs text-slate-500">
-              Marca cada ítem según lo encontrado. Al guardar se genera el informe PDF del servicio
-              y podrás continuar con la guía / OT / evidencias.
-            </p>
-            {(() => {
-              const items = plantillaCheck.plantilla?.items || [];
-              const grupos = [];
-              let grupoActual = null;
-              items.forEach(it => {
-                if (it.grupo && it.grupo !== grupoActual) {
-                  grupos.push({ titulo: it.grupo, items: [it] });
-                  grupoActual = it.grupo;
-                } else if (it.grupo === grupoActual && grupos.length > 0) {
-                  grupos[grupos.length - 1].items.push(it);
-                } else {
-                  if (grupos.length === 0 || grupos[grupos.length - 1].titulo !== '__sin_grupo__') {
-                    grupos.push({ titulo: '__sin_grupo__', items: [it] });
-                  } else {
-                    grupos[grupos.length - 1].items.push(it);
-                  }
-                  grupoActual = null;
-                }
-              });
-              return grupos.map((g, gi) => (
-                <div key={gi} className="space-y-2">
-                  {g.titulo !== '__sin_grupo__' && (
-                    <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold pt-2">{g.titulo}</div>
-                  )}
-                  {g.items.map(it => {
-                    const r = respuestasCheck[it.id] || { respuesta: '', nota: '' };
-                    return (
-                      <div key={it.id} className="rounded-lg ring-1 ring-slate-200 p-3 bg-white">
-                        <div className="flex items-start justify-between gap-3 mb-2">
-                          <p className="text-sm text-slate-800 flex-1">{it.texto}</p>
-                          <div className="flex items-center gap-3 text-xs shrink-0">
-                            {[['si', 'Sí'], ['no', 'No'], ['na', 'N/A']].map(([val, lbl]) => (
-                              <label key={val} className="inline-flex items-center gap-1 cursor-pointer">
-                                <input type="radio" name={`r-${it.id}`} value={val}
-                                  checked={r.respuesta === val}
-                                  onChange={() => setRespuesta(it.id, 'respuesta', val)} />
-                                <span className={r.respuesta === val
-                                  ? val === 'si' ? 'font-semibold text-emerald-700'
-                                  : val === 'no' ? 'font-semibold text-red-700'
-                                  : 'font-semibold text-slate-700'
-                                  : 'text-slate-600'}>{lbl}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                        <input className="input !py-1 !text-xs" placeholder="Nota (opcional)"
-                          value={r.nota}
-                          onChange={e => setRespuesta(it.id, 'nota', e.target.value)} />
-                      </div>
-                    );
-                  })}
-                </div>
-              ));
-            })()}
-          </form>
-        )}
-      </Modal>
-
       <Modal open={openFinalizar} onClose={() => !guardandoFinalizar && setOpenFinalizar(false)} title="Finalizar servicio" size="lg"
         footer={<>
           <button type="button" className="btn-secondary" onClick={() => setOpenFinalizar(false)} disabled={guardandoFinalizar}>Cancelar</button>
@@ -1049,6 +1139,9 @@ export default function ServicioDetalle() {
           <div><label className="label">Observaciones técnicas *</label><textarea className="textarea" rows="3" required value={finalizarForm.observaciones_tecnicas} onChange={e => setFinalizarForm(f => ({ ...f, observaciones_tecnicas: e.target.value }))} /></div>
           <div><label className="label">Descargo técnico</label><textarea className="textarea" rows="2" value={finalizarForm.descargo_tecnico} onChange={e => setFinalizarForm(f => ({ ...f, descargo_tecnico: e.target.value }))} /></div>
 
+          {/* El técnico no carga guía de salida (solo evidencias y OT): se ocultaba
+              para no confundirla con la Orden de Trabajo. */}
+          {!esTecnico && (
           <div className="border-t border-slate-100 pt-4 space-y-2">
             <label className="label">Guía de salida</label>
             <input className="input" placeholder="Código de guía" value={finalizarForm.codigo_guia} onChange={e => setFinalizarForm(f => ({ ...f, codigo_guia: e.target.value }))} />
@@ -1069,6 +1162,7 @@ export default function ServicioDetalle() {
               )}
             </div>
           </div>
+          )}
 
           <div className="border-t border-slate-100 pt-4 space-y-2">
             <label className="label">
@@ -1173,6 +1267,72 @@ export default function ServicioDetalle() {
         </div>
       </Modal>
 
+      <Modal open={openDuracion} onClose={() => !guardandoDuracion && setOpenDuracion(false)}
+        title="Duración del servicio" size="sm"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setOpenDuracion(false)} disabled={guardandoDuracion}>Cancelar</button>
+          <button className="btn-primary" onClick={() => guardarDuracion(false)} disabled={guardandoDuracion}>Guardar</button>
+        </>}>
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Días corridos que dura el trabajo, desde la fecha programada. Se regeneran
+            los días de la agenda conservando los ya trabajados con su evidencia.
+          </p>
+          <div>
+            <label className="label">Duración (días) *</label>
+            <input type="number" min="1" step="1" className="input" value={duracionForm}
+              onChange={e => setDuracionForm(e.target.value)} />
+          </div>
+          {Number(duracionForm) < (s.duracion_dias || 1) && (
+            <p className="text-[11px] text-amber-700">
+              Vas a reducir la duración. Si algún día eliminado ya tiene evidencia, se pedirá confirmación.
+            </p>
+          )}
+        </div>
+      </Modal>
+
+      <Modal open={openRevisar} onClose={() => !guardandoRevisar && setOpenRevisar(false)}
+        title={REVISION_META[revisarResultado].titulo} size="sm"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setOpenRevisar(false)} disabled={guardandoRevisar}>Cancelar</button>
+          <button className={REVISION_META[revisarResultado].btnClass} onClick={confirmarRevisar} disabled={guardandoRevisar}>
+            {guardandoRevisar ? 'Guardando…' : REVISION_META[revisarResultado].btnLabel}
+          </button>
+        </>}>
+        {(() => {
+          const meta = REVISION_META[revisarResultado];
+          return (
+            <div className="space-y-4">
+              {/* Banner tematizado por resultado: icono + consecuencia */}
+              <div className={`flex items-start gap-3 rounded-xl ring-1 px-3.5 py-3 ${meta.tema.banner}`}>
+                <span className={`grid place-items-center h-9 w-9 shrink-0 rounded-lg ${meta.tema.iconWrap}`}>
+                  {meta.icono}
+                </span>
+                <div className="min-w-0">
+                  <p className={`font-display text-sm font-semibold tracking-tight ${meta.tema.titulo}`}>{meta.titulo}</p>
+                  <p className={`text-xs mt-0.5 ${meta.tema.texto}`}>{meta.intro}</p>
+                </div>
+              </div>
+
+              {/* Servicio en revisión */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="badge-gray">{s.codigo}</span>
+                <span className="text-sm text-carbon-700 truncate">{s.titulo}</span>
+              </div>
+
+              <div>
+                <label className="label">
+                  {meta.labelObs}{meta.obligatorio && <span className={meta.tema.asterisco}> *</span>}
+                </label>
+                <textarea className="textarea" rows="4" value={revisarObs}
+                  onChange={e => setRevisarObs(e.target.value)}
+                  placeholder={meta.placeholder} autoFocus />
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
       <Modal open={openEntrega} onClose={() => setOpenEntrega(false)} title="Nueva entrega" size="lg"
         footer={<><button className="btn-secondary" onClick={() => setOpenEntrega(false)}>Cancelar</button><button className="btn-primary" onClick={guardarEntrega}>Guardar</button></>}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1210,6 +1370,16 @@ export default function ServicioDetalle() {
           <button type="submit" form="form-evidencia" className="btn-primary" disabled={subiendoEvidenciaArchivo}>Guardar</button>
         </>}>
         <form id="form-evidencia" onSubmit={(e) => { e.preventDefault(); guardarEvidencia(); }} className="space-y-4">
+          {esMultidia && (
+            <div>
+              <label className="label">Día del servicio</label>
+              <select className="select" value={evidenciaForm.id_dia}
+                onChange={e => setEvidenciaForm(f => ({ ...f, id_dia: e.target.value }))}>
+                <option value="">Sin día específico</option>
+                {dias.map(d => <option key={d.id} value={d.id}>Día {d.orden} · {formatFecha(d.fecha)}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className="label">Tipo *</label>
             <select className="select" value={evidenciaForm.tipo_evidencia} onChange={e => setEvidenciaForm(f => ({ ...f, tipo_evidencia: e.target.value }))}>

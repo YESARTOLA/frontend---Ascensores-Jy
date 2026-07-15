@@ -14,8 +14,10 @@ import EdificioForm, { edificioToForm } from '../components/edificios/EdificioFo
 /**
  * Módulo Edificios / Obras: vista global de todas las ubicaciones físicas
  * (edificios u obras) registradas, sin importar el cliente. Permite buscar,
- * filtrar por tipo y distrito, editar y desactivar. La creación se mantiene
- * dentro de cada Cliente (Cliente360) para garantizar el vínculo con el cliente.
+ * filtrar por tipo y distrito, y editar. Inactivar/reactivar un edificio es
+ * exclusivo del Super Admin, que además puede filtrar por estado y ver los
+ * inactivos. La creación se mantiene dentro de cada Cliente (Cliente360) para
+ * garantizar el vínculo con el cliente.
  */
 export default function Edificios() {
   const [edificios, setEdificios] = useState([]);
@@ -39,8 +41,11 @@ export default function Edificios() {
   const [form, setForm] = useState(null);
   const [editId, setEditId] = useState(null);
 
-  // Confirmación de desactivación
-  const [aDesactivar, setADesactivar] = useState(null);
+  // Confirmación de inactivación/reactivación: { ed, nuevoEstado }
+  const [aCambiar, setACambiar] = useState(null);
+
+  // Filtro de estado (solo Super Admin): 'activos' | 'inactivos' | 'todos'.
+  const [estadoFiltro, setEstadoFiltro] = useState('activos');
 
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esCoordinador } = useAuth();
@@ -48,17 +53,25 @@ export default function Edificios() {
 
   const cargar = () => {
     setLoading(true);
-    edificiosService.list()
+    // Solo el Super Admin puede pedir inactivos; para el resto el backend ignora
+    // el parámetro y siempre devuelve activos.
+    edificiosService.list(esSuperAdmin ? { estado: estadoFiltro } : undefined)
       .then(d => setEdificios(d || []))
       .catch(() => setEdificios([]))
       .finally(() => setLoading(false));
   };
 
+  // Catálogos: una sola vez al montar.
   useEffect(() => {
-    cargar();
     edificiosService.tipos().then(setTipos).catch(() => setTipos([]));
     edificiosService.distritos().then(setDistritos).catch(() => setDistritos([]));
   }, []);
+
+  // Lista: al montar y cada vez que el SA cambia el filtro de estado.
+  useEffect(() => {
+    cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estadoFiltro]);
 
   // Lista filtrada. Texto: nombre / cliente / distrito / dirección / tipo de
   // ascensores. Filtros: tipo, distrito, presencia de servicios y de proyectos.
@@ -101,15 +114,16 @@ export default function Edificios() {
     }
   };
 
-  const desactivar = async () => {
-    if (!aDesactivar) return;
+  const confirmarCambioEstado = async () => {
+    if (!aCambiar) return;
+    const { ed, nuevoEstado } = aCambiar;
     try {
-      await edificiosService.setEstado(aDesactivar.id, 0);
-      toast.success('Edificio desactivado');
-      setADesactivar(null);
+      await edificiosService.setEstado(ed.id, nuevoEstado);
+      toast.success(nuevoEstado === 0 ? 'Edificio inactivado' : 'Edificio reactivado');
+      setACambiar(null);
       cargar();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'No se pudo desactivar el edificio');
+      toast.error(err.response?.data?.error || 'No se pudo cambiar el estado del edificio');
     }
   };
 
@@ -146,6 +160,13 @@ export default function Edificios() {
             <option value="con">Con proyectos</option>
             <option value="sin">Sin proyectos</option>
           </select>
+          {esSuperAdmin && (
+            <select className="select max-w-[160px]" value={estadoFiltro} onChange={e => setEstadoFiltro(e.target.value)}>
+              <option value="activos">Estado: activos</option>
+              <option value="inactivos">Estado: inactivos</option>
+              <option value="todos">Estado: todos</option>
+            </select>
+          )}
           {hayFiltros && (
             <button className="text-xs text-slate-500 hover:text-slate-800" onClick={limpiarFiltros}>
               Limpiar filtros
@@ -171,7 +192,10 @@ export default function Edificios() {
                   {pagina.map(ed => (
                     <tr key={ed.id} className="table-row-hover">
                       <td className="table-td">
-                        <div className="font-medium text-slate-800">{ed.nombre}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-800">{ed.nombre}</span>
+                          {ed.estado === 0 && <BadgeInactivo />}
+                        </div>
                         {ed.direccion && <div className="text-xs text-slate-500">{ed.direccion}</div>}
                       </td>
                       <td className="table-td">
@@ -191,7 +215,9 @@ export default function Edificios() {
                       <td className="table-td text-right space-x-2">
                         {ed.cliente?.id && <Link to={`/clientes/${ed.cliente.id}`} className="text-brand-700 hover:underline text-xs">Ver cliente</Link>}
                         {puedeEditar && <button onClick={() => abrirEditar(ed)} className="text-slate-600 text-xs">Editar</button>}
-                        {puedeEditar && <button onClick={() => setADesactivar(ed)} className="text-rose-600 text-xs">Desactivar</button>}
+                        {esSuperAdmin && (ed.estado === 0
+                          ? <button onClick={() => setACambiar({ ed, nuevoEstado: 1 })} className="text-emerald-600 text-xs">Reactivar</button>
+                          : <button onClick={() => setACambiar({ ed, nuevoEstado: 0 })} className="text-rose-600 text-xs">Inactivar</button>)}
                       </td>
                     </tr>
                   ))}
@@ -207,6 +233,7 @@ export default function Edificios() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-slate-800">{ed.nombre}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full ring-1 ${colorTipo(ed.tipo)}`}>{ed.tipo}</span>
+                        {ed.estado === 0 && <BadgeInactivo />}
                       </div>
                       {ed.cliente?.id && (
                         <Link to={`/clientes/${ed.cliente.id}`} className="text-xs text-brand-700 hover:underline">{nombreCliente(ed.cliente)}</Link>
@@ -221,7 +248,9 @@ export default function Edificios() {
                     {puedeEditar && (
                       <div className="flex flex-col items-end gap-1 shrink-0 text-xs">
                         <button onClick={() => abrirEditar(ed)} className="text-slate-600">Editar</button>
-                        <button onClick={() => setADesactivar(ed)} className="text-rose-600">Desactivar</button>
+                        {esSuperAdmin && (ed.estado === 0
+                          ? <button onClick={() => setACambiar({ ed, nuevoEstado: 1 })} className="text-emerald-600">Reactivar</button>
+                          : <button onClick={() => setACambiar({ ed, nuevoEstado: 0 })} className="text-rose-600">Inactivar</button>)}
                       </div>
                     )}
                   </div>
@@ -243,14 +272,35 @@ export default function Edificios() {
         )}
       </Modal>
 
-      <Modal open={!!aDesactivar} onClose={() => setADesactivar(null)} title="Desactivar edificio / obra" size="sm"
-        footer={<><button className="btn-secondary" onClick={() => setADesactivar(null)}>Cancelar</button><button className="btn-danger" onClick={desactivar}>Desactivar</button></>}>
-        <p className="text-sm text-slate-600">
-          ¿Desactivar <span className="font-semibold text-slate-800">{aDesactivar?.nombre}</span>?
-          Dejará de aparecer en la operación. No es posible si tiene ascensores activos.
-        </p>
+      <Modal open={!!aCambiar} onClose={() => setACambiar(null)}
+        title={aCambiar?.nuevoEstado === 0 ? 'Inactivar edificio / obra' : 'Reactivar edificio / obra'} size="sm"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setACambiar(null)}>Cancelar</button>
+          <button className={aCambiar?.nuevoEstado === 0 ? 'btn-danger' : 'btn-primary'} onClick={confirmarCambioEstado}>
+            {aCambiar?.nuevoEstado === 0 ? 'Inactivar' : 'Reactivar'}
+          </button>
+        </>}>
+        {aCambiar?.nuevoEstado === 0 ? (
+          <p className="text-sm text-slate-600">
+            ¿Inactivar <span className="font-semibold text-slate-800">{aCambiar?.ed?.nombre}</span>?
+            Dejará de verse para los demás roles, junto con sus ascensores, servicios y proyectos.
+            Solo el Super Admin seguirá viéndolo. No se elimina nada: puedes reactivarlo cuando quieras.
+          </p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            ¿Reactivar <span className="font-semibold text-slate-800">{aCambiar?.ed?.nombre}</span>?
+            Volverá a verse para todos los roles, junto con sus servicios y proyectos.
+          </p>
+        )}
       </Modal>
     </>
+  );
+}
+
+/** Pill que marca un edificio inactivo (solo lo ve el Super Admin). */
+function BadgeInactivo() {
+  return (
+    <span className="text-[10px] px-2 py-0.5 rounded-full ring-1 bg-rose-50 text-rose-700 ring-rose-200">Inactivo</span>
   );
 }
 

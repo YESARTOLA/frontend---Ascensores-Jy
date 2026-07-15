@@ -18,7 +18,7 @@ export default function Modal({ open, onClose, title, children, footer, size = '
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-carbon-900/40 backdrop-blur-md animate-fade-in" onClick={onClose} />
+      <div className="absolute inset-0 bg-carbon-900/40 backdrop-blur-md animate-fade-in" />
 
       <div className={`relative w-full ${widths[size]} sm:rounded-2xl rounded-t-3xl max-h-[95vh] flex flex-col
                        bg-ivory-50 ring-1 ring-carbon-200/70 shadow-panel overflow-hidden animate-modal-in`}>

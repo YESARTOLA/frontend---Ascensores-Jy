@@ -61,7 +61,10 @@ export default function ClienteAutocomplete({
     const fuente = !q
       ? clientes
       : clientes.filter(c => {
-          const campos = [c.nombre, c.numero_documento, c.telefono].filter(Boolean);
+          // Además de nombre / RUC / teléfono, se busca por nombre de edificio u
+          // obra (cuando el cliente viene enriquecido con `edificios: [nombres]`).
+          const edificios = Array.isArray(c.edificios) ? c.edificios : [];
+          const campos = [c.nombre, c.numero_documento, c.telefono, ...edificios].filter(Boolean);
           return campos.some(s => String(s).toLowerCase().includes(q));
         });
     const limitado = fuente.slice(0, 50);
@@ -154,6 +157,17 @@ export default function ClienteAutocomplete({
                   {(() => {
                     const txt = [op.numero_documento, op.telefono].filter(Boolean).join(' · ');
                     return txt ? <div className="text-xs text-carbon-500">{txt}</div> : null;
+                  })()}
+                  {(() => {
+                    // Si el match vino por nombre de edificio, mostrarlo para que
+                    // el usuario entienda por qué apareció ese cliente.
+                    const q = query.trim().toLowerCase();
+                    const edifs = Array.isArray(op.edificios)
+                      ? op.edificios.filter(n => q && String(n).toLowerCase().includes(q))
+                      : [];
+                    return edifs.length > 0
+                      ? <div className="text-xs text-brand-600">🏢 {edifs.join(' · ')}</div>
+                      : null;
                   })()}
                 </>
               )}

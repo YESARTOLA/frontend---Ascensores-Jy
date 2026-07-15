@@ -70,7 +70,7 @@ function PreviewModal({ file, onClose }) {
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm animate-fade-in" />
 
       {/* Toolbar */}
       <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 sm:px-6 py-3 bg-gradient-to-b from-black/60 to-transparent">
@@ -100,8 +100,8 @@ function PreviewModal({ file, onClose }) {
       </div>
 
       {/* Contenido */}
-      <div className="relative z-0 w-full h-full max-w-[1400px] max-h-[calc(100vh-32px)] flex items-center justify-center p-4 sm:p-12 animate-modal-in" onClick={onClose}>
-        <div className="w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+      <div className="relative z-0 w-full h-full max-w-[1400px] max-h-[calc(100vh-32px)] flex items-center justify-center p-4 sm:p-12 animate-modal-in">
+        <div className="w-full h-full flex items-center justify-center">
           {tipo === 'imagen' && (
             <img
               src={url}

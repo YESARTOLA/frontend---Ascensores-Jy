@@ -3,7 +3,7 @@
 
 export const VISIBILIDAD_POR_ROL = {
   super_admin:  { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
-  admin:        { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'servicio_finalizado_aviso'] },
+  admin:        { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
   coordinador:  { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'observacion', 'cotizacion_urgente', 'servicio_finalizado_revisar'] },
   tecnico:      { operativos: 'asignados', tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia'] },
   contabilidad: { operativos: 'todos',     tipos_recordatorio: ['cobro', 'observacion_alerta', 'servicio_finalizado_facturar'] },
@@ -91,6 +91,12 @@ export function muestraFiltroCliente(rol) {
 
 export function colorPorTipo(tipo) {
   return CATALOGO_TIPOS_EVENTO.find(t => t.value === tipo)?.color || COLOR_FALLBACK;
+}
+
+// Etiqueta legible del tipo de evento (el "módulo" donde se creó: Emergencia,
+// Correctivo, Mantenimiento, Servicio, Proyecto…). Fuente única: el catálogo.
+export function etiquetaTipoEvento(tipo) {
+  return CATALOGO_TIPOS_EVENTO.find(t => t.value === tipo)?.label || 'Servicio';
 }
 
 // Subtítulo del PageHeader: enumera en plural los tipos visibles para el rol,

@@ -22,6 +22,19 @@ const itemVacio = () => ({
   descuento_porcentaje: 0
 });
 
+// Etiqueta legible de cada acción auditada que puede aparecer en la línea de
+// tiempo de una cotización. Si llega una acción no mapeada se muestra tal cual.
+const ACCION_LABEL = {
+  CREATE: 'Creó la cotización',
+  UPDATE: 'Editó la versión',
+  NEW_VERSION: 'Creó una nueva versión',
+  APPROVE: 'Aprobó la cotización',
+  RE_APPROVE: 'Re-aprobó la cotización',
+  REJECT: 'Rechazó la versión',
+  REOPEN: 'Reabrió la cotización',
+  DELETE: 'Eliminó la cotización'
+};
+
 function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
@@ -37,10 +50,11 @@ export default function CotizacionDetalle() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [cot, setCot] = useState(null);
+  const [historial, setHistorial] = useState([]);
   const [loading, setLoading] = useState(true);
   const [igvTasa, setIgvTasa] = useState(0.18);
   const [verActivaNum, setVerActivaNum] = useState(null);
-  const [tab, setTab] = useState('items'); // items | versiones | pdf | servicio
+  const [tab, setTab] = useState('items'); // items | versiones | historial | adjuntos | pdf
 
   // Edición de items mientras la versión está en Cotizado
   const [editandoItems, setEditandoItems] = useState(false);
@@ -62,7 +76,7 @@ export default function CotizacionDetalle() {
     observaciones: '', id_archivo_respaldo: null,
     // Campos extra según categoría del tipo_servicio:
     motivo: '', falla: '', nivel_urgencia: '',
-    tipo_plan: 'ciclico', frecuencia: 'mensual', frecuencia_dias_custom: '',
+    tipo_plan: 'continuo', frecuencia: 'mensual', frecuencia_dias_custom: '',
     cantidad_mantenimientos: '', cantidad_mantenimientos_gratuitos: 0,
     fecha_inicio_plan: hoyISO()
   });
@@ -88,8 +102,12 @@ export default function CotizacionDetalle() {
   const cargar = async () => {
     setLoading(true);
     try {
-      const c = await cotizacionesService.get(id);
+      const [c, h] = await Promise.all([
+        cotizacionesService.get(id),
+        cotizacionesService.historial(id).catch(() => [])
+      ]);
       setCot(c);
+      setHistorial(Array.isArray(h) ? h : []);
       const va = c.versiones?.find(v => v.numero_version === c.version_activa) || c.versiones?.[c.versiones.length - 1];
       setVerActivaNum(va?.numero_version || null);
     } finally { setLoading(false); }
@@ -129,6 +147,17 @@ export default function CotizacionDetalle() {
   // Cotización con servicio en marcha (Aceptado/Ejecución/Pendiente): permite
   // reabrir para renegociar las cuotas pendientes.
   const cotizacionReabrible = ['Aceptado', 'Ejecución', 'Pendiente'].includes(cot.estado_global);
+  // Flujo de renegociación en dos pasos sobre una cotización aprobada:
+  //   1) "Reabrir para renegociar" registra un evento REOPEN en auditoría.
+  //   2) recién entonces se habilita "Nueva versión" para clonar la aprobada.
+  // `reabierta` es verdadero mientras la versión activa siga Aprobada y exista un
+  // REOPEN posterior a SU aprobación. Anclar a `fecha_aprobacion` aísla cada
+  // ciclo: al crear la nueva versión, la activa pasa a Cotizado y esto vuelve a
+  // false; al re-aprobarla, un nuevo ciclo exige reabrir otra vez.
+  const reabierta = versionActiva.estado_version === 'Aprobado' && (() => {
+    const aprob = versionActiva.fecha_aprobacion ? new Date(versionActiva.fecha_aprobacion).getTime() : 0;
+    return historial.some(ev => ev.accion === 'REOPEN' && new Date(ev.fecha_evento).getTime() >= aprob);
+  })();
   const servicioGen = cot.servicios?.[0];
 
   const iniciarEdicion = () => {
@@ -358,8 +387,15 @@ export default function CotizacionDetalle() {
                 <button onClick={() => setOpenRechazo(true)} className="btn-ghost text-xs !py-1.5 !px-3">Rechazar</button>
               </>
             )}
+            {/* "Nueva versión" solo cuando hay algo que re-versionar SIN un servicio
+                vivo de por medio: una versión Rechazada (renegociación previa a
+                aprobar), una cotización aprobada YA reabierta (paso 2 del flujo), o
+                una aprobada cuyo servicio se canceló (estado_global vuelve a
+                Cotizado). Tras aprobar, queda oculto hasta reabrir. */}
             {puedeEditar && cot.estado_global !== 'Terminado' &&
-              ['Rechazado', 'Aprobado'].includes(versionActiva.estado_version) && (
+              (versionActiva.estado_version === 'Rechazado'
+                || (versionActiva.estado_version === 'Aprobado'
+                    && (reabierta || cot.estado_global === 'Cotizado'))) && (
               <button onClick={() => setOpenNuevaVersion(true)} className="btn-primary text-xs !py-1.5 !px-3" title="Crea una versión nueva en Cotizado para renegociar términos">
                 + Nueva versión
               </button>
@@ -370,7 +406,10 @@ export default function CotizacionDetalle() {
             <button onClick={generarPdf} disabled={generandoPdf} className="btn-ghost text-xs !py-1.5 !px-3">
               {generandoPdf ? 'Generando…' : (versionActiva.archivo_pdf ? 'Regenerar PDF' : 'Generar PDF')}
             </button>
-            {puedeEditar && cotizacionReabrible && (
+            {/* "Reabrir" es el paso 1: solo sobre una aprobada con servicio vivo y
+                que todavía no fue reabierta. Al reabrir, este botón se reemplaza por
+                "Nueva versión" (reabierta = true). */}
+            {puedeEditar && cotizacionReabrible && versionActiva.estado_version === 'Aprobado' && !reabierta && (
               <button onClick={() => setOpenReabrir(true)} className="btn-secondary text-xs !py-1.5 !px-3" title="Reabrir para renegociar términos con el cliente">
                 Reabrir para renegociar
               </button>
@@ -463,6 +502,7 @@ export default function CotizacionDetalle() {
           {[
             ['items', 'Items'],
             ['versiones', 'Historial de versiones'],
+            ['historial', `Historial${historial.length ? ` (${historial.length})` : ''}`],
             ['adjuntos', `Adjuntos${cot.archivos?.length ? ` (${cot.archivos.length})` : ''}`],
             ['pdf', 'PDF']
           ].map(([k, l]) => (
@@ -514,11 +554,62 @@ export default function CotizacionDetalle() {
                     <div>Aprobada: {v.fecha_aprobacion ? formatFechaHora(v.fecha_aprobacion) : '—'}</div>
                     <div>Total: {formatMonto(v.monto_total, v.moneda)}</div>
                   </div>
+                  <div className="mt-2 pt-2 border-t border-carbon-50 grid grid-cols-1 sm:grid-cols-3 gap-1 text-xs">
+                    <div className="text-carbon-500">
+                      Creada por <span className="font-medium text-carbon-700">{v.creado_por?.nombres || '—'}</span>
+                      {v.date_time_registration && <span className="text-carbon-400"> · {formatFechaHora(v.date_time_registration)}</span>}
+                    </div>
+                    {v.fecha_aprobacion && (
+                      <div className="text-emerald-700">
+                        Aprobada por <span className="font-medium">{v.aprobada_por_usuario?.nombres || '—'}</span>
+                        <span className="text-emerald-600"> · {formatFechaHora(v.fecha_aprobacion)}</span>
+                      </div>
+                    )}
+                    {v.fecha_rechazo && (
+                      <div className="text-red-600">
+                        Rechazada por <span className="font-medium">{v.rechazada_por_usuario?.nombres || '—'}</span>
+                        <span className="text-red-500"> · {formatFechaHora(v.fecha_rechazo)}</span>
+                      </div>
+                    )}
+                  </div>
                   {v.motivo_cambio && <div className="mt-2 text-xs text-carbon-500 italic">Motivo de cambio: "{v.motivo_cambio}"</div>}
                   {v.motivo_rechazo && <div className="mt-1 text-xs text-red-600">Motivo de rechazo: "{v.motivo_rechazo}"</div>}
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {tab === 'historial' && (
+          <div className="p-4">
+            {historial.length === 0 ? (
+              <div className="text-center py-8 text-carbon-400 italic">Aún no hay eventos registrados</div>
+            ) : (
+              <ul className="space-y-2">
+                {historial.map(ev => (
+                  <li key={ev.id} className="flex items-start justify-between gap-3 border border-carbon-100 rounded-lg p-3">
+                    <div className="min-w-0">
+                      <div className="text-sm text-carbon-800">
+                        <span className="font-medium">{ACCION_LABEL[ev.accion] || ev.accion}</span>
+                        {ev.numero_version != null && <span className="text-carbon-500"> · v{ev.numero_version}</span>}
+                      </div>
+                      <div className="mt-0.5 text-xs text-carbon-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        {ev.usuario ? (
+                          <>
+                            <span className="text-carbon-700 font-medium">{ev.usuario.nombres}</span>
+                            {ev.usuario.rol?.nombre && <span className="badge-gray text-[10px]">{ev.usuario.rol.nombre}</span>}
+                          </>
+                        ) : (
+                          <span>Usuario desconocido</span>
+                        )}
+                      </div>
+                      {ev.motivo && <div className="mt-1 text-xs text-carbon-500 italic line-clamp-2">"{ev.motivo}"</div>}
+                    </div>
+                    <div className="text-xs text-carbon-400 whitespace-nowrap">{formatFechaHora(ev.fecha_evento)}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
@@ -752,7 +843,6 @@ export default function CotizacionDetalle() {
                       <label className="label">Tipo de plan</label>
                       <select className="select" value={aprobarForm.tipo_plan}
                         onChange={e => setAprobarForm(f => ({ ...f, tipo_plan: e.target.value }))}>
-                        <option value="ciclico">Cíclico</option>
                         <option value="continuo">Continuo</option>
                         <option value="eventual">Eventual</option>
                       </select>

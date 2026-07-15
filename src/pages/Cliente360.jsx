@@ -32,6 +32,9 @@ export default function Cliente360() {
   const [edForm, setEdForm] = useState(edificioFormInicial);
   const [edId, setEdId] = useState(null);
   const [savingEd, setSavingEd] = useState(false);
+  // Inactivar/reactivar en bloque todos los edificios del cliente (solo SA).
+  const [openEdMasivo, setOpenEdMasivo] = useState(false);
+  const [cambiandoEdMasivo, setCambiandoEdMasivo] = useState(false);
 
   const cargar = () => clientesService.vista360(id).then(setData);
   useEffect(() => {
@@ -60,6 +63,34 @@ export default function Cliente360() {
       edificiosService.distritos().then(setDistritos).catch(() => {});
     } catch (err) { toast.error(err.response?.data?.error || 'Error al guardar'); }
     finally { setSavingEd(false); }
+  };
+
+  // Inactiva/reactiva un edificio puntual desde el 360 (solo SA).
+  const cambiarEstadoEdificio = async (ed, estado) => {
+    try {
+      await edificiosService.setEstado(ed.id, estado);
+      toast.success(estado === 0 ? 'Edificio inactivado' : 'Edificio reactivado');
+      await cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo cambiar el estado del edificio');
+    }
+  };
+
+  const cambiarEstadoEdificiosMasivo = async (estado) => {
+    if (cambiandoEdMasivo) return;
+    setCambiandoEdMasivo(true);
+    try {
+      const { afectados } = await edificiosService.setEstadoCliente(Number(id), estado);
+      toast.success(afectados > 0
+        ? `${afectados} edificio(s) ${estado === 0 ? 'inactivado(s)' : 'reactivado(s)'}`
+        : 'No había edificios para cambiar');
+      setOpenEdMasivo(false);
+      await cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo cambiar el estado de los edificios');
+    } finally {
+      setCambiandoEdMasivo(false);
+    }
   };
 
   const grupos = useMemo(() => {
@@ -166,7 +197,12 @@ export default function Cliente360() {
         <div className="card lg:col-span-3">
           <div className="card-header flex items-center justify-between">
             <h3 className="card-title">Edificios / Obras ({data.edificios?.length || 0})</h3>
-            {puedeEditar && <button onClick={abrirNuevoEdificio} className="btn-primary btn-sm">+ Nuevo edificio</button>}
+            <div className="flex items-center gap-2">
+              {esSuperAdmin && (data.edificios?.length || 0) > 0 && (
+                <button onClick={() => setOpenEdMasivo(true)} className="btn-secondary btn-sm">Inactivar/Reactivar</button>
+              )}
+              {puedeEditar && <button onClick={abrirNuevoEdificio} className="btn-primary btn-sm">+ Nuevo edificio</button>}
+            </div>
           </div>
           <div className="card-body space-y-3">
             {(!data.edificios || data.edificios.length === 0) && (
@@ -179,6 +215,9 @@ export default function Cliente360() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-slate-800">{ed.nombre}</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-slate-200">{ed.tipo}</span>
+                      {ed.estado === 0 && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 ring-1 ring-rose-200">Inactivo</span>
+                      )}
                     </div>
                     <div className="text-xs text-slate-500">{[ed.direccion, ed.distrito].filter(Boolean).join(' · ') || '—'}</div>
                   </div>
@@ -187,6 +226,9 @@ export default function Cliente360() {
                       <a href={`https://www.google.com/maps/search/?api=1&query=${ed.latitud},${ed.longitud}`} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline">📍 Mapa</a>
                     )}
                     {puedeEditar && <button onClick={() => abrirEditarEdificio(ed)} className="text-slate-600 hover:underline">Editar</button>}
+                    {esSuperAdmin && (ed.estado === 0
+                      ? <button onClick={() => cambiarEstadoEdificio(ed, 1)} className="text-emerald-600 hover:underline">Reactivar</button>
+                      : <button onClick={() => cambiarEstadoEdificio(ed, 0)} className="text-rose-600 hover:underline">Inactivar</button>)}
                   </div>
                 </div>
                 <div className="mt-2 grid sm:grid-cols-2 gap-2">
@@ -408,6 +450,19 @@ export default function Cliente360() {
         </>}>
         <EdificioForm formId="edificio-form" value={edForm} onChange={setEdForm} onSubmit={guardarEdificio}
           tipos={tiposEdificio} distritos={distritos} />
+      </Modal>
+
+      <Modal open={openEdMasivo} onClose={() => setOpenEdMasivo(false)} title="Edificios del cliente" size="sm"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setOpenEdMasivo(false)} disabled={cambiandoEdMasivo}>Cerrar</button>
+          <button className="btn-primary" onClick={() => cambiarEstadoEdificiosMasivo(1)} disabled={cambiandoEdMasivo}>Reactivar todos</button>
+          <button className="btn-danger" onClick={() => cambiarEstadoEdificiosMasivo(0)} disabled={cambiandoEdMasivo}>Inactivar todos</button>
+        </>}>
+        <p className="text-sm text-slate-600">
+          Acción exclusiva del Super Admin. Al inactivar todos los edificios de <span className="font-semibold text-slate-800">{data.nombre}</span> dejarán
+          de verse para los demás roles, junto con sus ascensores, servicios y proyectos; solo el Super Admin seguirá viéndolos.
+          No se elimina nada y puedes reactivarlos cuando quieras.
+        </p>
       </Modal>
     </>
   );

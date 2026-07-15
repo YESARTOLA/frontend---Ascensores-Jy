@@ -38,6 +38,8 @@ export const edificiosService = {
   create: (d) => api.post('/edificios', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/edificios/${id}`, d).then(r => r.data?.data ?? r.data),
   setEstado: (id, estado) => api.patch(`/edificios/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data),
+  // Inactiva/reactiva todos los edificios de un cliente (solo Super Admin).
+  setEstadoCliente: (idCliente, estado) => api.patch(`/edificios/cliente/${idCliente}/estado`, { estado }).then(r => r.data?.data ?? r.data),
   tipos: () => api.get('/edificios/tipos').then(r => r.data?.data ?? r.data),
   distritos: () => api.get('/edificios/distritos').then(r => r.data?.data ?? r.data)
 };
@@ -84,6 +86,10 @@ export const serviciosService = {
   get: (id) => api.get(`/servicios/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/servicios', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/servicios/${id}`, d).then(r => r.data?.data ?? r.data),
+  // Cambiar la duración (días) de un servicio ya programado, incluso En curso.
+  // El backend puede responder 409 { requiere_confirmacion } si se recortan días
+  // con evidencia; reenviar con { confirmar: true }.
+  cambiarDuracion: (id, payload) => api.patch(`/servicios/${id}/duracion`, payload).then(r => r.data),
   setEstado: (id, estado_servicio) => api.patch(`/servicios/${id}/estado`, { estado_servicio }).then(r => r.data?.data ?? r.data),
   asignar: (id, payload) => api.post(`/servicios/${id}/asignar`, payload).then(r => r.data),
   iniciar: (id, accion) => api.post(`/servicios/${id}/iniciar`, { accion }).then(r => r.data),
@@ -98,10 +104,13 @@ export const serviciosService = {
   crearObservacion: (idServicio, payload) => api.post(`/servicios/${idServicio}/observaciones`, payload).then(r => r.data?.data ?? r.data),
   atenderObservacion: (id) => api.patch(`/servicios/observaciones/${id}/atender`).then(r => r.data?.data ?? r.data),
   eliminarObservacion: (id) => api.delete(`/servicios/observaciones/${id}`).then(r => r.data),
-  // Checklist de finalización
+  // Checklist de finalización (progresivo: se llena durante "En curso")
   obtenerFinalizacion: (idServicio) => api.get(`/servicios/${idServicio}/finalizacion`).then(r => r.data?.data ?? r.data),
-  obtenerPlantillaFinalizacion: (idServicio) => api.get(`/servicios/${idServicio}/finalizacion/plantilla`).then(r => r.data?.data ?? r.data),
-  guardarFinalizacion: (idServicio, payload) => api.post(`/servicios/${idServicio}/finalizacion`, payload).then(r => r.data?.data ?? r.data),
+  guardarRespuestaChecklist: (idServicio, idItem, payload) => api.patch(`/servicios/${idServicio}/finalizacion/items/${idItem}`, payload).then(r => r.data?.data ?? r.data),
+  agregarFotoChecklist: (idServicio, idItem, payload) => api.post(`/servicios/${idServicio}/finalizacion/items/${idItem}/fotos`, payload).then(r => r.data?.data ?? r.data),
+  eliminarFotoChecklist: (idServicio, idFoto) => api.delete(`/servicios/${idServicio}/finalizacion/fotos/${idFoto}`).then(r => r.data),
+  // Genera el informe PDF a partir del checklist ya completado (al cerrar).
+  generarInformeFinalizacion: (idServicio) => api.post(`/servicios/${idServicio}/finalizacion`).then(r => r.data?.data ?? r.data),
   // Guías de salida (gestión por coordinador/admin/super_admin/técnico responsable).
   crearGuia: (idServicio, payload) => api.post(`/servicios/${idServicio}/guias`, payload).then(r => r.data?.data ?? r.data),
   actualizarGuia: (idServicio, idGuia, payload) => api.put(`/servicios/${idServicio}/guias/${idGuia}`, payload).then(r => r.data?.data ?? r.data),
@@ -219,7 +228,8 @@ export const reportesService = {
   historialTecnicoAscensor: (params) => api.get('/reportes/historial-tecnico-ascensor', { params }).then(r => r.data?.data ?? r.data),
   mantenimientosPorCliente: (params) => api.get('/reportes/mantenimientos-por-cliente', { params }).then(r => r.data?.data ?? r.data),
   mantenimientosProgramadosSinServicio: (params) => api.get('/reportes/mantenimientos-programados-sin-servicio', { params }).then(r => r.data?.data ?? r.data),
-  ingresosPorBanco: (params) => api.get('/reportes/ingresos-por-banco', { params }).then(r => r.data?.data ?? r.data)
+  ingresosPorBanco: (params) => api.get('/reportes/ingresos-por-banco', { params }).then(r => r.data?.data ?? r.data),
+  clientesEstadoEdificios: () => api.get('/reportes/clientes-estado-edificios').then(r => r.data?.data ?? r.data)
 };
 
 export const auditoriaService = {
@@ -288,7 +298,10 @@ export const entregasService = {
 export const cotizacionesService = {
   list: (params) => api.get('/cotizaciones', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/cotizaciones', { params }).then(r => r.data),
+  exportar: (params, formato = 'excel') =>
+    api.get('/cotizaciones/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   get: (id) => api.get(`/cotizaciones/${id}`).then(r => r.data?.data ?? r.data),
+  historial: (id) => api.get(`/cotizaciones/${id}/historial`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/cotizaciones', d).then(r => r.data?.data ?? r.data),
   updateCabecera: (id, d) => api.put(`/cotizaciones/${id}`, d).then(r => r.data?.data ?? r.data),
   updateVersion: (id, v, d) => api.put(`/cotizaciones/${id}/versiones/${v}`, d).then(r => r.data?.data ?? r.data),

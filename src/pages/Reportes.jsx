@@ -46,7 +46,9 @@ const TABS = [
   { key: 'Leads', codigo: 'leads', categoria: 'leads', filtros: [] },
   { key: 'Atención rápida', codigo: 'atenciones_rapidas', categoria: 'atencion_rapida', filtros: ['desde', 'hasta', 'id_cliente', 'estado_atencion', 'nivel_urgencia'] },
   { key: 'Ascensores', codigo: 'ascensores', filtros: [] },
-  { key: 'Hist. téc. ascensor', codigo: 'historial_tecnico_ascensor', filtros: ['id_ascensor'] }
+  { key: 'Hist. téc. ascensor', codigo: 'historial_tecnico_ascensor', filtros: ['id_ascensor'] },
+  // Exclusivo del Super Admin: estado de los edificios por cliente (activos vs inactivos).
+  { key: 'Edificios por cliente', codigo: 'clientes_estado_edificios', filtros: [], soloSA: true }
 ];
 
 const ESTADOS_SERVICIO = [
@@ -78,6 +80,7 @@ function fetcher(codigo, params) {
     case 'leads': return reportesService.leads();
     case 'ascensores': return reportesService.ascensores();
     case 'historial_tecnico_ascensor': return params.id_ascensor ? reportesService.historialTecnicoAscensor(params) : Promise.resolve(null);
+    case 'clientes_estado_edificios': return reportesService.clientesEstadoEdificios();
     default: return Promise.resolve([]);
   }
 }
@@ -94,7 +97,9 @@ export default function Reportes() {
   const [ascensores, setAscensores] = useState([]);
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const toast = useToast();
-  const { puedeVerPrecio } = useAuth();
+  const { puedeVerPrecio, esSuperAdmin } = useAuth();
+  // Pestañas visibles según rol (algunas, como el estado de edificios, son SA-only).
+  const tabsVisibles = useMemo(() => TABS.filter(t => !t.soloSA || esSuperAdmin), [esSuperAdmin]);
 
   useEffect(() => {
     Promise.all([
@@ -255,7 +260,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
               key={c.codigo}
               onClick={() => {
                 setCategoria(c.codigo);
-                const visibles = c.codigo === 'todos' ? TABS : TABS.filter(t => t.categoria === c.codigo);
+                const visibles = c.codigo === 'todos' ? tabsVisibles : tabsVisibles.filter(t => t.categoria === c.codigo);
                 if (visibles.length > 0 && !visibles.some(t => t.codigo === tab.codigo)) {
                   seleccionarTab(visibles[0]);
                 }
@@ -269,7 +274,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
 
       <div className="card mb-4">
         <div className="px-2 py-2 flex gap-1 overflow-x-auto scroll-thin">
-          {TABS
+          {tabsVisibles
             .filter(t => categoria === 'todos' || t.categoria === categoria)
             .map(t => (
               <button key={t.codigo} onClick={() => seleccionarTab(t)}
@@ -463,6 +468,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
             {tab.codigo === 'tecnicos' && Array.isArray(data) && <TablaTecnicos data={data} />}
             {tab.codigo === 'leads' && data?.leads && <BloqueLeads data={data} />}
             {tab.codigo === 'ascensores' && Array.isArray(data) && <TablaAscensores data={data} />}
+            {tab.codigo === 'clientes_estado_edificios' && Array.isArray(data) && <TablaClientesEstadoEdificios data={data} />}
             {tab.codigo === 'historial_tecnico_ascensor' && (
               !filtros.id_ascensor
                 ? <EmptyState title="Seleccione un ascensor" subtitle="Use el filtro para ver el historial técnico" />
@@ -1040,6 +1046,43 @@ function TablaAscensores({ data }) {
   );
 }
 
+// Etiqueta + color por grupo de estado de edificios (alineado con el backend).
+const GRUPO_EDIFICIOS_META = {
+  activos: { label: 'Con edificios activos', clase: 'bg-emerald-100 text-emerald-700' },
+  inactivos: { label: 'Con edificios inactivos', clase: 'bg-rose-100 text-rose-700' },
+  mixto: { label: 'Mixto', clase: 'bg-amber-100 text-amber-700' },
+  sin_edificios: { label: 'Sin edificios', clase: 'bg-slate-100 text-slate-600' }
+};
+
+function TablaClientesEstadoEdificios({ data }) {
+  if (data.length === 0) return <EmptyState title="Sin clientes" />;
+  return (
+    <table className="table-base">
+      <thead><tr>
+        <th className="table-th">Cliente</th>
+        <th className="table-th">Estado</th>
+        <th className="table-th text-center">Activos</th>
+        <th className="table-th text-center">Inactivos</th>
+        <th className="table-th text-center">Total</th>
+      </tr></thead>
+      <tbody className="divide-y divide-slate-100">
+        {data.map((r, idx) => {
+          const meta = GRUPO_EDIFICIOS_META[r.grupo] || GRUPO_EDIFICIOS_META.sin_edificios;
+          return (
+            <tr key={r.cliente?.id ?? `row-${idx}`}>
+              <td className="table-td">{r.cliente?.nombre}</td>
+              <td className="table-td"><span className={`badge ${meta.clase}`}>{meta.label}</span></td>
+              <td className="table-td text-center text-emerald-700">{r.activos}</td>
+              <td className="table-td text-center text-rose-700">{r.inactivos}</td>
+              <td className="table-td text-center font-medium">{r.total}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function HistorialAscensor({ data, puedeVerPrecio }) {
   const { ascensor, servicios, emergencias, mantenimientos, eventos } = data;
   return (
@@ -1585,6 +1628,29 @@ function buildAnalitica(codigo, data, puedeVerPrecio) {
         `Operativos: ${operativos} (${pct(operativos, total)}%)`,
         topServ[0] && topServ[0].value > 0 ? `Más atendido: ${topServ[0].label} (${topServ[0].value} servicios)` : null,
         `Emergencias acumuladas: ${totalEmerg}`
+      ].filter(Boolean)
+    };
+  }
+
+  if (codigo === 'clientes_estado_edificios') {
+    const total = data.length;
+    const cuenta = (g) => data.filter(r => r.grupo === g).length;
+    const distribucion = Object.entries(GRUPO_EDIFICIOS_META)
+      .map(([g, meta]) => ({ label: meta.label, value: cuenta(g) }))
+      .filter(x => x.value > 0);
+    const conActivos = cuenta('activos');
+    const conInactivos = cuenta('inactivos');
+    const mixto = cuenta('mixto');
+    const sinEdificios = cuenta('sin_edificios');
+    return {
+      pie: { title: 'Clientes por estado de edificios', data: distribucion },
+      bar: { title: 'Clientes por estado de edificios', data: distribucion },
+      analisis: [
+        `Total de clientes: ${total}`,
+        `Con edificios activos: ${conActivos} (${pct(conActivos, total)}%)`,
+        `Con edificios inactivos: ${conInactivos} (${pct(conInactivos, total)}%)`,
+        mixto > 0 ? `Mixto (activos e inactivos): ${mixto} (${pct(mixto, total)}%)` : null,
+        sinEdificios > 0 ? `Sin edificios: ${sinEdificios} (${pct(sinEdificios, total)}%)` : null
       ].filter(Boolean)
     };
   }

@@ -345,30 +345,37 @@ export default function Cobros() {
                     {data.map(c => {
                       const sr = c.servicio?.servicio_realizado;
                       const tieneOt = !!(sr?.numero_ot || sr?.archivo_ot);
-                      const cantAsc = c.servicio?.ascensores?.length || 0;
+                      const esPlan = !c.servicio && !!c.mantenimiento_plan;
+                      const cantAsc = c.servicio?.ascensores?.length || c.mantenimiento_plan?.ascensores?.length || 0;
                       return (
                       <tr key={c.id} className={`table-row-hover ${c.vencido ? 'row-vencido' : ''}`}>
                         <td className="table-td text-sm">{c.cliente?.nombre}</td>
                         <td className="table-td text-sm">
-                          <div className="truncate max-w-[220px]" title={c.servicio?.titulo || ''}>
-                            {c.servicio?.titulo || '—'}
+                          <div className="truncate max-w-[220px]" title={c.servicio?.titulo || c.mantenimiento_plan?.tipo_servicio?.nombre || ''}>
+                            {c.servicio?.titulo || (esPlan ? (c.mantenimiento_plan?.tipo_servicio?.nombre || 'Mantenimiento (plan)') : '—')}
                           </div>
                           {cantAsc > 1 && (
                             <div className="text-[10px] text-slate-500">{cantAsc} ascensores</div>
                           )}
                         </td>
                         <td className="table-td whitespace-nowrap min-w-[160px]">
-                          <Link to={`/servicios/${c.servicio?.id}`} className="font-mono text-xs text-brand-700 hover:underline">{c.servicio?.codigo}</Link>
-                          {c.servicio?.cotizacion && (
-                            <div className="text-[10px] text-slate-500 mt-0.5">
-                              Cotización{' '}
-                              <Link
-                                to={`/cotizaciones/${c.servicio.cotizacion.id}`}
-                                className="font-mono text-brand-700 hover:underline"
-                              >
-                                {c.servicio.cotizacion.codigo}
-                              </Link>
-                            </div>
+                          {c.servicio ? (
+                            <>
+                              <Link to={`/servicios/${c.servicio.id}`} className="font-mono text-xs text-brand-700 hover:underline">{c.servicio.codigo}</Link>
+                              {c.servicio.cotizacion && (
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  Cotización{' '}
+                                  <Link
+                                    to={`/cotizaciones/${c.servicio.cotizacion.id}`}
+                                    className="font-mono text-brand-700 hover:underline"
+                                  >
+                                    {c.servicio.cotizacion.codigo}
+                                  </Link>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="badge-blue text-[10px]">Plan de mantenimiento{c.mantenimiento_plan ? ` #${c.mantenimiento_plan.id}` : ''}</span>
                           )}
                         </td>
                         <td className="table-td">
@@ -430,20 +437,26 @@ export default function Cobros() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-medium text-sm truncate">{c.cliente?.nombre}</div>
-                      {c.servicio?.titulo && (
-                        <div className="text-xs text-slate-700 truncate">{c.servicio.titulo}</div>
+                      {(c.servicio?.titulo || (!c.servicio && c.mantenimiento_plan)) && (
+                        <div className="text-xs text-slate-700 truncate">{c.servicio?.titulo || c.mantenimiento_plan?.tipo_servicio?.nombre || 'Mantenimiento (plan)'}</div>
                       )}
-                      <Link to={`/servicios/${c.servicio?.id}`} className="font-mono text-xs text-brand-700 hover:underline">{c.servicio?.codigo}</Link>
-                      {c.servicio?.cotizacion && (
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          Cotización{' '}
-                          <Link
-                            to={`/cotizaciones/${c.servicio.cotizacion.id}`}
-                            className="font-mono text-brand-700 hover:underline"
-                          >
-                            {c.servicio.cotizacion.codigo}
-                          </Link>
-                        </div>
+                      {c.servicio ? (
+                        <>
+                          <Link to={`/servicios/${c.servicio.id}`} className="font-mono text-xs text-brand-700 hover:underline">{c.servicio.codigo}</Link>
+                          {c.servicio.cotizacion && (
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              Cotización{' '}
+                              <Link
+                                to={`/cotizaciones/${c.servicio.cotizacion.id}`}
+                                className="font-mono text-brand-700 hover:underline"
+                              >
+                                {c.servicio.cotizacion.codigo}
+                              </Link>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="badge-blue text-[10px]">Plan de mantenimiento{c.mantenimiento_plan ? ` #${c.mantenimiento_plan.id}` : ''}</span>
                       )}
                     </div>
                     <span className={badgeEstado(c.estado_cobro)}>{c.estado_cobro}</span>
