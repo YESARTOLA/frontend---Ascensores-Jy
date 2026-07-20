@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { serviciosService, archivosService } from '../../services';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
 import { useToast } from '../common/Toast.jsx';
@@ -13,6 +14,9 @@ import { esServicioPostRevision } from '../../utils/estadoServicio.js';
  * - Si el usuario es un técnico asignado al servicio (o admin/super_admin),
  *   muestra el formulario para registrar una nueva (texto + foto opcional).
  * - Si el usuario es coordinador/admin/super_admin, ofrece "Marcar atendida".
+ * - Si el usuario es admin/super_admin, permite seleccionar observaciones aún no
+ *   cotizadas y jalarlas a una cotización nueva (cada una entra como un ítem con
+ *   su foto). Las ya cotizadas muestran el código y no son seleccionables.
  *
  * Cualquier rol con acceso al detalle del servicio puede ver la lista.
  *
@@ -34,6 +38,9 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
   const [guardando, setGuardando] = useState(false);
   const guardandoRef = useRef(false);
   const [atendiendoId, setAtendiendoId] = useState(null);
+  // Observaciones marcadas para jalar a una cotización nueva.
+  const [seleccionadas, setSeleccionadas] = useState([]);
+  const navigate = useNavigate();
 
   const esAdminUI = esSuperAdmin || esAdmin;
   const tecnicoAsignado = esTecnico && Array.isArray(tecnicosAsignados)
@@ -114,7 +121,21 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
     }
   };
 
+  const alternarSeleccion = (id) =>
+    setSeleccionadas(s => (s.includes(id) ? s.filter(x => x !== id) : [...s, id]));
+
+  // Lleva las observaciones marcadas al formulario de cotización nueva, que las
+  // resuelve contra el backend. El vínculo se graba recién al guardar allí.
+  const cotizarSeleccionadas = () => {
+    if (seleccionadas.length === 0) return;
+    navigate(`/cotizaciones?nuevo=1&observaciones=${seleccionadas.join(',')}`);
+  };
+
   const pendientes = items.filter(o => o.atendida === 0).length;
+  // Solo se puede cotizar lo que aún no está vinculado a una cotización.
+  const cotizables = items.filter(o => !o.id_cotizacion);
+  const puedeCotizar = esAdminUI && cotizables.length > 0;
+  const sinFotoSeleccionadas = items.filter(o => seleccionadas.includes(o.id) && !o.id_archivo).length;
 
   return (
     <div className="card">
@@ -181,11 +202,43 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
             {puedeRegistrar ? 'Aún no hay observaciones. Registra la primera con el formulario.' : 'Sin observaciones registradas.'}
           </p>
         ) : (
+          <>
+          {puedeCotizar && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg ring-1 ring-brand-200 bg-brand-50/40 p-2.5">
+              <span className="text-xs text-slate-600">
+                {seleccionadas.length === 0
+                  ? 'Marca observaciones para cotizarlas: cada una entra como un ítem con su foto.'
+                  : `${seleccionadas.length} seleccionada${seleccionadas.length === 1 ? '' : 's'}`}
+              </span>
+              {sinFotoSeleccionadas > 0 && (
+                <span className="text-[11px] text-amber-700">
+                  · {sinFotoSeleccionadas} sin foto: en cotizaciones de correctivo la foto por ítem es obligatoria,
+                  tendrás que subirla en el formulario.
+                </span>
+              )}
+              <button type="button" onClick={cotizarSeleccionadas} disabled={seleccionadas.length === 0}
+                className="btn-primary ml-auto text-xs !py-1.5 !px-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                Cotizar seleccionadas ({seleccionadas.length})
+              </button>
+            </div>
+          )}
           <ul className="space-y-3">
             {items.map(o => (
               <li key={o.id} className={`rounded-lg ring-1 p-3 ${o.atendida ? 'bg-emerald-50/30 ring-emerald-200' : 'bg-orange-50/30 ring-orange-200'}`}>
                 <div className="flex items-start justify-between gap-3 mb-1">
                   <div className="flex items-center gap-2 flex-wrap">
+                    {esAdminUI && !o.id_cotizacion && (
+                      <input type="checkbox" checked={seleccionadas.includes(o.id)}
+                        onChange={() => alternarSeleccion(o.id)}
+                        aria-label={`Seleccionar observación ${o.id} para cotizar`} />
+                    )}
+                    {o.cotizacion && (
+                      <Link to={`/cotizaciones/${o.cotizacion.id}`}
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 bg-brand-100 text-brand-800 ring-brand-200 hover:underline"
+                        title="Esta observación ya fue jalada a una cotización">
+                        Cotizada · {o.cotizacion.codigo}
+                      </Link>
+                    )}
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${o.atendida ? 'bg-emerald-100 text-emerald-800 ring-emerald-200' : 'bg-orange-100 text-orange-800 ring-orange-200'}`}>
                       {o.atendida ? 'Atendida' : 'Pendiente'}
                     </span>
@@ -225,6 +278,7 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
               </li>
             ))}
           </ul>
+          </>
         )}
       </div>
     </div>

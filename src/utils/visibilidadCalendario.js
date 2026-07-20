@@ -2,11 +2,11 @@
 // Mantener ambos en sincronía.
 
 export const VISIBILIDAD_POR_ROL = {
-  super_admin:  { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
-  admin:        { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
-  coordinador:  { operativos: 'todos',     tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia', 'observacion', 'cotizacion_urgente', 'servicio_finalizado_revisar'] },
-  tecnico:      { operativos: 'asignados', tipos_recordatorio: ['servicio', 'mantenimiento', 'emergencia'] },
-  contabilidad: { operativos: 'todos',     tipos_recordatorio: ['cobro', 'observacion_alerta', 'servicio_finalizado_facturar'] },
+  super_admin:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
+  admin:        { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'servicio_finalizado_aviso'] },
+  coordinador:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'cotizacion_urgente', 'servicio_finalizado_revisar'] },
+  tecnico:      { operativos: 'asignados', tipos_recordatorio: ['mantenimiento', 'emergencia'] },
+  contabilidad: { operativos: 'todos',     tipos_recordatorio: ['manual', 'cobro', 'observacion_alerta', 'servicio_finalizado_facturar'] },
   // La Vendedora ve TODA la agenda operativa (solo lectura) para validar la
   // disponibilidad de los técnicos al programar; sin recordatorios.
   vendedora:    { operativos: 'todos',     tipos_recordatorio: [] }
@@ -25,6 +25,7 @@ export const CATALOGO_TIPOS_EVENTO = [
   { value: 'mantenimiento',      label: 'Mantenimiento',      label_plural: 'mantenimientos',       color: '#16a34a', dominio: 'operativo' },   // verde
   { value: 'emergencia',         label: 'Emergencia',         label_plural: 'emergencias',          color: '#dc2626', dominio: 'operativo' },   // rojo
   { value: 'correctivo',         label: 'Correctivo',         label_plural: 'correctivos',          color: '#f59e0b', dominio: 'operativo' },   // ámbar
+  { value: 'manual',             label: 'Manual',             label_plural: 'recordatorios manuales', color: '#8b5cf6', dominio: 'recordatorio' }, // violeta
   { value: 'cobro',              label: 'Cobro',              label_plural: 'cobros',               color: '#9333ea', dominio: 'recordatorio' }, // púrpura
   { value: 'observacion',        label: 'Observación',        label_plural: 'observaciones',        color: '#0d9488', dominio: 'recordatorio' }, // turquesa
   { value: 'observacion_alerta', label: 'Alerta de observación', label_plural: 'alertas de observación', color: '#e11d48', dominio: 'recordatorio' }, // rosa-rojo
@@ -91,12 +92,6 @@ export function muestraFiltroCliente(rol) {
 
 export function colorPorTipo(tipo) {
   return CATALOGO_TIPOS_EVENTO.find(t => t.value === tipo)?.color || COLOR_FALLBACK;
-}
-
-// Etiqueta legible del tipo de evento (el "módulo" donde se creó: Emergencia,
-// Correctivo, Mantenimiento, Servicio, Proyecto…). Fuente única: el catálogo.
-export function etiquetaTipoEvento(tipo) {
-  return CATALOGO_TIPOS_EVENTO.find(t => t.value === tipo)?.label || 'Servicio';
 }
 
 // Subtítulo del PageHeader: enumera en plural los tipos visibles para el rol,

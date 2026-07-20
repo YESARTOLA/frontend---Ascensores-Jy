@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { emergenciasService, clientesService, ascensoresService, tecnicosService } from '../services';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { emergenciasService, clientesService, ascensoresService, tecnicosService, serviciosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -10,7 +10,9 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFechaHora, formatDiasEjecucion, nombreCliente, nombreEdificio, clientesConEdificios } from '../utils/formatters.js';
+import AdjuntosEmergenciaModal from '../components/emergencias/AdjuntosEmergenciaModal.jsx';
+import { badgeEstado, formatFecha, formatFechaHora, hoyISO, nombreCliente, nombreEdificio } from '../utils/formatters.js';
+import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
 import { esServicioEditable, esEmergenciaCerrada, ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
 
 const NIVELES_URGENCIA = ['alta', 'media', 'baja'];
@@ -21,7 +23,8 @@ const TIPOS_ITEM = ['Herramienta', 'Material', 'Equipo', 'Repuesto', 'Otro'];
 const UNIDADES = ['Unidad', 'Metro', 'Caja', 'Bolsa', 'Litro', 'Juego', 'Otro'];
 const FORM_ID = 'form-emergencia';
 
-const inicial = { id_cliente: '', id_ascensor: '', motivo: '', nivel_urgencia: 'alta', precio_interno: '', sin_cobro: false, observaciones: '' };
+// requiere_factura por defecto en false: las emergencias nacen "sin factura" (editable).
+const inicial = { id_cliente: '', id_ascensor: '', motivo: '', nivel_urgencia: 'alta', fecha_programada: '', hora_programada: '', fecha_estimada_entrega: '', precio_interno: '', sin_cobro: false, requiere_factura: false, observaciones: '' };
 
 export default function Emergencias() {
   const [clientes, setClientes] = useState([]);
@@ -32,6 +35,12 @@ export default function Emergencias() {
   const [form, setForm] = useState(inicial);
   const [asignaciones, setAsignaciones] = useState([]);
   const [items, setItems] = useState([]);
+  // Emergencia cuyo modal de adjuntos está abierto desde la tabla.
+  const [adjuntosDe, setAdjuntosDe] = useState(null);
+  // Adjuntos cargados durante la CREACIÓN: la emergencia aún no existe, así que
+  // se guardan aquí y viajan como ids en el payload de create.
+  const [adjuntosBorrador, setAdjuntosBorrador] = useState([]);
+  const [adjuntosBorradorAbierto, setAdjuntosBorradorAbierto] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const guardandoRef = useRef(false);
   const toast = useToast();
@@ -45,15 +54,26 @@ export default function Emergencias() {
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(emergenciasService.paginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
+
+  // Cambia la marca con/sin factura del servicio en cualquier momento (hasta que
+  // exista una factura emitida; el backend rechaza si ya la hay).
+  const toggleRequiereFactura = async (e) => {
+    if (!e.servicio) return;
+    try {
+      await serviciosService.setRequiereFactura(e.servicio.id, e.servicio.requiere_factura === 0);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo cambiar la marca de facturación');
+    }
+  };
+
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tecnicosService.list()])
       .then(([c, a, t]) => { setClientes(c); setAscensores(a); setTecnicos(t); })
       .catch(() => {});
   }, []);
 
-  const ascensoresFiltrados = form.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente)) : ascensores;
-  // Clientes enriquecidos con sus edificios para poder buscar por nombre de edificio/obra.
-  const clientesBuscables = useMemo(() => clientesConEdificios(clientes, ascensores), [clientes, ascensores]);
+  const ascensoresFiltrados = (form.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente)) : ascensores).filter(esAscensorServiciable);
   const labelCampoCliente = 'Cliente';
 
   const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
@@ -66,9 +86,10 @@ export default function Emergencias() {
 
   const abrirNuevo = () => {
     setEditando(null);
-    setForm(inicial);
+    setForm({ ...inicial, fecha_programada: hoyISO() });
     setAsignaciones([]);
     setItems([]);
+    setAdjuntosBorrador([]);
     setOpen(true);
   };
 
@@ -87,14 +108,35 @@ export default function Emergencias() {
       id_ascensor: String(em.id_ascensor || ''),
       motivo: em.motivo || '',
       nivel_urgencia: em.nivel_urgencia || 'alta',
+      fecha_programada: em.servicio?.fecha_programada ? String(em.servicio.fecha_programada).slice(0, 10) : '',
+      hora_programada: em.servicio?.hora_programada || '',
+      fecha_estimada_entrega: em.servicio?.fecha_estimada_entrega ? String(em.servicio.fecha_estimada_entrega).slice(0, 10) : '',
       precio_interno: em.servicio?.precio_interno != null ? String(em.servicio.precio_interno) : '',
       sin_cobro: em.servicio?.sin_cobro === 1,
+      requiere_factura: em.servicio?.requiere_factura === 1,
       observaciones: em.observaciones || ''
     });
     setAsignaciones([]);
     setItems([]);
     setOpen(true);
   };
+
+  // Soporte ?edit=ID en la URL (ej. desde ServicioDetalle → botón Editar).
+  // Reutiliza el mismo modal de edición que el botón Editar del listado.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || !puedeEditar) return;
+    const limpiarParam = () => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('edit');
+      setSearchParams(next, { replace: true });
+    };
+    emergenciasService.get(Number(editId))
+      .then(em => { abrirEditar(em); limpiarParam(); })
+      .catch(err => { toast.error(err.response?.data?.error || 'Emergencia no encontrada'); limpiarParam(); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, puedeEditar]);
 
   const [aEliminar, setAEliminar] = useState(null);
   const eliminar = async () => {
@@ -115,6 +157,8 @@ export default function Emergencias() {
     setForm(inicial);
     setAsignaciones([]);
     setItems([]);
+    setAdjuntosBorrador([]);
+    setAdjuntosBorradorAbierto(false);
   };
 
   const guardar = async (e) => {
@@ -135,8 +179,12 @@ export default function Emergencias() {
           id_ascensor: form.id_ascensor,
           motivo: form.motivo,
           nivel_urgencia: form.nivel_urgencia,
+          fecha_programada: form.fecha_programada,
+          hora_programada: form.hora_programada,
+          fecha_estimada_entrega: form.fecha_estimada_entrega,
           observaciones: form.observaciones,
           sin_cobro: form.sin_cobro,
+          requiere_factura: form.requiere_factura,
           precio_interno: form.sin_cobro ? 0 : form.precio_interno
         };
         await emergenciasService.update(editando, payload);
@@ -146,7 +194,8 @@ export default function Emergencias() {
           ...form,
           precio_interno: form.sin_cobro ? 0 : form.precio_interno,
           tecnicos: asignaciones,
-          items_checklist: items
+          items_checklist: items,
+          archivos: adjuntosBorrador.map((a, i) => ({ id_archivo: a.id_archivo, orden: i + 1 }))
         };
         await emergenciasService.create(payload);
         toast.success('Emergencia registrada');
@@ -191,13 +240,15 @@ export default function Emergencias() {
                 <th className="table-th">Reportada</th>
                 <th className="table-th">Edificio-Obra / Ascensor</th>
                 <th className="table-th">Motivo</th>
+                <th className="table-th">Fecha programada</th>
+                <th className="table-th">Fecha estimada término</th>
+                <th className="table-th">Estado</th>
                 <th className="table-th">Urgencia</th>
                 <th className="table-th">Servicio</th>
                 <th className="table-th">Ejecución</th>
-                <th className="table-th">Inicio</th>
-                <th className="table-th">Término</th>
-                <th className="table-th text-center">Días</th>
-                <th className="table-th">Estado</th>
+                <th className="table-th">Técnico</th>
+                <th className="table-th">Observaciones</th>
+                <th className="table-th">Adjuntos</th>
                 <th className="table-th text-right">Acciones</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
@@ -211,20 +262,49 @@ export default function Emergencias() {
                     <td className="table-td text-xs">{formatFechaHora(e.fecha_reporte)}</td>
                     <td className="table-td text-xs"><div>{nombreEdificio(e.ascensor?.edificio) || nombreCliente(e.cliente)}</div><div className="font-mono text-slate-500">{e.ascensor?.codigo}</div></td>
                     <td className="table-td text-sm">{e.motivo}</td>
+                    <td className="table-td text-xs">{e.servicio?.fecha_programada ? `${formatFecha(e.servicio.fecha_programada)}${e.servicio.hora_programada ? ` ${e.servicio.hora_programada}` : ''}` : '—'}</td>
+                    <td className="table-td text-xs">{e.servicio?.fecha_estimada_entrega ? formatFecha(e.servicio.fecha_estimada_entrega) : '—'}</td>
+                    <td className="table-td"><span className={badgeEstado(e.estado_emergencia)}>{e.estado_emergencia}</span></td>
                     <td className="table-td"><span className={e.nivel_urgencia === 'alta' ? 'badge-red' : 'badge-amber'}>{e.nivel_urgencia}</span></td>
                     <td className="table-td">
                       {e.servicio ? (
                         <div className="flex items-center gap-2">
                           <Link to={`/servicios/${e.servicio.id}`} className="font-mono text-xs text-brand-700">{e.servicio.codigo}</Link>
                           {e.servicio.sin_cobro === 1 && <span className="badge-green text-[10px]">Sin costo</span>}
+                          {puedeEditar ? (
+                            <button type="button" onClick={() => toggleRequiereFactura(e)}
+                              title="Clic para cambiar entre con / sin factura"
+                              className={`text-[10px] cursor-pointer hover:ring-1 hover:ring-brand-300 ${e.servicio.requiere_factura === 0 ? 'badge-gray' : 'badge-blue'}`}>
+                              {e.servicio.requiere_factura === 0 ? 'Sin factura' : 'Con factura'}
+                            </button>
+                          ) : (
+                            e.servicio.requiere_factura === 0
+                              ? <span className="badge-gray text-[10px]">Sin factura</span>
+                              : <span className="badge-blue text-[10px]">Con factura</span>
+                          )}
                         </div>
                       ) : '—'}
                     </td>
                     <td className="table-td"><span className={badgeEstado(ej.estado_ejecucion)}>{ej.estado_ejecucion || '—'}</span></td>
-                    <td className="table-td text-xs">{formatFechaHora(ej.fecha_inicio_real)}</td>
-                    <td className="table-td text-xs">{formatFechaHora(ej.fecha_fin_real)}</td>
-                    <td className="table-td text-xs text-center font-mono">{formatDiasEjecucion(ej.dias_ejecucion)}</td>
-                    <td className="table-td"><span className={badgeEstado(e.estado_emergencia)}>{e.estado_emergencia}</span></td>
+                    <td className="table-td text-xs">{(e.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ') || '—'}</td>
+                    <td className="table-td text-xs text-slate-600 max-w-[16rem]">
+                      {e.observaciones || <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="table-td text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setAdjuntosDe(e)}
+                        title="Ver fotos y videos de la emergencia"
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ring-1 transition ${
+                          (e._count?.archivos || 0) > 0
+                            ? 'bg-brand-50 text-brand-700 ring-brand-200 hover:bg-brand-100'
+                            : 'text-slate-400 ring-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span aria-hidden="true">📎</span>
+                        {e._count?.archivos || 0}
+                      </button>
+                    </td>
                     <td className="table-td text-right whitespace-nowrap">
                       {e.servicio && (
                         <Link to={`/servicios/${e.servicio.id}`} className="text-brand-700 text-xs hover:underline">Ver detalle</Link>
@@ -275,7 +355,7 @@ export default function Emergencias() {
             <div>
               <label className="label">{labelCampoCliente} *</label>
               <ClienteAutocomplete
-                clientes={clientesBuscables}
+                clientes={clientes}
                 value={form.id_cliente}
                 onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
                 required
@@ -291,6 +371,22 @@ export default function Emergencias() {
             </div>
             <div className="sm:col-span-2"><label className="label">Motivo *</label><textarea className="textarea" required rows="2" value={form.motivo} onChange={e => setForm(f => ({ ...f, motivo: e.target.value }))} /></div>
             <div><label className="label">Nivel de urgencia</label><select className="select" value={form.nivel_urgencia} onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}><option>alta</option><option>media</option><option>baja</option></select></div>
+            <div>
+              <label className="label">Fecha programada *</label>
+              <input type="date" className="input" required value={form.fecha_programada}
+                onChange={e => setForm(f => ({ ...f, fecha_programada: e.target.value, fecha_estimada_entrega: f.fecha_estimada_entrega && f.fecha_estimada_entrega < e.target.value ? '' : f.fecha_estimada_entrega }))} />
+            </div>
+            <div>
+              <label className="label">Hora programada</label>
+              <input type="time" className="input" value={form.hora_programada}
+                onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label">Fecha estimada de término</label>
+              <input type="date" className="input" value={form.fecha_estimada_entrega} min={form.fecha_programada || undefined}
+                onChange={e => setForm(f => ({ ...f, fecha_estimada_entrega: e.target.value }))} />
+              <p className="text-xs text-slate-500 mt-1">Opcional. Si el servicio ocupará varios días, indica el término estimado; si se deja vacío, se agenda solo el día programado.</p>
+            </div>
             {puedeVerPrecio && (
               <div>
                 <label className="label">Cobertura</label>
@@ -305,11 +401,36 @@ export default function Emergencias() {
               </div>
             )}
             {puedeVerPrecio && !form.sin_cobro && <div><label className="label">Precio interno (S/) *</label><input type="number" step="0.01" className="input" required value={form.precio_interno} onChange={e => setForm(f => ({ ...f, precio_interno: e.target.value }))} /></div>}
+            <div>
+              <label className="label">Facturación</label>
+              <label className="flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ring-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.requiere_factura}
+                  onChange={e => setForm(f => ({ ...f, requiere_factura: e.target.checked }))}
+                />
+                <span className="text-sm text-slate-700">Requiere factura</span>
+              </label>
+            </div>
             <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={form.observaciones} onChange={e => setForm(f => ({ ...f, observaciones: e.target.value }))} /></div>
           </form>
 
           {!editando && (
             <>
+              <div className="border-t border-slate-100 pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium text-slate-800">Fotos y videos (opcional)</h4>
+                  <button type="button" onClick={() => setAdjuntosBorradorAbierto(true)} className="btn-secondary text-xs">
+                    {adjuntosBorrador.length > 0 ? `Gestionar (${adjuntosBorrador.length})` : '+ Agregar adjuntos'}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  {adjuntosBorrador.length === 0
+                    ? 'Adjunta fotos o videos de la falla para que el técnico asignado los revise antes de salir a campo.'
+                    : `${adjuntosBorrador.length} archivo(s) listo(s) para vincularse al registrar.`}
+                </p>
+              </div>
+
               <div className="border-t border-slate-100 pt-4">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-medium text-slate-800">Técnicos asignados (opcional)</h4>
@@ -388,6 +509,25 @@ export default function Emergencias() {
           )}
         </div>
       </Modal>
+
+      {/* Adjuntos de una emergencia ya existente (chip de la tabla). */}
+      <AdjuntosEmergenciaModal
+        open={!!adjuntosDe}
+        onClose={() => setAdjuntosDe(null)}
+        idEmergencia={adjuntosDe?.id}
+        puedeGestionar={puedeEditar}
+        onCambio={cargar}
+      />
+
+      {/* Adjuntos en borrador durante la creación (aún no hay id de emergencia). */}
+      <AdjuntosEmergenciaModal
+        open={adjuntosBorradorAbierto}
+        onClose={() => setAdjuntosBorradorAbierto(false)}
+        idEmergencia={null}
+        puedeGestionar={puedeCrear}
+        borrador={adjuntosBorrador}
+        onChangeBorrador={setAdjuntosBorrador}
+      />
 
       <ConfirmarEliminacion
         open={!!aEliminar}

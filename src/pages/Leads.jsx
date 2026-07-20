@@ -679,7 +679,6 @@ export default function Leads() {
             onChange={setClienteForm}
             onSubmit={crearClienteConv}
             clasificaciones={catalogosConv?.clasificaciones || []}
-            tiposServicio={tipos}
           />
         )}
 
@@ -701,6 +700,7 @@ export default function Leads() {
             onChange={setAscForm}
             onSubmit={crearAscensorConv}
             tipos={catalogosConv?.tiposAscensor || []}
+            tiposServicio={tipos}
             edificioFijo
             edificioNombre={nuevoEdificio?.nombre}
           />

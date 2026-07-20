@@ -16,6 +16,8 @@ import Modal from './Modal';
  *  - etiquetaPalabra   Cómo nombrar el token en la instrucción (default 'ELIMINAR')
  *  - textoBoton        Texto del botón destructivo
  *  - onConfirmar       async () => {}  — la acción de borrado
+ *  - deshabilitado     Bloquea el botón destructivo aunque la palabra sea correcta
+ *                      (p. ej. mientras se carga el resumen de impacto)
  */
 export default function ConfirmarEliminacion({
   open,
@@ -25,6 +27,7 @@ export default function ConfirmarEliminacion({
   palabraClave = 'ELIMINAR',
   etiquetaPalabra,
   textoBoton = 'Eliminar definitivamente',
+  deshabilitado = false,
   onConfirmar
 }) {
   const [texto, setTexto] = useState('');
@@ -37,7 +40,8 @@ export default function ConfirmarEliminacion({
 
   const objetivo = String(palabraClave || '').trim();
   const etiqueta = etiquetaPalabra || objetivo;
-  const habilitado = texto.trim().toUpperCase() === objetivo.toUpperCase() && objetivo.length > 0;
+  const habilitado = texto.trim().toUpperCase() === objetivo.toUpperCase()
+    && objetivo.length > 0 && !deshabilitado;
 
   const confirmar = async () => {
     if (!habilitado || cargando) return;

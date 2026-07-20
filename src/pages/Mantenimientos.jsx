@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { mantenimientosService, clientesService, ascensoresService, tiposServicioService, serviciosService, assetUrl } from '../services';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { mantenimientosService, clientesService, ascensoresService, tiposServicioService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -11,14 +11,8 @@ import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import AscensoresChecklist from '../components/common/AscensoresChecklist.jsx';
-import {
-  sumaMontos,
-  toggleAscensor as selToggle,
-  cambiarMonto as selMonto,
-  repartirSegunTotal,
-  repartirForzado
-} from '../utils/ascensoresSeleccion.js';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima, nombreCliente, nombreEdificio, clientesConEdificios } from '../utils/formatters.js';
+import { sumaMontos, precioConfigurado, esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { generarReportePorClientePDF } from '../utils/pdfReport.js';
 
@@ -29,11 +23,8 @@ const inicial = {
   frecuencia: 'mensual', frecuencia_dias_custom: '', cantidad_mantenimientos: '12',
   cantidad_mantenimientos_gratuitos: '0',
   fecha_inicio: hoyISO(), hora_programada: '09:00',
-  precio_interno: '', moneda: 'PEN',
   observaciones: ''
 };
-
-const TOLERANCIA_SUMA = 0.01;
 
 // Resume los ascensores de un plan (junction) para listas/detalle: nombre del
 // edificio/obra (del primero con dato, cae a la razón social) y los ascensores.
@@ -67,7 +58,6 @@ export default function Mantenimientos() {
   const [openExportar, setOpenExportar] = useState(false);
   const [exportForm, setExportForm] = useState({ ids_cliente: [], ids_ascensor: [], estado_ejecucion: '', desde: '', hasta: '', formato: 'excel' });
   const [exportando, setExportando] = useState(false);
-  const [preciosCliente, setPreciosCliente] = useState([]);
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esCoordinador, esContabilidad, puedeVerPrecio } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
@@ -75,10 +65,20 @@ export default function Mantenimientos() {
   const puedeEditarPlan = esSuperAdmin || esAdmin;
   const puedeEliminarPlan = esSuperAdmin;
   const [planAEliminar, setPlanAEliminar] = useState(null);
-  // "Crear cotización desde observaciones": servicio elegido + sus observaciones.
-  const [obsCotizar, setObsCotizar] = useState(null); // { servicio, observaciones, cargando }
-  const navigate = useNavigate();
-  const puedeCotizar = esSuperAdmin || esAdmin;
+  // Impacto del borrado en cascada, consultado al abrir el modal de confirmación.
+  // null = aún cargando; el objeto trae los conteos reales que se van a dar de baja.
+  const [impactoEliminacion, setImpactoEliminacion] = useState(null);
+
+  useEffect(() => {
+    if (!planAEliminar) { setImpactoEliminacion(null); return; }
+    let vigente = true;
+    mantenimientosService.impactoEliminacion(planAEliminar.id)
+      .then(r => { if (vigente) setImpactoEliminacion(r); })
+      // Si el preview falla se sigue permitiendo borrar: el DELETE es la fuente
+      // de verdad y el modal cae al aviso genérico.
+      .catch(() => { if (vigente) setImpactoEliminacion({ error: true }); });
+    return () => { vigente = false; };
+  }, [planAEliminar]);
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(mantenimientosService.paginate, filtroPlanes, { initialPageSize: 25 });
@@ -117,9 +117,7 @@ export default function Mantenimientos() {
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(filtroInst.id_cliente))
     : ascensores;
 
-  const ascensoresF = form.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente)) : ascensores;
-  // Clientes enriquecidos con sus edificios para poder buscar por nombre de edificio/obra.
-  const clientesBuscables = useMemo(() => clientesConEdificios(clientes, ascensores), [clientes, ascensores]);
+  const ascensoresF = (form.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente)) : ascensores).filter(esAscensorServiciable);
   const labelCampoCliente = 'Cliente';
   // Solo subtipos vinculados al módulo Mantenimientos pueden tener plan.
   const tiposF = tipos.filter(t => !t.es_padre && t.modulo_asociado === 'mantenimiento');
@@ -130,45 +128,48 @@ export default function Mantenimientos() {
   const esTipoPreventivo = !!tipoSeleccionado?.es_preventivo;
   const cupoMaximoGratuitos = esContinuo ? Number(form.cantidad_mantenimientos || 0) : 1;
 
-  // Ascensores del plan con reparto del precio (el del catálogo del cliente,
-  // repartido entre los ascensores elegidos; editable por ascensor).
+  // El precio del plan se compone desde los ascensores: cada uno aporta su precio
+  // configurado para el subtipo (tbl_ascensores_precios). Ya no se reparte un
+  // total del catálogo del cliente.
   const ascensoresSeleccionados = ascensoresF.filter(a => form.ascensores_seleccion[a.id]);
   const sumaActual = sumaMontos(form.ascensores_seleccion);
-  const precioTotal = Number(form.precio_interno || 0);
-  const diferenciaSuma = sumaActual - precioTotal;
-  const sumaOk = ascensoresSeleccionados.length > 0 && Math.abs(diferenciaSuma) <= TOLERANCIA_SUMA;
-  const precioConfigurado = (form.id_cliente && form.id_tipo_servicio)
-    ? preciosCliente.find(p => String(p.id_tipo_servicio) === String(form.id_tipo_servicio)) || null
-    : null;
+  // La moneda sale del precio configurado del ascensor elegido. No hay fallback
+  // porque el bloque de precio solo se renderiza con un ascensor seleccionado.
+  const monedaSel = ascensoresSeleccionados[0]
+    && precioConfigurado(ascensoresSeleccionados[0], form.id_tipo_servicio)?.moneda;
+  const sumaOk = ascensoresSeleccionados.length > 0;
 
-  // Catálogo de precios del cliente seleccionado (para fijar el total del plan).
-  useEffect(() => {
-    if (!form.id_cliente) { setPreciosCliente([]); return; }
-    let cancelado = false;
-    clientesService.get(form.id_cliente)
-      .then(c => { if (!cancelado) setPreciosCliente(c?.precios || []); })
-      .catch(() => { if (!cancelado) setPreciosCliente([]); });
-    return () => { cancelado = true; };
-  }, [form.id_cliente]);
+  // Al cambiar el subtipo, el precio de cada ascensor cambia; se limpia la
+  // selección para forzar re-elegir con los precios del nuevo subtipo.
+  const cambiarSubtipoPlan = (id_tipo_servicio) =>
+    setForm(f => ({ ...f, id_tipo_servicio, ascensores_seleccion: {} }));
 
-  // Al crear: aplica el precio del catálogo como total y lo reparte entre los
-  // ascensores marcados (si ninguno fue editado a mano). No corre en edición.
-  useEffect(() => {
-    if (editando || !precioConfigurado) return;
-    const valor = Number(precioConfigurado.precio || 0).toFixed(2);
-    const moneda = precioConfigurado.moneda || 'PEN';
+  // Selecciona el ascensor del plan. Como un plan es de UN solo ascensor, elegir
+  // uno reemplaza cualquier selección previa (comportamiento tipo radio).
+  const toggleAscensorPlan = (idAsc, cfg) =>
     setForm(f => {
-      if (f.precio_interno === valor && f.moneda === moneda) return f;
-      return { ...f, precio_interno: valor, moneda, ascensores_seleccion: repartirSegunTotal(f.ascensores_seleccion, valor) };
+      if (f.ascensores_seleccion[idAsc]) return { ...f, ascensores_seleccion: {} };
+      if (!cfg) return f;
+      return { ...f, ascensores_seleccion: { [idAsc]: { monto: Number(cfg.precio).toFixed(2) } } };
     });
-  }, [precioConfigurado, editando]);
 
-  const toggleAscensorPlan = (idAsc) =>
-    setForm(f => ({ ...f, ascensores_seleccion: selToggle(f.ascensores_seleccion, idAsc, f.precio_interno) }));
-  const cambiarMontoAscensorPlan = (idAsc, valor) =>
-    setForm(f => ({ ...f, ascensores_seleccion: selMonto(f.ascensores_seleccion, idAsc, valor) }));
-  const repartirAhoraPlan = () =>
-    setForm(f => ({ ...f, ascensores_seleccion: repartirForzado(f.ascensores_seleccion, f.precio_interno) }));
+  // Alta/edición del precio del ascensor para el subtipo elegido, sin salir del
+  // modal. Persiste en el catálogo del ascensor (tbl_ascensores_precios), que es
+  // donde vive el precio; el backend lo vuelve a leer de ahí al crear el plan.
+  const guardarPrecioAscensor = async (idAscensor, { precio, moneda }) => {
+    const r = await ascensoresService.guardarPrecio(idAscensor, {
+      id_tipo_servicio: form.id_tipo_servicio,
+      precio,
+      moneda
+    });
+    // El backend devuelve el catálogo vigente completo del ascensor: se reemplaza
+    // en el listado local para no recargar todos los ascensores.
+    setAscensores(prev => prev.map(a => (a.id === idAscensor ? { ...a, precios: r.precios } : a)));
+    // Un plan es de UN solo ascensor: configurarle el precio lo deja ya elegido
+    // y con el monto vigente, sin obligar a un clic extra.
+    setForm(f => ({ ...f, ascensores_seleccion: { [idAscensor]: { monto: Number(precio).toFixed(2) } } }));
+    toast.success('Precio guardado en el ascensor');
+  };
 
   const abrirNuevo = () => {
     setEditando(null);
@@ -193,8 +194,6 @@ export default function Mantenimientos() {
       cantidad_mantenimientos_gratuitos: plan.cantidad_mantenimientos_gratuitos != null ? String(plan.cantidad_mantenimientos_gratuitos) : '0',
       fecha_inicio: toYMDLima(plan.fecha_inicio) || hoyISO(),
       hora_programada: plan.hora_programada || '09:00',
-      precio_interno: String(sumaMontos(seleccion).toFixed(2)),
-      moneda: (plan.ascensores || [])[0]?.moneda || 'PEN',
       observaciones: plan.observaciones || ''
     });
     setOpen(true);
@@ -210,8 +209,9 @@ export default function Mantenimientos() {
   const guardar = async (e) => {
     e.preventDefault();
     if (guardandoRef.current) return;
-    if (!editando && !sumaOk) {
-      return toast.error(`La suma por ascensor (S/ ${sumaActual.toFixed(2)}) no coincide con el precio del catálogo (S/ ${precioTotal.toFixed(2)})`);
+    if (!editando) {
+      if (!form.id_tipo_servicio) return toast.error('Seleccione el subtipo de servicio');
+      if (ascensoresSeleccionados.length === 0) return toast.error('Seleccione al menos un ascensor con precio configurado');
     }
     guardandoRef.current = true;
     setGuardando(true);
@@ -278,50 +278,6 @@ export default function Mantenimientos() {
     setPlanDetalle(null);
     setInstanciasPlan([]);
     setEditandoGratuitos(false);
-  };
-
-  // Abre el panel de observaciones de un servicio del plan para cotizarlas.
-  const abrirCotizarObs = (it) => {
-    if (!it.id_servicio) return;
-    setObsCotizar({ servicio: { id: it.id_servicio, codigo: it.codigo_servicio }, observaciones: [], cargando: true });
-    serviciosService.observaciones(it.id_servicio)
-      .then(obs => setObsCotizar(s => s ? { ...s, observaciones: Array.isArray(obs) ? obs : [], cargando: false } : s))
-      .catch(() => setObsCotizar(s => s ? { ...s, observaciones: [], cargando: false } : s));
-  };
-
-  const cerrarCotizarObs = () => setObsCotizar(null);
-
-  // Construye el prellenado y navega a "Nueva cotización" con las observaciones
-  // aún no cotizadas del servicio (una por ítem, arrastrando su foto).
-  const crearCotizacionDesdeObs = () => {
-    if (!obsCotizar || !planDetalle) return;
-    const disponibles = (obsCotizar.observaciones || []).filter(o => !o.cotizacion && !o.id_cotizacion);
-    if (disponibles.length === 0) {
-      toast.error('No hay observaciones disponibles para cotizar en este servicio');
-      return;
-    }
-    const idAscensores = (planDetalle.ascensores || []).map(pa => pa.ascensor?.id).filter(Boolean);
-    navigate('/cotizaciones', {
-      state: {
-        prefillObservaciones: {
-          id_cliente: planDetalle.id_cliente,
-          id_ascensores: idAscensores,
-          origen: `${obsCotizar.servicio.codigo || 'servicio'} (plan de mantenimiento)`,
-          items: disponibles.map(o => ({
-            descripcion: o.texto,
-            id_observacion_origen: o.id,
-            foto: o.archivo
-              ? {
-                  id: o.archivo.id,
-                  nombre_original: o.archivo.nombre_original,
-                  ruta_almacenamiento: o.archivo.ruta_almacenamiento,
-                  mime_type: o.archivo.mime_type
-                }
-              : null
-          }))
-        }
-      }
-    });
   };
 
   const iniciarEdicionGratuitos = () => {
@@ -542,6 +498,7 @@ export default function Mantenimientos() {
                     <th className="table-th">Edificio-Obra / Ascensor</th>
                     <th className="table-th">Tipo</th>
                     <th className="table-th">Servicio</th>
+                    <th className="table-th">Técnico</th>
                     <th className="table-th">Programada</th>
                     <th className="table-th">Inicio</th>
                     <th className="table-th">Término</th>
@@ -565,6 +522,7 @@ export default function Mantenimientos() {
                             <Link to={`/servicios/${it.id_servicio}`} className="font-mono text-brand-700 hover:underline">{it.codigo_servicio}</Link>
                           ) : <span className="text-slate-400">no creado</span>}
                         </td>
+                        <td className="table-td text-xs">{it.tecnicos || '—'}</td>
                         <td className="table-td text-xs">{formatFecha(it.fecha_programada)}</td>
                         <td className="table-td text-xs">{formatFechaHora(it.fecha_inicio_real)}</td>
                         <td className="table-td text-xs">{formatFechaHora(it.fecha_fin_real)}</td>
@@ -770,24 +728,6 @@ export default function Mantenimientos() {
                 )}
               </div>
 
-              {/* Cobro ÚNICO del plan: la facturación llega a contabilidad en un solo
-                  cobro por el total del plan, no por servicio. */}
-              {planDetalle.cobro && (
-                <div className="border-t border-slate-100 pt-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-slate-800">Cobro del plan</h4>
-                    <span className={badgeEstado(planDetalle.cobro.estado_cobro)}>{planDetalle.cobro.estado_cobro}</span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                    <div><div className="text-xs uppercase tracking-wide text-slate-500">Total</div><div className="font-mono text-slate-800">{formatMonto(planDetalle.cobro.monto_total, planDetalle.cobro.moneda)}</div></div>
-                    <div><div className="text-xs uppercase tracking-wide text-slate-500">Abonado</div><div className="font-mono text-emerald-700">{formatMonto(planDetalle.cobro.total_abonado, planDetalle.cobro.moneda)}</div></div>
-                    <div><div className="text-xs uppercase tracking-wide text-slate-500">Saldo</div><div className="font-mono text-rose-700">{formatMonto(planDetalle.cobro.saldo_pendiente, planDetalle.cobro.moneda)}</div></div>
-                    <div className="self-end"><Link to={`/cobros/${planDetalle.cobro.id}`} className="text-brand-700 text-xs hover:underline">Gestionar / facturar →</Link></div>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">Facturación única del plan: un solo cobro por el total, no por servicio.</p>
-                </div>
-              )}
-
               <div className="border-t border-slate-100 pt-4">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="font-medium text-slate-800">Mantenimientos del plan</h4>
@@ -827,18 +767,9 @@ export default function Mantenimientos() {
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_fin_real)}</td>
                             <td className="table-td text-xs text-center font-mono">{formatDiasEjecucion(it.dias_ejecucion)}</td>
                             <td className="table-td"><span className={badgeEstado(it.estado_ejecucion)}>{it.estado_ejecucion}</span></td>
-                            <td className="table-td text-right whitespace-nowrap">
+                            <td className="table-td text-right">
                               {it.id_servicio ? (
-                                <>
-                                  <Link to={`/servicios/${it.id_servicio}`} className="text-brand-700 text-xs hover:underline">Ver</Link>
-                                  {puedeCotizar && (
-                                    <>
-                                      <span className="text-slate-300 mx-1.5">·</span>
-                                      <button type="button" onClick={() => abrirCotizarObs(it)}
-                                        className="text-brand-700 text-xs hover:underline">Cotizar observaciones</button>
-                                    </>
-                                  )}
-                                </>
+                                <Link to={`/servicios/${it.id_servicio}`} className="text-brand-700 text-xs hover:underline">Ver</Link>
                               ) : <span className="text-slate-400 text-xs">—</span>}
                             </td>
                           </tr>
@@ -851,63 +782,6 @@ export default function Mantenimientos() {
             </div>
           );
         })()}
-      </Modal>
-
-      <Modal open={!!obsCotizar} onClose={cerrarCotizarObs} size="lg"
-        title={`Observaciones del servicio ${obsCotizar?.servicio?.codigo || ''}`}
-        footer={
-          <>
-            <button type="button" className="btn-secondary" onClick={cerrarCotizarObs}>Cancelar</button>
-            <button type="button" className="btn-primary" onClick={crearCotizacionDesdeObs}
-              disabled={!obsCotizar || obsCotizar.cargando || (obsCotizar.observaciones || []).filter(o => !o.cotizacion && !o.id_cotizacion).length === 0}>
-              Crear cotización desde observaciones
-            </button>
-          </>
-        }>
-        {obsCotizar && (
-          obsCotizar.cargando ? <Loader /> : (
-            (obsCotizar.observaciones || []).length === 0 ? (
-              <EmptyState title="Sin observaciones" subtitle="Este servicio no tiene observaciones registradas." />
-            ) : (
-              <div className="space-y-2">
-                <p className="text-xs text-slate-500">
-                  Cada observación se convertirá en un ítem de la cotización, arrastrando su foto. Las que ya fueron
-                  cotizadas no se incluyen. Podrás ajustar precios y quitar ítems en el formulario.
-                </p>
-                <ul className="divide-y divide-slate-100">
-                  {obsCotizar.observaciones.map(o => {
-                    const yaCotizada = !!(o.cotizacion || o.id_cotizacion);
-                    const esImagen = o.archivo?.mime_type?.startsWith('image/');
-                    return (
-                      <li key={o.id} className={`flex items-start gap-3 py-2 ${yaCotizada ? 'opacity-60' : ''}`}>
-                        {o.archivo && esImagen ? (
-                          <a href={assetUrl(o.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer" title={o.archivo.nombre_original}>
-                            <img src={assetUrl(o.archivo.ruta_almacenamiento)} alt={o.archivo.nombre_original || 'foto'}
-                              className="h-14 w-14 rounded object-cover ring-1 ring-slate-200" />
-                          </a>
-                        ) : (
-                          <div className="h-14 w-14 rounded ring-1 ring-slate-200 bg-slate-50 flex items-center justify-center text-[10px] text-slate-400">
-                            {o.archivo ? 'archivo' : 'sin foto'}
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-slate-800 whitespace-pre-wrap">{o.texto}</div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px]">
-                            {o.genera_alerta === 1 && <span className="badge-amber">Alerta</span>}
-                            {o.atendida === 1 && <span className="badge-green">Atendida</span>}
-                            {yaCotizada && (
-                              <span className="badge-gray">Ya cotizada{o.cotizacion?.codigo ? ` en ${o.cotizacion.codigo}` : ''}</span>
-                            )}
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )
-          )
-        )}
       </Modal>
 
       <Modal open={open} onClose={cerrarModal} title={editando ? 'Editar plan de mantenimiento' : 'Nuevo plan de mantenimiento'}
@@ -930,9 +804,9 @@ export default function Mantenimientos() {
           <div>
             <label className="label">{labelCampoCliente} *</label>
             <ClienteAutocomplete
-              clientes={clientesBuscables}
+              clientes={clientes}
               value={form.id_cliente}
-              onChange={(id) => setForm(f => ({ ...f, id_cliente: id, ascensores_seleccion: {}, precio_interno: '' }))}
+              onChange={(id) => setForm(f => ({ ...f, id_cliente: id, ascensores_seleccion: {} }))}
               required
               disabled={!!editando}
               placeholder="Escriba para buscar por nombre de edificio / obra…"
@@ -940,35 +814,26 @@ export default function Mantenimientos() {
           </div>
           <div>
             <label className="label">Tipo de servicio *</label>
-            <select className="select" required value={form.id_tipo_servicio} onChange={e => setForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}><option value="">—</option>{tiposF.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
+            <select className="select" required value={form.id_tipo_servicio} onChange={e => cambiarSubtipoPlan(e.target.value)} disabled={!!editando}><option value="">—</option>{tiposF.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Ascensores *</label>
+            <label className="label">Ascensor *</label>
+            <p className="text-[11px] text-slate-500 -mt-1 mb-1.5">Cada plan de mantenimiento es de un solo ascensor. Para otro ascensor, cree un plan aparte.</p>
             <AscensoresChecklist
               ascensores={ascensoresF}
               seleccion={form.ascensores_seleccion}
+              idTipoServicio={form.id_tipo_servicio}
               onToggle={toggleAscensorPlan}
-              onMonto={cambiarMontoAscensorPlan}
               disabled={!!editando}
+              single={!editando}
               hayCliente={!!form.id_cliente}
+              onGuardarPrecio={puedeCrear && puedeVerPrecio ? guardarPrecioAscensor : undefined}
             />
-            {puedeVerPrecio && (
-              <div className="mt-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs flex flex-wrap items-center gap-3">
-                <span className="text-slate-600">Precio del catálogo: <strong className="font-mono">{precioConfigurado ? formatMonto(precioConfigurado.precio, precioConfigurado.moneda) : '—'}</strong></span>
-                <span className="text-slate-600">Suma actual: <strong className="font-mono">S/ {sumaActual.toFixed(2)}</strong></span>
-                {ascensoresSeleccionados.length > 0 && (
-                  sumaOk ? <span className="text-emerald-700">✓ coincide con el precio</span>
-                  : <span className="text-rose-700">{diferenciaSuma > 0 ? `Sobran S/ ${diferenciaSuma.toFixed(2)}` : `Faltan S/ ${(-diferenciaSuma).toFixed(2)}`}</span>
-                )}
-                {!editando && (
-                  <button type="button" onClick={repartirAhoraPlan} className="btn-secondary text-xs ml-auto" disabled={ascensoresSeleccionados.length === 0 || !form.precio_interno}>Repartir parejo</button>
-                )}
+            {puedeVerPrecio && ascensoresSeleccionados.length > 0 && (
+              <div className="mt-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-sm flex flex-wrap items-center gap-3">
+                <span className="text-slate-600 ml-auto">Precio del mantenimiento:</span>
+                <strong className="font-mono text-slate-900">{formatMonto(sumaActual, monedaSel)}</strong>
               </div>
-            )}
-            {!editando && !precioConfigurado && form.id_cliente && form.id_tipo_servicio && (
-              <p className="text-[11px] text-amber-700 mt-1">
-                No hay precio configurado para este cliente y tipo de servicio. Configúrelo en el módulo Clientes antes de crear el plan.
-              </p>
             )}
           </div>
           <div>
@@ -1021,7 +886,7 @@ export default function Mantenimientos() {
           <div><label className="label">Fecha inicio *</label><input type="date" className="input" required value={form.fecha_inicio} onChange={e => setForm(f => ({ ...f, fecha_inicio: e.target.value }))} /></div>
           <div><label className="label">Hora</label><input type="time" className="input" value={form.hora_programada} onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>
           <div className="sm:col-span-2 text-xs text-slate-500 bg-slate-50 ring-1 ring-slate-200 rounded-md px-3 py-2">
-            El precio del mantenimiento se hereda de los precios configurados en el cliente (por tipo de servicio). Configúrelos en el módulo Clientes antes de crear el plan.
+            El precio del mantenimiento es el que tiene configurado el ascensor para este subtipo de servicio. Si falta o cambió, edítelo desde la misma lista de arriba: se guarda en la ficha del ascensor.
           </div>
           <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={form.observaciones} onChange={e => setForm(f => ({ ...f, observaciones: e.target.value }))} /></div>
         </form>
@@ -1133,7 +998,41 @@ export default function Mantenimientos() {
         onClose={() => setPlanAEliminar(null)}
         titulo="Eliminar plan de mantenimiento"
         palabraClave="ELIMINAR"
-        descripcion="Se dará de baja el plan y todos sus mantenimientos pendientes (eventos de calendario futuros, servicios aún no ejecutados y recordatorios). Si algún mantenimiento del plan ya fue ejecutado o tiene abonos, la eliminación se bloqueará: gestiona esa instancia primero. Acción auditada y recuperable."
+        deshabilitado={!impactoEliminacion}
+        descripcion={
+          <div className="space-y-2">
+            <p>
+              Se dará de baja el plan y <strong>TODO</strong> lo que generó, sin excepción:
+              mantenimientos —incluidos los ya ejecutados—, cobros, abonos y facturas.
+              Acción auditada y recuperable (los archivos se conservan).
+            </p>
+            {!impactoEliminacion && <p className="text-xs opacity-70">Calculando el impacto…</p>}
+            {impactoEliminacion?.error && (
+              <p className="text-xs opacity-70">No se pudo calcular el impacto; se borrará igual en cascada.</p>
+            )}
+            {impactoEliminacion && !impactoEliminacion.error && (
+              <ul className="list-disc pl-4 text-xs space-y-0.5">
+                <li>
+                  <strong>{impactoEliminacion.servicios.total}</strong> mantenimientos
+                  {' '}(<strong>{impactoEliminacion.servicios.ejecutados}</strong> ya ejecutados,
+                  {' '}{impactoEliminacion.servicios.pendientes} pendientes)
+                </li>
+                {impactoEliminacion.cobros.total_abonado > 0 && (
+                  <li className="font-semibold">
+                    {formatMonto(impactoEliminacion.cobros.total_abonado, impactoEliminacion.cobros.moneda || undefined)}
+                    {' '}ya cobrados en {impactoEliminacion.cobros.pagos} abonos — dejarán de figurar en los reportes contables
+                  </li>
+                )}
+                {impactoEliminacion.cobros.facturas > 0 && (
+                  <li>{impactoEliminacion.cobros.facturas} facturas emitidas</li>
+                )}
+                {impactoEliminacion.eventos.futuros > 0 && (
+                  <li>{impactoEliminacion.eventos.futuros} eventos futuros programados</li>
+                )}
+              </ul>
+            )}
+          </div>
+        }
         onConfirmar={async () => {
           try {
             await mantenimientosService.remove(planAEliminar.id);

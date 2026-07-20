@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { correctivosService, clientesService, ascensoresService, tecnicosService } from '../services';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { correctivosService, clientesService, ascensoresService, tecnicosService, serviciosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -10,7 +10,24 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFechaHora, nombreCliente, nombreEdificio, clientesConEdificios } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, hoyISO, nombreCliente, nombreEdificio } from '../utils/formatters.js';
+import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
+
+// Duración de trabajo entre inicio y término reales, en formato compacto (ej. "1h 25m").
+function formatDuracion(inicio, fin) {
+  if (!inicio || !fin) return '—';
+  const ms = new Date(fin).getTime() - new Date(inicio).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const min = Math.round(ms / 60000);
+  const d = Math.floor(min / 1440);
+  const h = Math.floor((min % 1440) / 60);
+  const m = min % 60;
+  const partes = [];
+  if (d) partes.push(`${d}d`);
+  if (h) partes.push(`${h}h`);
+  if (m || partes.length === 0) partes.push(`${m}m`);
+  return partes.join(' ');
+}
 import { esServicioEditable, ESTADOS_CORRECTIVO, esCorrectivoCerrado } from '../utils/estadoServicio.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
@@ -23,7 +40,11 @@ const FORM_ID = 'form-correctivo';
 
 const inicial = {
   id_cliente: '', id_ascensor: '', falla: '',
-  nivel_urgencia: 'media', precio_interno: '', sin_cobro: false, observaciones: ''
+  nivel_urgencia: 'media',
+  fecha_programada: '', hora_programada: '', fecha_estimada_entrega: '',
+  precio_interno: '', sin_cobro: false,
+  // Los correctivos se facturan por defecto (editable antes de guardar).
+  requiere_factura: true, observaciones: ''
 };
 
 function badgeUrgencia(n) {
@@ -55,6 +76,18 @@ export default function Correctivos() {
     usePaginatedList(correctivosService.paginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
 
+  // Cambia la marca con/sin factura del servicio en cualquier momento (hasta que
+  // exista una factura emitida; el backend rechaza si ya la hay).
+  const toggleRequiereFactura = async (c) => {
+    if (!c.servicio) return;
+    try {
+      await serviciosService.setRequiereFactura(c.servicio.id, c.servicio.requiere_factura === 0);
+      cargar();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'No se pudo cambiar la marca de facturación');
+    }
+  };
+
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tecnicosService.list()])
       .then(([c, a, t]) => { setClientes(c); setAscensores(a); setTecnicos(t); })
@@ -63,11 +96,10 @@ export default function Correctivos() {
 
   const labelCampoCliente = 'Cliente';
 
-  const ascensoresFiltrados = form.id_cliente
+  const ascensoresFiltrados = (form.id_cliente
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
-    : ascensores;
-  // Clientes enriquecidos con sus edificios para poder buscar por nombre de edificio/obra.
-  const clientesBuscables = useMemo(() => clientesConEdificios(clientes, ascensores), [clientes, ascensores]);
+    : ascensores
+  ).filter(esAscensorServiciable);
 
   const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
   const quitarTec = (idx) => setAsignaciones(a => a.filter((_, i) => i !== idx));
@@ -79,7 +111,7 @@ export default function Correctivos() {
 
   const abrirNuevo = () => {
     setEditando(null);
-    setForm(inicial);
+    setForm({ ...inicial, fecha_programada: hoyISO() });
     setAsignaciones([]);
     setItems([]);
     setOpen(true);
@@ -100,14 +132,35 @@ export default function Correctivos() {
       id_ascensor: String(c.id_ascensor || ''),
       falla: c.falla || '',
       nivel_urgencia: c.nivel_urgencia || 'media',
+      fecha_programada: c.servicio?.fecha_programada ? String(c.servicio.fecha_programada).slice(0, 10) : '',
+      hora_programada: c.servicio?.hora_programada || '',
+      fecha_estimada_entrega: c.servicio?.fecha_estimada_entrega ? String(c.servicio.fecha_estimada_entrega).slice(0, 10) : '',
       precio_interno: c.servicio?.precio_interno != null ? String(c.servicio.precio_interno) : '',
       sin_cobro: c.servicio?.sin_cobro === 1,
+      requiere_factura: c.servicio?.requiere_factura === 1,
       observaciones: c.observaciones || ''
     });
     setAsignaciones([]);
     setItems([]);
     setOpen(true);
   };
+
+  // Soporte ?edit=ID en la URL (ej. desde ServicioDetalle → botón Editar).
+  // Reutiliza el mismo modal de edición que el botón Editar del listado.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || !puedeEditar) return;
+    const limpiarParam = () => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('edit');
+      setSearchParams(next, { replace: true });
+    };
+    correctivosService.get(Number(editId))
+      .then(c => { abrirEditar(c); limpiarParam(); })
+      .catch(err => { toast.error(err.response?.data?.error || 'Correctivo no encontrado'); limpiarParam(); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, puedeEditar]);
 
   const cerrarModal = () => {
     if (savingRef.current) return;
@@ -134,8 +187,12 @@ export default function Correctivos() {
           id_ascensor: form.id_ascensor,
           falla: form.falla,
           nivel_urgencia: form.nivel_urgencia,
+          fecha_programada: form.fecha_programada,
+          hora_programada: form.hora_programada,
+          fecha_estimada_entrega: form.fecha_estimada_entrega,
           observaciones: form.observaciones,
           sin_cobro: form.sin_cobro,
+          requiere_factura: form.requiere_factura,
           precio_interno: form.sin_cobro ? 0 : form.precio_interno
         };
         await correctivosService.update(editando, payload);
@@ -171,7 +228,7 @@ export default function Correctivos() {
 
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
-          <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o falla…"
+          <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
             value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_correctivo}
             onChange={e => setFiltros(f => ({ ...f, estado_correctivo: e.target.value }))}>
@@ -193,15 +250,24 @@ export default function Correctivos() {
                 <tr>
                   <th className="table-th">Reportado</th>
                   <th className="table-th">Edificio-Obra / Ascensor</th>
-                  <th className="table-th">Falla</th>
+                  <th className="table-th">Motivo</th>
+                  <th className="table-th">Fecha programada</th>
+                  <th className="table-th">Fecha estimada término</th>
+                  <th className="table-th">Estado</th>
                   <th className="table-th">Urgencia</th>
                   <th className="table-th">Servicio</th>
-                  <th className="table-th">Estado</th>
+                  <th className="table-th">Ejecución</th>
+                  <th className="table-th">Técnico</th>
+                  <th className="table-th">Inicio</th>
+                  <th className="table-th">Término</th>
+                  <th className="table-th">Días</th>
+                  <th className="table-th">Observaciones</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data.map(c => {
+                  const ej = c.ejecucion || {};
                   const editable = puedeEditar
                     && !esCorrectivoCerrado(c.estado_correctivo)
                     && (!c.servicio || esServicioEditable(c.servicio.estado_servicio));
@@ -213,19 +279,40 @@ export default function Correctivos() {
                       <div className="font-mono text-slate-500">{c.ascensor?.codigo}</div>
                     </td>
                     <td className="table-td text-sm">{c.falla}</td>
+                    <td className="table-td text-xs">{c.servicio?.fecha_programada ? `${formatFecha(c.servicio.fecha_programada)}${c.servicio.hora_programada ? ` ${c.servicio.hora_programada}` : ''}` : '—'}</td>
+                    <td className="table-td text-xs">{c.servicio?.fecha_estimada_entrega ? formatFecha(c.servicio.fecha_estimada_entrega) : '—'}</td>
+                    <td className="table-td"><span className={`badge ${badgeEstado(c.estado_correctivo)}`}>{c.estado_correctivo}</span></td>
                     <td className="table-td"><span className={`badge ${badgeUrgencia(c.nivel_urgencia)}`}>{c.nivel_urgencia}</span></td>
                     <td className="table-td">
                       {c.servicio ? (
                         <div className="flex items-center gap-2">
                           <Link to={`/servicios/${c.servicio.id}`} className="font-mono text-xs text-brand-700">{c.servicio.codigo}</Link>
                           {c.servicio.sin_cobro === 1 && <span className="badge-green text-[10px]">Sin costo</span>}
+                          {puedeEditar ? (
+                            <button type="button" onClick={() => toggleRequiereFactura(c)}
+                              title="Clic para cambiar entre con / sin factura"
+                              className={`text-[10px] cursor-pointer hover:ring-1 hover:ring-brand-300 ${c.servicio.requiere_factura === 0 ? 'badge-gray' : 'badge-blue'}`}>
+                              {c.servicio.requiere_factura === 0 ? 'Sin factura' : 'Con factura'}
+                            </button>
+                          ) : (
+                            c.servicio.requiere_factura === 0
+                              ? <span className="badge-gray text-[10px]">Sin factura</span>
+                              : <span className="badge-blue text-[10px]">Con factura</span>
+                          )}
                         </div>
                       ) : '—'}
                     </td>
-                    <td className="table-td"><span className={`badge ${badgeEstado(c.estado_correctivo)}`}>{c.estado_correctivo}</span></td>
+                    <td className="table-td"><span className={badgeEstado(ej.estado_ejecucion)}>{ej.estado_ejecucion || '—'}</span></td>
+                    <td className="table-td text-xs">{(c.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ') || '—'}</td>
+                    <td className="table-td text-xs">{ej.fecha_inicio_real ? formatFechaHora(ej.fecha_inicio_real) : '—'}</td>
+                    <td className="table-td text-xs">{ej.fecha_fin_real ? formatFechaHora(ej.fecha_fin_real) : '—'}</td>
+                    <td className="table-td text-xs">{formatDuracion(ej.fecha_inicio_real, ej.fecha_fin_real)}</td>
+                    <td className="table-td text-xs text-slate-600 max-w-[16rem]">
+                      {c.observaciones || <span className="text-slate-400">—</span>}
+                    </td>
                     <td className="table-td text-right whitespace-nowrap">
                       {c.servicio && (
-                        <Link to={`/servicios/${c.servicio.id}`} className="text-brand-700 text-xs hover:underline">Ver</Link>
+                        <Link to={`/servicios/${c.servicio.id}`} className="text-brand-700 text-xs hover:underline">Ver detalle</Link>
                       )}
                       {editable && (
                         <>
@@ -276,7 +363,7 @@ export default function Correctivos() {
             <div>
               <label className="label">{labelCampoCliente} *</label>
               <ClienteAutocomplete
-                clientes={clientesBuscables}
+                clientes={clientes}
                 value={form.id_cliente}
                 onChange={(id) => setForm(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
                 required
@@ -292,7 +379,7 @@ export default function Correctivos() {
               </select>
             </div>
             <div className="sm:col-span-2">
-              <label className="label">Descripción de la falla *</label>
+              <label className="label">Motivo *</label>
               <textarea className="textarea" required rows="2" value={form.falla}
                 onChange={e => setForm(f => ({ ...f, falla: e.target.value }))}
                 placeholder="Detalle el problema detectado en el ascensor" />
@@ -303,6 +390,22 @@ export default function Correctivos() {
                 onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}>
                 {NIVELES.map(n => <option key={n}>{n}</option>)}
               </select>
+            </div>
+            <div>
+              <label className="label">Fecha programada *</label>
+              <input type="date" className="input" required value={form.fecha_programada}
+                onChange={e => setForm(f => ({ ...f, fecha_programada: e.target.value, fecha_estimada_entrega: f.fecha_estimada_entrega && f.fecha_estimada_entrega < e.target.value ? '' : f.fecha_estimada_entrega }))} />
+            </div>
+            <div>
+              <label className="label">Hora programada</label>
+              <input type="time" className="input" value={form.hora_programada}
+                onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label">Fecha estimada de término</label>
+              <input type="date" className="input" value={form.fecha_estimada_entrega} min={form.fecha_programada || undefined}
+                onChange={e => setForm(f => ({ ...f, fecha_estimada_entrega: e.target.value }))} />
+              <p className="text-xs text-slate-500 mt-1">Opcional. Si el servicio ocupará varios días, indica el término estimado; si se deja vacío, se agenda solo el día programado.</p>
             </div>
             {puedeVerPrecio && (
               <div>
@@ -321,6 +424,14 @@ export default function Correctivos() {
                   onChange={e => setForm(f => ({ ...f, precio_interno: e.target.value }))} />
               </div>
             )}
+            <div>
+              <label className="label">Facturación</label>
+              <label className="flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ring-slate-200 bg-slate-50 cursor-pointer">
+                <input type="checkbox" checked={form.requiere_factura}
+                  onChange={e => setForm(f => ({ ...f, requiere_factura: e.target.checked }))} />
+                <span className="text-sm text-slate-700">Requiere factura</span>
+              </label>
+            </div>
             <div className="sm:col-span-2">
               <label className="label">Observaciones</label>
               <textarea className="textarea" rows="2" value={form.observaciones}

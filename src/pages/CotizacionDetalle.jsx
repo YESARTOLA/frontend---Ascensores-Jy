@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   cotizacionesService,
   configuracionService,
@@ -9,9 +9,15 @@ import {
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, nombreEdificioCotizacion } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, nombreEdificioDeAscensores } from '../utils/formatters.js';
+import {
+  ESTADO_VERSION_COTIZADO, ESTADO_VERSION_APROBADO, ESTADO_VERSION_RECHAZADO,
+  ESTADO_GLOBAL_COTIZADO, ESTADO_GLOBAL_TERMINADO, ESTADO_GLOBAL_ANULADO,
+  ESTADOS_GLOBALES_SERVICIO_EN_MARCHA
+} from '../utils/estadoCotizacion.js';
 import CuotasEditor, { planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
 
 const itemVacio = () => ({
@@ -19,7 +25,9 @@ const itemVacio = () => ({
   cantidad: 1,
   unidad: 'Unidad',
   precio_unitario: 0,
-  descuento_porcentaje: 0
+  descuento_porcentaje: 0,
+  id_archivo: null,
+  archivo: null
 });
 
 // Etiqueta legible de cada acción auditada que puede aparecer en la línea de
@@ -49,6 +57,7 @@ function calcImporte(it) {
 export default function CotizacionDetalle() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [cot, setCot] = useState(null);
   const [historial, setHistorial] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,6 +107,23 @@ export default function CotizacionDetalle() {
   const toast = useToast();
   const { esSuperAdmin, esAdmin } = useAuth();
   const puedeEditar = esSuperAdmin || esAdmin;
+  const [openEliminar, setOpenEliminar] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
+
+  const eliminarCotizacion = async () => {
+    if (eliminando) return;
+    setEliminando(true);
+    try {
+      await cotizacionesService.remove(id);
+      toast.success('Cotización eliminada');
+      setOpenEliminar(false);
+      navigate('/cotizaciones');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'No se pudo eliminar la cotización');
+    } finally {
+      setEliminando(false);
+    }
+  };
 
   const cargar = async () => {
     setLoading(true);
@@ -138,15 +164,16 @@ export default function CotizacionDetalle() {
   if (!versionActiva) return <div className="p-6 text-center text-carbon-500">Sin versiones</div>;
 
   // Versión todavía en proceso: editable y susceptible de aprobar/rechazar.
-  const versionEditable = versionActiva.estado_version === 'Cotizado';
+  const versionEditable = versionActiva.estado_version === ESTADO_VERSION_COTIZADO;
   // Cotización todavía decidible: si tiene una versión en Cotizado se puede
   // aprobar/rechazar — aplica tanto al primer ciclo (Cotizado global) como a
   // renegociaciones post-aprobación (Aceptado/Ejecución/Pendiente con nueva
   // versión en Cotizado). Solo bloquea si ya está Terminado.
-  const cotizacionDecidible = cot.estado_global !== 'Terminado';
+  const cotizacionDecidible = cot.estado_global !== ESTADO_GLOBAL_TERMINADO && cot.estado_global !== ESTADO_GLOBAL_ANULADO;
+  const cotizacionAnulada = cot.estado_global === ESTADO_GLOBAL_ANULADO;
   // Cotización con servicio en marcha (Aceptado/Ejecución/Pendiente): permite
   // reabrir para renegociar las cuotas pendientes.
-  const cotizacionReabrible = ['Aceptado', 'Ejecución', 'Pendiente'].includes(cot.estado_global);
+  const cotizacionReabrible = ESTADOS_GLOBALES_SERVICIO_EN_MARCHA.includes(cot.estado_global);
   // Flujo de renegociación en dos pasos sobre una cotización aprobada:
   //   1) "Reabrir para renegociar" registra un evento REOPEN en auditoría.
   //   2) recién entonces se habilita "Nueva versión" para clonar la aprobada.
@@ -154,7 +181,7 @@ export default function CotizacionDetalle() {
   // REOPEN posterior a SU aprobación. Anclar a `fecha_aprobacion` aísla cada
   // ciclo: al crear la nueva versión, la activa pasa a Cotizado y esto vuelve a
   // false; al re-aprobarla, un nuevo ciclo exige reabrir otra vez.
-  const reabierta = versionActiva.estado_version === 'Aprobado' && (() => {
+  const reabierta = versionActiva.estado_version === ESTADO_VERSION_APROBADO && (() => {
     const aprob = versionActiva.fecha_aprobacion ? new Date(versionActiva.fecha_aprobacion).getTime() : 0;
     return historial.some(ev => ev.accion === 'REOPEN' && new Date(ev.fecha_evento).getTime() >= aprob);
   })();
@@ -166,7 +193,9 @@ export default function CotizacionDetalle() {
       cantidad: Number(it.cantidad),
       unidad: it.unidad,
       precio_unitario: Number(it.precio_unitario),
-      descuento_porcentaje: Number(it.descuento_porcentaje)
+      descuento_porcentaje: Number(it.descuento_porcentaje),
+      id_archivo: it.id_archivo || null,
+      archivo: it.archivo || null
     })));
     setFechaValidezForm(String(versionActiva.fecha_validez).slice(0, 10));
     setObservForm(versionActiva.observaciones || '');
@@ -192,7 +221,8 @@ export default function CotizacionDetalle() {
           cantidad: Number(it.cantidad) || 1,
           unidad: it.unidad || 'Unidad',
           precio_unitario: Number(it.precio_unitario) || 0,
-          descuento_porcentaje: Number(it.descuento_porcentaje) || 0
+          descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
+          id_archivo: it.id_archivo || null
         })),
         fecha_validez: fechaValidezForm,
         observaciones: observForm,
@@ -375,6 +405,9 @@ export default function CotizacionDetalle() {
         subtitle={`${cot.cliente?.nombre} • ${cot.subtipo_servicio?.nombre || cot.tipo_servicio?.nombre || ''}`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link to={location.state?.from || '/cotizaciones'} className="btn-secondary text-xs !py-1.5 !px-3">
+              {location.state?.fromLabel ? `← ${location.state.fromLabel}` : '← Cotizaciones'}
+            </Link>
             {puedeEditar && (
               <button onClick={() => navigate(`/cotizaciones?duplicar=${cot.id}`)} className="btn-ghost text-xs !py-1.5 !px-3" title="Crea una cotización nueva precargada con estos datos">Duplicar</button>
             )}
@@ -392,10 +425,10 @@ export default function CotizacionDetalle() {
                 aprobar), una cotización aprobada YA reabierta (paso 2 del flujo), o
                 una aprobada cuyo servicio se canceló (estado_global vuelve a
                 Cotizado). Tras aprobar, queda oculto hasta reabrir. */}
-            {puedeEditar && cot.estado_global !== 'Terminado' &&
-              (versionActiva.estado_version === 'Rechazado'
-                || (versionActiva.estado_version === 'Aprobado'
-                    && (reabierta || cot.estado_global === 'Cotizado'))) && (
+            {puedeEditar && cot.estado_global !== ESTADO_GLOBAL_TERMINADO &&
+              (versionActiva.estado_version === ESTADO_VERSION_RECHAZADO
+                || (versionActiva.estado_version === ESTADO_VERSION_APROBADO
+                    && (reabierta || cot.estado_global === ESTADO_GLOBAL_COTIZADO))) && (
               <button onClick={() => setOpenNuevaVersion(true)} className="btn-primary text-xs !py-1.5 !px-3" title="Crea una versión nueva en Cotizado para renegociar términos">
                 + Nueva versión
               </button>
@@ -409,9 +442,14 @@ export default function CotizacionDetalle() {
             {/* "Reabrir" es el paso 1: solo sobre una aprobada con servicio vivo y
                 que todavía no fue reabierta. Al reabrir, este botón se reemplaza por
                 "Nueva versión" (reabierta = true). */}
-            {puedeEditar && cotizacionReabrible && versionActiva.estado_version === 'Aprobado' && !reabierta && (
+            {puedeEditar && cotizacionReabrible && versionActiva.estado_version === ESTADO_VERSION_APROBADO && !reabierta && (
               <button onClick={() => setOpenReabrir(true)} className="btn-secondary text-xs !py-1.5 !px-3" title="Reabrir para renegociar términos con el cliente">
                 Reabrir para renegociar
+              </button>
+            )}
+            {esSuperAdmin && !cotizacionAnulada && (
+              <button onClick={() => setOpenEliminar(true)} className="btn-danger text-xs !py-1.5 !px-3" title="Anula la cotización (queda como historial) y sus servicios generados">
+                Eliminar
               </button>
             )}
           </div>
@@ -423,7 +461,7 @@ export default function CotizacionDetalle() {
         <div className="card p-4 lg:col-span-2 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-bold text-carbon-900">{nombreEdificioCotizacion(cot)}</h2>
+              <h2 className="text-lg font-bold text-carbon-900">{nombreEdificioDeAscensores(cot)}</h2>
               {cot.descripcion && <p className="text-sm text-carbon-600 mt-1">{cot.descripcion}</p>}
             </div>
             <div className="flex flex-col items-end gap-1">
@@ -816,10 +854,10 @@ export default function CotizacionDetalle() {
                 <div className="rounded-md bg-amber-50 ring-1 ring-amber-200 p-3 space-y-2">
                   <div className="text-xs font-semibold text-amber-800">Datos para el módulo Correctivos</div>
                   <div>
-                    <label className="label">Descripción de la falla *</label>
+                    <label className="label">Motivo *</label>
                     <textarea className="textarea" rows="2" required
                       value={aprobarForm.falla}
-                      placeholder={cot.descripcion || 'Describe la falla a corregir'}
+                      placeholder={cot.descripcion || 'Describe el motivo a corregir'}
                       onChange={e => setAprobarForm(f => ({ ...f, falla: e.target.value }))} />
                   </div>
                   <div>
@@ -913,6 +951,24 @@ export default function CotizacionDetalle() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmarEliminacion
+        open={openEliminar}
+        onClose={() => !eliminando && setOpenEliminar(false)}
+        titulo="Eliminar cotización"
+        palabraClave={cot.codigo || 'ELIMINAR'}
+        textoBoton={eliminando ? 'Eliminando…' : 'Eliminar definitivamente'}
+        descripcion={
+          <>
+            La cotización pasará a estado <strong>Anulado</strong> y se conservará visible en el listado como historial (con sus versiones, ítems y adjuntos intactos).
+            {cot.estado_global !== ESTADO_GLOBAL_COTIZADO && (
+              <> <strong>El servicio generado por esta cotización se anulará</strong> (queda Cancelado y se dan de baja sus cobros, asignaciones y demás datos asociados).</>
+            )}
+            {' '}Acción auditada.
+          </>
+        }
+        onConfirmar={eliminarCotizacion}
+      />
     </>
   );
 }
@@ -925,6 +981,7 @@ function ItemsView({ version, igvTasa }) {
           <thead>
             <tr>
               <th className="table-th w-10">#</th>
+              <th className="table-th w-16">Foto</th>
               <th className="table-th">Descripción</th>
               <th className="table-th text-right w-24">Cant.</th>
               <th className="table-th w-24">Unidad</th>
@@ -937,6 +994,13 @@ function ItemsView({ version, igvTasa }) {
             {version.items.map((it, i) => (
               <tr key={it.id} className="table-row-hover">
                 <td className="table-td">{i + 1}</td>
+                <td className="table-td">
+                  {it.archivo
+                    ? <a href={assetUrl(it.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer" title="Ver foto">
+                        <img src={assetUrl(it.archivo.ruta_almacenamiento)} alt="foto" className="h-10 w-10 object-cover rounded ring-1 ring-slate-200 hover:ring-brand-300" />
+                      </a>
+                    : <span className="text-slate-400 text-xs">—</span>}
+                </td>
                 <td className="table-td">{it.descripcion}</td>
                 <td className="table-td text-right">{Number(it.cantidad).toFixed(2)}</td>
                 <td className="table-td">{it.unidad}</td>
@@ -1007,9 +1071,24 @@ function ItemsView({ version, igvTasa }) {
 }
 
 function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, setObserv, cuotas, setCuotas, igvTasa, totales, moneda, onCancel, onSave, saving }) {
+  const toast = useToast();
   const cambiar = (idx, key, val) => setItems(arr => arr.map((it, i) => i === idx ? { ...it, [key]: val } : it));
   const agregar = () => setItems(arr => [...arr, itemVacio()]);
   const quitar = (idx) => setItems(arr => arr.filter((_, i) => i !== idx));
+  const subirFoto = async (idx, e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const fd = new FormData();
+      fd.append('archivo', file);
+      const arch = await archivosService.upload(fd, 'cotizaciones');
+      setItems(arr => arr.map((it, i) => i === idx ? { ...it, id_archivo: arch.id, archivo: arch } : it));
+    } catch {
+      toast.error('Error al subir la foto del ítem');
+    }
+  };
+  const quitarFoto = (idx) => setItems(arr => arr.map((it, i) => i === idx ? { ...it, id_archivo: null, archivo: null } : it));
 
   return (
     <div className="space-y-3">
@@ -1024,18 +1103,19 @@ function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, s
         <button type="button" onClick={agregar} className="btn-ghost text-xs !py-1.5 !px-3">+ Agregar item</button>
       </div>
       <div className="hidden sm:grid grid-cols-12 gap-2 px-1 pb-1.5 mb-1 border-b border-carbon-100 text-[10px] font-semibold uppercase tracking-wider text-carbon-500">
-        <div className="col-span-5">Descripción</div>
+        <div className="col-span-4">Descripción</div>
         <div className="col-span-1 text-right">Cant.</div>
         <div className="col-span-1">Unidad</div>
         <div className="col-span-2 text-right">P. unitario</div>
         <div className="col-span-1 text-right">% dscto</div>
         <div className="col-span-1 text-right">Importe</div>
+        <div className="col-span-1 text-center">Foto</div>
         <div className="col-span-1"></div>
       </div>
       <div className="space-y-2">
         {items.map((it, idx) => (
           <div key={idx} className="grid grid-cols-12 gap-2 items-start">
-            <textarea className="textarea col-span-12 sm:col-span-5" rows="1" placeholder="Descripción"
+            <textarea className="textarea col-span-12 sm:col-span-4" rows="1" placeholder="Descripción"
               value={it.descripcion} onChange={e => cambiar(idx, 'descripcion', e.target.value)} />
             <input type="number" step="0.01" className="input col-span-3 sm:col-span-1" placeholder="Cant."
               value={it.cantidad} onChange={e => cambiar(idx, 'cantidad', e.target.value)} />
@@ -1047,6 +1127,18 @@ function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, s
               value={it.descuento_porcentaje} onChange={e => cambiar(idx, 'descuento_porcentaje', e.target.value)} />
             <div className="col-span-9 sm:col-span-1 text-right text-sm font-medium pt-2">
               {formatMonto(calcImporte(it), moneda)}
+            </div>
+            <div className="col-span-2 sm:col-span-1 flex items-center justify-center pt-1">
+              {it.archivo ? (
+                <img src={assetUrl(it.archivo.ruta_almacenamiento)} alt="foto ítem"
+                  onClick={() => quitarFoto(idx)} title="Clic para quitar la foto"
+                  className="h-9 w-9 object-cover rounded ring-1 ring-slate-200 cursor-pointer" />
+              ) : (
+                <label className="text-[11px] cursor-pointer hover:underline text-brand-700" title="Subir foto del ítem">
+                  + Foto
+                  <input type="file" accept="image/*" className="hidden" onChange={e => subirFoto(idx, e)} />
+                </label>
+              )}
             </div>
             <button type="button" onClick={() => quitar(idx)}
               className="col-span-1 text-carbon-400 hover:text-red-600 text-lg leading-none">×</button>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { cobrosService, archivosService, facturasService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
@@ -45,10 +45,9 @@ export default function CobroDetalle() {
   const toast = useToast();
   const { esSuperAdmin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [openEliminar, setOpenEliminar] = useState(false);
   const [facturaAEliminar, setFacturaAEliminar] = useState(null);
-  const [openCerrar, setOpenCerrar] = useState(false);
-  const [cerrando, setCerrando] = useState(false);
 
   const cargar = async () => { setLoading(true); try { setData(await cobrosService.get(id)); } finally { setLoading(false); } };
   useEffect(() => { cargar(); }, [id]);
@@ -213,19 +212,10 @@ export default function CobroDetalle() {
     }
   };
 
-  const confirmarCerrar = async () => {
-    if (cerrando) return;
-    setCerrando(true);
-    try {
-      await cobrosService.cerrar(id);
-      toast.success('Cobro cerrado');
-      setOpenCerrar(false);
-      cargar();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Error');
-    } finally {
-      setCerrando(false);
-    }
+  const cerrar = async () => {
+    if (!confirm('¿Cerrar definitivamente este cobro?')) return;
+    try { await cobrosService.cerrar(id); toast.success('Cobro cerrado'); cargar(); }
+    catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
   const recordar = async () => {
@@ -241,6 +231,14 @@ export default function CobroDetalle() {
     catch { toast.error('Error subiendo archivo'); }
   };
   const facturasActivas = (data.facturas || []).filter(esFacturaActiva);
+  // Un correctivo marcado "Con factura" (requiere_factura=1) no admite abonos
+  // hasta que exista una factura del servicio (general o por cuota).
+  const tieneFacturaServicio = facturasActivas.length > 0
+    || (data.cuotas || []).some(cu => Array.isArray(cu.facturas) && cu.facturas.some(esFacturaActiva));
+  const esCorrectivo = data.servicio?.tipo_servicio?.modulo_asociado === 'correctivo'
+    || data.servicio?.origen === 'correctivo';
+  const bloquearAbonoPorFactura = esCorrectivo
+    && data.servicio?.requiere_factura === 1 && !tieneFacturaServicio;
   const hayFacturaGeneral = facturasActivas.some(f => f.id_cuota === null);
   const hayFacturaPorCuota = facturasActivas.some(f => f.id_cuota !== null);
   const cuotasNoFacturadas = (data.cuotas || []).filter(c => !facturasActivas.some(f => f.id_cuota === c.id));
@@ -312,8 +310,7 @@ export default function CobroDetalle() {
     setGuardandoFactura(true);
     try {
       const payload = {
-        // Cobro por servicio o por plan de mantenimiento (cobro único del plan).
-        ...(data.servicio ? { id_servicio: data.servicio.id } : { id_mantenimiento_plan: data.mantenimiento_plan?.id }),
+        id_servicio: data.servicio.id,
         numero_factura: factura.numero_factura,
         fecha_emision: factura.fecha_emision,
         monto: factura.monto,
@@ -333,7 +330,7 @@ export default function CobroDetalle() {
     <>
       <PageHeader title={
         <span className="inline-flex items-center gap-2">
-          Cobro {data.servicio?.codigo || (data.mantenimiento_plan ? `Plan de mantenimiento #${data.mantenimiento_plan.id}` : '')}
+          Cobro {data.servicio?.codigo}
           {data.saldo_variable && (
             <span className="badge-amber text-[10px]" title="Saldo posterior al adelanto es variable: cuotas pagadas/facturadas quedan blindadas, el resto puede redistribuirse y la suma puede ajustarse">
               Saldo variable
@@ -343,24 +340,35 @@ export default function CobroDetalle() {
       } subtitle={`${data.cliente?.nombre}`}
         actions={
           <>
-            <Link to="/cobros" className="btn-secondary">← Cobros</Link>
+            <Link to={location.state?.from || '/cobros'} className="btn-secondary">{location.state?.fromLabel ? `← ${location.state.fromLabel}` : '← Cobros'}</Link>
             {data.estado_cobro !== 'Cerrado' && <button onClick={() => setOpenCuotas(true)} className="btn-secondary">Plan de cuotas</button>}
-            {Number(data.saldo_pendiente) > 0 && <button onClick={() => setOpenAbono(true)} className="btn-primary">+ Registrar abono</button>}
+            {Number(data.saldo_pendiente) > 0 && (
+              <button onClick={() => setOpenAbono(true)} disabled={bloquearAbonoPorFactura}
+                title={bloquearAbonoPorFactura ? 'Este correctivo requiere factura: agrega una factura al cobro antes de registrar abonos.' : undefined}
+                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed">+ Registrar abono</button>
+            )}
             {Number(data.saldo_pendiente) > 0 && <button onClick={recordar} className="btn-secondary">Recordatorio WhatsApp</button>}
-            {Number(data.saldo_pendiente) === 0 && data.estado_cobro !== 'Cerrado' && <button onClick={() => setOpenCerrar(true)} className="btn-primary">Cerrar cobro</button>}
+            {Number(data.saldo_pendiente) === 0 && data.estado_cobro !== 'Cerrado' && <button onClick={cerrar} className="btn-primary">Cerrar cobro</button>}
             <button onClick={abrirModalFactura} className="btn-secondary">+ Factura</button>
             {esSuperAdmin && <button onClick={() => setOpenEliminar(true)} className="btn-secondary !text-rose-600 !border-rose-200 hover:!bg-rose-50">Eliminar cobro</button>}
           </>
         } />
+
+      {data.estado_cobro !== 'Cerrado' && bloquearAbonoPorFactura && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span>
+            <strong>Requiere factura para registrar abonos.</strong> Este correctivo está marcado como “Con factura”: agrega una factura al cobro antes de poder registrar abonos.
+          </span>
+          <button onClick={abrirModalFactura} className="btn-secondary shrink-0">+ Factura</button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="card lg:col-span-1">
           <div className="card-header"><h3 className="card-title">Resumen</h3><span className={badgeEstado(data.estado_cobro)}>{data.estado_cobro}</span></div>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
             <Info label="Cliente" value={data.cliente?.nombre} cols={2} />
-            {data.servicio
-              ? <Info label="Servicio" value={<Link to={`/servicios/${data.servicio?.id}`} className="text-brand-700 hover:underline font-mono">{data.servicio?.codigo}</Link>} cols={2} />
-              : <Info label="Origen" value={<span>Plan de mantenimiento #{data.mantenimiento_plan?.id}{data.mantenimiento_plan?.tipo_servicio?.nombre ? ` · ${data.mantenimiento_plan.tipo_servicio.nombre}` : ''}{data.mantenimiento_plan?.ascensores?.length ? ` · ${data.mantenimiento_plan.ascensores.length} ascensor(es)` : ''}</span>} cols={2} />}
+            <Info label="Servicio" value={<Link to={`/servicios/${data.servicio?.id}`} className="text-brand-700 hover:underline font-mono">{data.servicio?.codigo}</Link>} cols={2} />
             <Info label="Precio total" value={<span className="font-mono">{formatMonto(data.monto_total, data.moneda)}</span>} />
             <Info label="Abonado" value={<span className="font-mono text-emerald-700">{formatMonto(data.total_abonado, data.moneda)}</span>} />
             <Info label="Saldo" value={<span className="font-mono font-medium text-rose-700">{formatMonto(data.saldo_pendiente, data.moneda)}</span>} />
@@ -621,37 +629,6 @@ export default function CobroDetalle() {
           )}
           <div><label className="label">Comprobante</label><input type="file" className="input" onChange={subirComprobante} /></div>
           <div><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={abono.observaciones} onChange={e => setAbono(a => ({ ...a, observaciones: e.target.value }))} /></div>
-        </div>
-      </Modal>
-
-      {/* Modal cerrar cobro */}
-      <Modal open={openCerrar} onClose={() => !cerrando && setOpenCerrar(false)} title="Cerrar cobro" size="sm"
-        footer={<>
-          <button className="btn-secondary" onClick={() => setOpenCerrar(false)} disabled={cerrando}>Cancelar</button>
-          <button className="btn-primary" onClick={confirmarCerrar} disabled={cerrando}>{cerrando ? 'Cerrando…' : 'Cerrar cobro'}</button>
-        </>}>
-        <div className="space-y-3">
-          <div className="rounded-lg bg-carbon-50 px-3 py-2 text-xs text-carbon-600">
-            <span className="font-medium text-carbon-700">{data.servicio?.codigo || (data.mantenimiento_plan ? `Plan de mantenimiento #${data.mantenimiento_plan.id}` : 'Cobro')}</span> · {data.cliente?.nombre}
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-lg border border-slate-200 px-2 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">Total</div>
-              <div className="font-mono text-sm">{formatMonto(data.monto_total, data.moneda)}</div>
-            </div>
-            <div className="rounded-lg border border-slate-200 px-2 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">Abonado</div>
-              <div className="font-mono text-sm text-emerald-700">{formatMonto(data.total_abonado, data.moneda)}</div>
-            </div>
-            <div className="rounded-lg border border-slate-200 px-2 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">Saldo</div>
-              <div className="font-mono text-sm font-medium text-rose-700">{formatMonto(data.saldo_pendiente, data.moneda)}</div>
-            </div>
-          </div>
-          <p className="text-xs text-carbon-500">
-            El cobro quedará <span className="font-medium">cerrado de forma definitiva</span>: no podrás
-            registrar más abonos ni reestructurar el plan de cuotas. ¿Deseas continuar?
-          </p>
         </div>
       </Modal>
 

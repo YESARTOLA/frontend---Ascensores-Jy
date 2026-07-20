@@ -7,7 +7,7 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Modal from '../components/common/Modal.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { formatFechaHora, formatHora, badgeEstado, codigosAscensores } from '../utils/formatters.js';
+import { formatFecha, formatFechaHora, formatHora, badgeEstado, codigosAscensores } from '../utils/formatters.js';
 import {
   tiposEventoVisibles,
   leyendaVisible,
@@ -15,29 +15,11 @@ import {
   muestraFiltroTecnico,
   muestraFiltroCliente,
   colorPorTipo,
-  etiquetaTipoEvento,
   subtituloCalendario
 } from '../utils/visibilidadCalendario.js';
-
-const TZ = 'America/Lima';
-const OFFSET_LIMA = '-05:00';
-const fmtDiaLargo = new Intl.DateTimeFormat('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: TZ });
-
-/**
- * "YYYY-MM-DD" del cursor interpretado como día de Lima. cursor es un Date
- * (instante absoluto); lo formateamos en Lima para tener un YMD estable
- * independiente de la TZ del navegador.
- */
-function ymdLima(d) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'
-  }).format(d);
-}
-
-/** Convierte "YYYY-MM-DD" + hora opcional a un instante anclado a Lima. */
-function fechaLima(ymd, hm = '00:00:00.000') {
-  return new Date(`${ymd}T${hm}${OFFSET_LIMA}`);
-}
+import { TZ, fmtDiaLargo, ymdLima, fechaLima, rangoMes, mesLabelLima } from '../utils/calendarioFechas.js';
+import CalendarioControles from '../components/common/CalendarioControles.jsx';
+import CalendarioMes from '../components/common/CalendarioMes.jsx';
 
 const ESTADOS_EVENTO = [
   { value: '', label: 'Todos' },
@@ -48,121 +30,38 @@ const ESTADOS_EVENTO = [
 
 const filtrosIniciales = { q: '', tipo_evento: '', estado_evento: '', id_cliente: '', id_tecnico: '' };
 
-// Persistencia de la vista (filtros + mes) para que al abrir el detalle de un
-// item y volver al calendario se conserve lo que el usuario estableció. Se usa
-// sessionStorage (no localStorage): la selección sobrevive a la navegación
-// dentro de la sesión, pero no queda pegada en sesiones futuras.
-const VISTA_STORAGE_KEY = 'ajy_calendario_vista';
-
-function leerVistaPersistida() {
-  try {
-    const raw = sessionStorage.getItem(VISTA_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 // Coincide con códigos correlativos tipo "SRV-2026-000035", "COT-2026-000004", etc.
 // Quita el código y los separadores que lo acompañan (–, -, espacios).
 const RE_CODIGO_CORRELATIVO = /\b[A-Z]{2,6}-\d{4}-\d{2,8}\b\s*[–-]?\s*/g;
-
-// Edificios (tipo + nombre) alcanzables desde un evento operativo, vía los
-// ascensores del servicio / de la emergencia / del plan de mantenimiento.
-// Se deduplica por id porque un servicio puede cubrir varios ascensores del
-// mismo edificio.
-function edificiosDelEvento(e) {
-  const ascensores = [
-    ...(e.servicio?.ascensores || []),
-    ...(e.mantenimiento_plan?.ascensores || [])
-  ].map(a => a.ascensor).filter(Boolean);
-  if (e.emergencia?.ascensor) ascensores.push(e.emergencia.ascensor);
-  const porId = new Map();
-  ascensores.forEach(a => {
-    const ed = a.edificio;
-    if (ed && !porId.has(ed.id)) porId.set(ed.id, ed);
-  });
-  return [...porId.values()].map(ed => `${(ed.tipo || 'Edificio').trim()} ${ed.nombre}`.trim());
+function tituloSinCorrelativo(e) {
+  const base = e.servicio?.titulo || e.titulo || '';
+  const limpio = base.replace(RE_CODIGO_CORRELATIVO, '').trim();
+  return limpio || base.trim() || '—';
 }
 
 /**
- * Texto que se muestra en el calendario para un evento. Para eventos operativos
- * (Emergencia, Correctivo, Mantenimiento, Servicio, Proyecto): "Módulo - Edificio
- * NOMBRE". Los recordatorios (cobro, observación, etc.) conservan su título.
+ * Ubicación del evento para mostrar en el calendario: nombre del edificio y
+ * código(s) del/los ascensor(es), tomados del servicio, del plan de mantenimiento
+ * o de la emergencia vinculada. Devuelve `null` si no hay ascensor asociado.
  */
-function tituloEvento(e) {
-  if (e.es_recordatorio) {
-    const base = (e.titulo || '').replace(RE_CODIGO_CORRELATIVO, '').trim();
-    return base || '—';
-  }
-  const modulo = etiquetaTipoEvento(e.tipo_evento);
-  const edificios = edificiosDelEvento(e);
-  const ubicacion = edificios.length
-    ? edificios.join(', ')
-    : (e.servicio?.cliente?.nombre || e.emergencia?.cliente?.nombre || e.mantenimiento_plan?.cliente?.nombre || '');
-  const titulo = ubicacion ? `${modulo} - ${ubicacion}` : modulo;
-  // Servicios multidía: cada evento es un día → "Día k/N" para distinguirlos.
-  if (e.dia && e.dia.total > 1) return `${titulo} (Día ${e.dia.orden}/${e.dia.total})`;
-  return titulo;
-}
-
-/**
- * Rango "desde/hasta" del mes que contiene al cursor, expresado como instantes
- * anclados a Lima — independiente de la TZ del navegador.
- */
-function rangoMes(cursor) {
-  const [y, m] = ymdLima(cursor).split('-').map(Number);
-  const inicio = fechaLima(`${y}-${String(m).padStart(2, '0')}-01`, '00:00:00.000');
-  // último día del mes en Lima: usar Date.UTC para conocer el último día numérico,
-  // luego anclar a Lima TZ con offset fijo (-05:00, sin DST).
-  const ultimoDia = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const fin = fechaLima(`${y}-${String(m).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`, '23:59:59.999');
-  return { desde: inicio.toISOString(), hasta: fin.toISOString() };
-}
-
-/**
- * Días del grid del calendario (lunes a domingo, 6 filas). Cada celda es un
- * objeto { ymd: "YYYY-MM-DD", dia: 1..31, mes: 1..12, anio } con el día Lima.
- * No depende de la TZ del navegador.
- */
-function diasDelCalendario(cursor) {
-  const [yC, mC] = ymdLima(cursor).split('-').map(Number);
-  // Trabajamos sobre Date.UTC con día puro: cualquier cálculo de días aquí
-  // es seguro porque las horas siempre quedan en 00:00 UTC.
-  const inicioMes = new Date(Date.UTC(yC, mC - 1, 1));
-  const finMes = new Date(Date.UTC(yC, mC, 0));
-  // Lunes como primer día: ((getUTCDay() + 6) % 7) da 0..6 desde lunes.
-  const offsetInicio = (inicioMes.getUTCDay() + 6) % 7;
-  const inicioGrid = new Date(Date.UTC(yC, mC - 1, 1 - offsetInicio));
-  const diaFinSemana = finMes.getUTCDay();
-  const offsetFin = diaFinSemana === 0 ? 0 : 7 - diaFinSemana;
-  const finGrid = new Date(Date.UTC(yC, mC, offsetFin));
-  const dias = [];
-  for (let t = inicioGrid.getTime(); t <= finGrid.getTime(); t += 86400000) {
-    const d = new Date(t);
-    const y = d.getUTCFullYear();
-    const m = d.getUTCMonth() + 1;
-    const dia = d.getUTCDate();
-    dias.push({
-      ymd: `${y}-${String(m).padStart(2, '0')}-${String(dia).padStart(2, '0')}`,
-      dia,
-      mes: m,
-      anio: y
-    });
-  }
-  return dias;
+function ubicacionEvento(e) {
+  let ascs = [];
+  if (e.servicio?.ascensores?.length) ascs = e.servicio.ascensores.map(a => a.ascensor).filter(Boolean);
+  else if (e.mantenimiento_plan?.ascensores?.length) ascs = e.mantenimiento_plan.ascensores.map(a => a.ascensor).filter(Boolean);
+  else if (e.emergencia?.ascensor) ascs = [e.emergencia.ascensor];
+  if (!ascs.length) return null;
+  const edificio = ascs.map(a => a.edificio?.nombre).find(Boolean) || null;
+  const codigos = ascs.map(a => a.codigo).filter(Boolean).join(', ');
+  return [edificio, codigos].filter(Boolean).join(' · ') || null;
 }
 
 export default function Calendario() {
-  const [cursor, setCursor] = useState(() => {
-    const mes = leerVistaPersistida()?.mes;
-    return mes ? fechaLima(mes) : new Date();
-  });
+  const [cursor, setCursor] = useState(new Date());
   const [eventos, setEventos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modoLista, setModoLista] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
-  const [filtros, setFiltros] = useState(() => ({ ...filtrosIniciales, ...(leerVistaPersistida()?.filtros || {}) }));
+  const [filtros, setFiltros] = useState(filtrosIniciales);
   const [clientes, setClientes] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [materializandoId, setMaterializandoId] = useState(null);
@@ -193,29 +92,21 @@ export default function Calendario() {
 
   useEffect(() => { recargarEventos(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cursor]);
 
-  // Persistir filtros + mes en sesión: al volver del detalle de un item el
-  // calendario reabre con lo que el usuario había establecido.
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(VISTA_STORAGE_KEY, JSON.stringify({ filtros, mes: ymdLima(cursor) }));
-    } catch { /* sin storage disponible: la persistencia es best-effort */ }
-  }, [filtros, cursor]);
-
   /**
    * Abre el modal de "Crear servicio desde evento" con la info del plan
-   * precargada y el precio default tomado de tbl_clientes_precios para el
-   * tipo de servicio del plan.
+   * precargada y el precio default = suma de los montos por ascensor del plan
+   * (cada monto es el precio configurado del ascensor para el subtipo).
    */
   const abrirMaterializar = (e) => {
     const plan = e?.mantenimiento_plan;
-    const precios = plan?.cliente?.precios || [];
-    const precioCfg = precios.find(p => p.id_tipo_servicio === plan?.id_tipo_servicio);
+    const ascs = (plan?.ascensores || []).filter(a => a.estado !== 0);
+    const total = ascs.reduce((acc, a) => acc + Number(a.monto || 0), 0);
     setMaterializarEv(e);
     setMaterializarForm({
       fecha: ymdLima(new Date(e.fecha_inicio)),
       hora: plan?.hora_programada || new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(e.fecha_inicio)),
-      precio: precioCfg ? String(precioCfg.precio) : '',
-      moneda: precioCfg?.moneda || 'PEN'
+      precio: ascs.length ? total.toFixed(2) : '',
+      moneda: ascs[0]?.moneda || 'PEN'
     });
   };
   const cerrarMaterializar = () => setMaterializarEv(null);
@@ -266,8 +157,6 @@ export default function Calendario() {
         const q = filtros.q.toLowerCase();
         const hay = [
           e.titulo,
-          etiquetaTipoEvento(e.tipo_evento),
-          ...edificiosDelEvento(e),
           e.servicio?.codigo,
           e.servicio?.cliente?.nombre,
           ...codigosAscensores(e.servicio),
@@ -279,20 +168,68 @@ export default function Calendario() {
     });
   }, [eventos, filtros]);
 
-  const dias = useMemo(() => diasDelCalendario(cursor), [cursor]);
   const eventosPorDia = useMemo(() => {
     const m = {};
+    const empujar = (key, e) => { (m[key] ||= []).push(e); };
     eventosFiltrados.forEach(e => {
-      const key = new Date(e.fecha_inicio).toLocaleDateString('en-CA', { timeZone: TZ });
-      m[key] ||= [];
-      m[key].push(e);
+      const inicioKey = new Date(e.fecha_inicio).toLocaleDateString('en-CA', { timeZone: TZ });
+      // Un evento con fecha_fin posterior (p. ej. correctivo/emergencia con fecha
+      // estimada de término) ocupa TODOS los días del rango [inicio, fin], no solo
+      // el de inicio, para reflejar su duración en el calendario.
+      let finKey = inicioKey;
+      if (e.fecha_fin) {
+        const k = new Date(e.fecha_fin).toLocaleDateString('en-CA', { timeZone: TZ });
+        if (k > inicioKey) finKey = k;
+      }
+      if (finKey === inicioKey) { empujar(inicioKey, e); return; }
+      // Recorrer día a día anclado a UTC (días de calendario puros, sin desfase TZ).
+      let cur = new Date(`${inicioKey}T00:00:00Z`);
+      const fin = new Date(`${finKey}T00:00:00Z`);
+      let guarda = 0;
+      while (cur <= fin && guarda < 366) {
+        empujar(cur.toISOString().slice(0, 10), e);
+        cur = new Date(cur.getTime() + 86400000);
+        guarda++;
+      }
     });
     return m;
   }, [eventosFiltrados]);
 
-  const mesLabel = new Intl.DateTimeFormat('es-PE', { month: 'long', year: 'numeric', timeZone: TZ }).format(cursor);
-  const hoyStr = ymdLima(new Date());
-  const mesCursor = Number(ymdLima(cursor).split('-')[1]);
+  // Chips para el grid de mes (componente CalendarioMes): un evento → { color, título, ubicación }.
+  const itemsPorDia = useMemo(() => {
+    const m = {};
+    for (const [ymd, evs] of Object.entries(eventosPorDia)) {
+      m[ymd] = evs.map(e => {
+        const titulo = tituloSinCorrelativo(e);
+        const ubic = ubicacionEvento(e);
+        // Rango del evento (para eventos multi-día con fecha estimada de término):
+        // marca si viene de días anteriores o continúa en días posteriores para
+        // dibujar el chip como un tramo continuo.
+        const inicioKey = new Date(e.fecha_inicio).toLocaleDateString('en-CA', { timeZone: TZ });
+        let finKey = inicioKey;
+        if (e.fecha_fin) {
+          const k = new Date(e.fecha_fin).toLocaleDateString('en-CA', { timeZone: TZ });
+          if (k > inicioKey) finKey = k;
+        }
+        const multiDia = finKey > inicioKey;
+        const rangoTxt = multiDia
+          ? ` (${formatFecha(e.fecha_inicio)} → ${formatFecha(e.fecha_fin)})`
+          : '';
+        return {
+          id: e.id,
+          color: colorPorTipo(e.tipo_evento),
+          titulo,
+          subtitulo: ubic || undefined,
+          title: [titulo, ubic].filter(Boolean).join(' — ') + rangoTxt,
+          continuaAntes: multiDia && ymd > inicioKey,
+          continuaDespues: multiDia && ymd < finKey
+        };
+      });
+    }
+    return m;
+  }, [eventosPorDia]);
+
+  const mesLabel = mesLabelLima(cursor);
 
   const diaSelKey = diaSeleccionado?.ymd || null;
   const eventosDelDia = useMemo(() => {
@@ -307,13 +244,14 @@ export default function Calendario() {
     <>
       <PageHeader title="Calendario" subtitle={subtituloHeader}
         actions={
-          <>
-            <button onClick={() => setModoLista(v => !v)} className="btn-secondary">{modoLista ? 'Vista mes' : 'Vista lista'}</button>
-            <button onClick={() => setCursor(new Date())} className="btn-secondary">Hoy</button>
-            <button onClick={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() - 1); return d; })} className="btn-secondary">←</button>
-            <span className="px-3 text-sm font-medium capitalize w-40 text-center">{mesLabel}</span>
-            <button onClick={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() + 1); return d; })} className="btn-secondary">→</button>
-          </>
+          <CalendarioControles
+            modoLista={modoLista}
+            onToggleModo={() => setModoLista(v => !v)}
+            onHoy={() => setCursor(new Date())}
+            onPrev={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() - 1); return d; })}
+            onNext={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() + 1); return d; })}
+            mesLabel={mesLabel}
+          />
         } />
 
       <div className="card mb-4">
@@ -380,11 +318,12 @@ export default function Calendario() {
         <div className="card">
           <ul className="divide-y divide-slate-100">
             {eventosFiltrados.map(e => {
-              const titulo = tituloEvento(e);
+              const titulo = tituloSinCorrelativo(e);
               const contenido = (
                 <>
                   <div className="font-medium text-slate-800 text-sm truncate">{titulo}</div>
                   <div className="text-xs text-slate-500">{formatFechaHora(e.fecha_inicio)} · {e.tipo_evento}</div>
+                  {ubicacionEvento(e) && <div className="text-xs text-slate-500 truncate">📍 {ubicacionEvento(e)}</div>}
                 </>
               );
               return (
@@ -402,38 +341,7 @@ export default function Calendario() {
           </ul>
         </div>
       ) : (
-        <div className="card overflow-hidden">
-          <div className="grid grid-cols-7 bg-slate-50 text-[11px] uppercase font-semibold text-slate-500 border-b border-slate-200">
-            {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => <div key={d} className="px-2 py-2 text-center">{d}</div>)}
-          </div>
-          <div className="grid grid-cols-7 grid-rows-6 min-h-[600px]">
-            {dias.map((d, idx) => {
-              const esHoy = d.ymd === hoyStr;
-              const esOtroMes = d.mes !== mesCursor;
-              const evs = eventosPorDia[d.ymd] || [];
-              const diaLabel = fechaLima(d.ymd);
-              return (
-                <button
-                  type="button"
-                  key={idx}
-                  onClick={() => setDiaSeleccionado(d)}
-                  aria-label={`Ver eventos del ${fmtDiaLargo.format(diaLabel)}`}
-                  className={`p-1.5 border-b border-r border-slate-100 text-xs text-left w-full cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-300 ${esOtroMes ? 'bg-slate-50/50 text-slate-400 hover:bg-slate-100/70' : 'bg-white hover:bg-slate-50'}`}
-                >
-                  <div className={`text-right ${esHoy ? 'inline-block bg-brand-600 text-white rounded-full h-6 w-6 leading-6 text-center font-semibold' : ''}`}>{d.dia}</div>
-                  <div className="mt-1 space-y-0.5 max-h-24 overflow-hidden">
-                    {evs.slice(0, 3).map(e => (
-                      <div key={e.id} className="block truncate rounded px-1.5 py-0.5 text-white text-[10px]" style={{ backgroundColor: colorPorTipo(e.tipo_evento) }}>
-                        {tituloEvento(e)}
-                      </div>
-                    ))}
-                    {evs.length > 3 && <div className="text-[10px] text-slate-500">+{evs.length - 3} más</div>}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <CalendarioMes cursor={cursor} itemsPorDia={itemsPorDia} onSelectDay={setDiaSeleccionado} />
       )}
 
       <Modal
@@ -453,7 +361,7 @@ export default function Calendario() {
                 && e.tipo_evento === 'mantenimiento'
                 && !e.servicio
                 && Boolean(e.id_mantenimiento_plan);
-              const titulo = tituloEvento(e);
+              const titulo = tituloSinCorrelativo(e);
               return (
                 <li key={e.id} className="py-3 flex items-start gap-3">
                   <div className="h-2 w-2 mt-2 rounded-full shrink-0" style={{ backgroundColor: colorPorTipo(e.tipo_evento) }} />
@@ -470,6 +378,7 @@ export default function Calendario() {
                       <div className="font-medium text-slate-800 text-sm">{titulo}</div>
                     )}
                     <div className="text-xs text-slate-500">{formatHora(e.fecha_inicio)} · {e.tipo_evento}</div>
+                    {ubicacionEvento(e) && <div className="text-xs text-slate-500">📍 {ubicacionEvento(e)}</div>}
                     {esProgramacionMantenimientoSinServicio && puedeMaterializar && (
                       <button
                         type="button"

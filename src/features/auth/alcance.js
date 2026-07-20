@@ -9,8 +9,10 @@
  * filtrado real de datos.
  */
 
-// Único lugar donde se define qué roles tienen alcance configurable.
-export const ROLES_CON_ALCANCE = ['admin', 'coordinador'];
+// Roles cuyo acceso se acota por los flags de ámbito (todos salvo super_admin).
+// Así se puede limitar a un área a cualquier rol (vendedora, contabilidad, etc.)
+// sin crear roles nuevos. Espejo de backend/utils/alcanceUsuario.js.
+export const ROLES_CON_ALCANCE = ['admin', 'coordinador', 'contabilidad', 'vendedora', 'tecnico'];
 
 // El alcance por TIPO de edificio (Edificio / Obra) aplica solo al Administrador.
 export const ROLES_CON_ALCANCE_EDIFICIOS = ['admin'];
@@ -33,8 +35,8 @@ export function esRolConAlcanceEdificios(rol) {
 
 /**
  * ¿El usuario tiene acceso al ámbito indicado ('servicios' | 'proyectos')?
- * - Roles sin alcance → siempre true.
- * - Flag ausente (sesión previa a esta función) → true, para no bloquear.
+ * - Roles con alcance (no super_admin) → según sus flags (default 1/1 = ambos).
+ * - super_admin y demás sin alcance → siempre true.
  */
 export function tieneAcceso(user, ambito) {
   if (!user) return false;

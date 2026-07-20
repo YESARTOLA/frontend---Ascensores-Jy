@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { serviciosService, clientesService, ascensoresService, tiposServicioService } from '../services';
+import { serviciosService, clientesService, ascensoresService, tiposServicioService, edificiosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -9,28 +9,38 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFecha, formatMonto, hoyISO, toYMDLima, nombreCliente } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatMonto, hoyISO, toYMDLima, nombreEdificioDeAscensores } from '../utils/formatters.js';
 import { ESTADOS_SERVICIO, esServicioEditable } from '../utils/estadoServicio.js';
-import AscensoresChecklist from '../components/common/AscensoresChecklist.jsx';
-import {
-  repartirParejo,
-  sumaMontos,
-  toggleAscensor as selToggle,
-  cambiarMonto as selMonto,
-  repartirSegunTotal,
-  repartirForzado
-} from '../utils/ascensoresSeleccion.js';
+import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
 
 const ESTADOS_FILTRO = ['', ...ESTADOS_SERVICIO];
-const TOLERANCIA_SUMA = 0.01;
 const FORM_ID = 'form-servicio';
+
+// Fila de ascensor del proyecto: existente (id_ascensor) o nuevo a instalar
+// (ascensor_nuevo en un edificio del cliente). Misma forma que en Cotizaciones,
+// para homogeneizar la creación de proyectos con y sin cotización.
+const ascensorFilaVacia = () => ({
+  modo: 'existente',
+  id_ascensor: '',
+  ascensor_nuevo: { id_edificio: '', ubicacion: '', pisos: '', capacidad: '', marca: '', modelo: '', descripcion: '' }
+});
+
+// Reparte un precio total en partes iguales al centavo entre n ascensores; el
+// último absorbe el sobrante (espejo de repartirParejo del backend). Solo se usa
+// al EDITAR, para mandar un monto por ascensor que sume exactamente el total.
+function repartirPrecio(total, n) {
+  if (!n || n <= 0) return [];
+  const cents = Math.round(Number(total || 0) * 100);
+  const base = Math.floor(cents / n);
+  return Array.from({ length: n }, (_, i) => (base + (i === n - 1 ? cents - base * n : 0)) / 100);
+}
 
 // Módulo Proyectos: aquí solo se crean/listan registros de tipo PROYECTO. La
 // clasificación (tipo_registro='proyecto') la deriva el backend del subtipo
 // seleccionado (cuyo padre es de categoría funcional PROYECTOS).
 const inicial = {
   id_tipo_servicio: '', id_cliente: '',
-  ascensores_seleccion: {}, // { [id_ascensor]: { monto: string, manual: bool } }
+  ascensores: [ascensorFilaVacia()],
   titulo: '', descripcion: '',
   fecha_programada: hoyISO(), hora_programada: '09:00', duracion_dias: 1, prioridad: 'media',
   precio_interno: '', moneda: 'PEN', observaciones: '',
@@ -43,7 +53,30 @@ function listarCodigosAscensores(servicio) {
     .filter(Boolean);
 }
 
-function formToPayload(form, ascensoresSeleccionados) {
+// Filas de ascensor válidas (existente con id o nuevo con edificio).
+function filasAscensorValidas(form) {
+  return (form.ascensores || []).filter(a =>
+    (a.modo === 'existente' && a.id_ascensor) ||
+    (a.modo === 'nuevo' && a.ascensor_nuevo?.id_edificio)
+  );
+}
+
+// Payload para CREAR: precio global + ascensores existentes y/o nuevos (el
+// backend crea los nuevos como "Por instalar" y reparte el precio).
+function formToPayloadCrear(form) {
+  const ascensores = filasAscensorValidas(form).map(a => a.modo === 'existente'
+    ? { id_ascensor: Number(a.id_ascensor) }
+    : {
+        ascensor_nuevo: {
+          id_edificio: Number(a.ascensor_nuevo.id_edificio),
+          ubicacion: a.ascensor_nuevo.ubicacion || null,
+          pisos: a.ascensor_nuevo.pisos ? Number(a.ascensor_nuevo.pisos) : null,
+          capacidad: a.ascensor_nuevo.capacidad || null,
+          marca: a.ascensor_nuevo.marca || null,
+          modelo: a.ascensor_nuevo.modelo || null,
+          descripcion: a.ascensor_nuevo.descripcion || null
+        }
+      });
   return {
     id_tipo_servicio: form.id_tipo_servicio,
     id_cliente: form.id_cliente,
@@ -51,29 +84,40 @@ function formToPayload(form, ascensoresSeleccionados) {
     fecha_programada: form.fecha_programada, hora_programada: form.hora_programada,
     duracion_dias: Math.max(1, parseInt(form.duracion_dias, 10) || 1),
     prioridad: form.prioridad,
-    precio_interno: form.precio_interno, moneda: form.moneda,
+    precio_interno: Number(form.precio_interno), moneda: form.moneda,
     observaciones: form.observaciones, es_borrador: form.es_borrador,
-    ascensores: ascensoresSeleccionados.map(a => ({
-      id_ascensor: a.id,
-      monto: Number(form.ascensores_seleccion[a.id]?.monto || 0)
-    }))
+    ascensores
+  };
+}
+
+// Payload para EDITAR: al editar solo se manejan ascensores existentes; el precio
+// global se reparte en partes iguales entre ellos (el backend valida que sume).
+function formToPayloadEditar(form) {
+  const ids = filasAscensorValidas(form)
+    .filter(a => a.modo === 'existente')
+    .map(a => Number(a.id_ascensor));
+  const montos = repartirPrecio(form.precio_interno, ids.length);
+  return {
+    id_tipo_servicio: form.id_tipo_servicio,
+    id_cliente: form.id_cliente,
+    titulo: form.titulo, descripcion: form.descripcion,
+    fecha_programada: form.fecha_programada, hora_programada: form.hora_programada,
+    prioridad: form.prioridad,
+    precio_interno: Number(form.precio_interno), moneda: form.moneda,
+    observaciones: form.observaciones,
+    ascensores: ids.map((id, i) => ({ id_ascensor: id, monto: montos[i] }))
   };
 }
 
 function servicioToForm(s) {
-  const ascensores_seleccion = {};
-  (s.ascensores || []).forEach(sa => {
-    if (sa.ascensor && sa.estado !== 0) {
-      ascensores_seleccion[sa.ascensor.id] = {
-        monto: Number(sa.monto || 0).toFixed(2),
-        manual: true
-      };
-    }
-  });
+  // Al editar, cada ascensor asociado se muestra como fila "existente".
+  const filas = (s.ascensores || [])
+    .filter(sa => sa.ascensor && sa.estado !== 0)
+    .map(sa => ({ ...ascensorFilaVacia(), modo: 'existente', id_ascensor: String(sa.ascensor.id) }));
   return {
     id_tipo_servicio: String(s.id_tipo_servicio || ''),
     id_cliente: String(s.id_cliente || ''),
-    ascensores_seleccion,
+    ascensores: filas.length ? filas : [ascensorFilaVacia()],
     titulo: s.titulo || '',
     descripcion: s.descripcion || '',
     fecha_programada: toYMDLima(s.fecha_programada) || hoyISO(),
@@ -91,8 +135,8 @@ export default function Servicios() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [clientes, setClientes] = useState([]);
   const [ascensores, setAscensores] = useState([]);
+  const [edificios, setEdificios] = useState([]);
   const [tipos, setTipos] = useState([]);
-  const [preciosCliente, setPreciosCliente] = useState([]);
   // Módulo Proyectos: el backend filtra por tipo_registro='proyecto' (fuente de
   // verdad), nunca se mezclan servicios operativos en este listado.
   const [filtros, setFiltros] = useState({ q: '', estado_servicio: '', tipo_registro: 'proyecto', id_tipo_servicio: '', desde: '', hasta: '' });
@@ -112,8 +156,8 @@ export default function Servicios() {
     usePaginatedList(serviciosService.paginate, filtros, { initialPageSize: 25 });
 
   useEffect(() => {
-    Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list()])
-      .then(([cs, as, ts]) => { setClientes(cs); setAscensores(as); setTipos(ts); });
+    Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list(), edificiosService.list()])
+      .then(([cs, as, ts, eds]) => { setClientes(cs); setAscensores(as); setTipos(ts); setEdificios(eds); });
   }, []);
 
   const cargar = recargar;
@@ -179,14 +223,15 @@ export default function Servicios() {
 
   const ascensoresFiltrados = useMemo(
     () => form.id_cliente
-      ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
+      ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente) && esAscensorServiciable(a))
       : [],
     [ascensores, form.id_cliente]
   );
 
-  const ascensoresSeleccionados = useMemo(
-    () => ascensoresFiltrados.filter(a => form.ascensores_seleccion[a.id]),
-    [ascensoresFiltrados, form.ascensores_seleccion]
+  // Edificios del cliente elegido (para instalar un ascensor nuevo).
+  const edificiosCliente = useMemo(
+    () => form.id_cliente ? edificios.filter(e => String(e.id_cliente) === String(form.id_cliente)) : [],
+    [edificios, form.id_cliente]
   );
 
   // Subtipos seleccionables en el módulo Proyectos: solo subtipos cuyo padre es
@@ -197,95 +242,53 @@ export default function Servicios() {
     [tipos]
   );
 
-  const sumaActual = useMemo(
-    () => sumaMontos(form.ascensores_seleccion),
-    [form.ascensores_seleccion]
-  );
-
-  const precio = Number(form.precio_interno || 0);
-  const diferenciaSuma = sumaActual - precio;
-  const sumaOk = ascensoresSeleccionados.length > 0 && Math.abs(diferenciaSuma) <= TOLERANCIA_SUMA;
+  // El proyecto se guarda con UN precio global (lo pone el usuario) que cubre a
+  // uno o varios ascensores. Válido si hay al menos un ascensor y precio >= 0.
+  const filasValidas = filasAscensorValidas(form);
+  const precioValido = form.precio_interno !== '' && Number(form.precio_interno) >= 0;
+  const formOk = filasValidas.length > 0 && precioValido;
 
   const cambiarCliente = (id_cliente) => {
-    setForm(f => ({ ...f, id_cliente, ascensores_seleccion: {} }));
+    // Cambiar de cliente invalida los ascensores/edificios ya elegidos.
+    setForm(f => ({ ...f, id_cliente, ascensores: [ascensorFilaVacia()] }));
   };
 
-  // Etiqueta del campo de cliente: adaptada al tipo (Edificio/Obra) del elegido.
+  const cambiarSubtipo = (id_tipo_servicio) => {
+    setForm(f => ({ ...f, id_tipo_servicio }));
+  };
+
   const labelCampoCliente = 'Cliente';
 
-  // Cargar el catálogo de precios del cliente seleccionado para usarlo como
-  // default al elegir el tipo de servicio en "Nuevo servicio". En modo edición
-  // se conserva el precio guardado del registro.
-  useEffect(() => {
-    if (!form.id_cliente) { setPreciosCliente([]); return; }
-    let cancelado = false;
-    clientesService.get(form.id_cliente)
-      .then(c => { if (!cancelado) setPreciosCliente(c?.precios || []); })
-      .catch(() => { if (!cancelado) setPreciosCliente([]); });
-    return () => { cancelado = true; };
-  }, [form.id_cliente]);
-
-  // Precio configurado en el catálogo del cliente para el tipo actual.
-  const precioConfigurado = useMemo(() => {
-    if (!form.id_cliente || !form.id_tipo_servicio) return null;
-    return preciosCliente.find(p => String(p.id_tipo_servicio) === String(form.id_tipo_servicio)) || null;
-  }, [preciosCliente, form.id_cliente, form.id_tipo_servicio]);
-
-  // Auto-aplica el precio del catálogo en modo creación cuando (cliente, tipo)
-  // están seleccionados y existe configuración. No corre en edición para no
-  // sobrescribir lo ya pactado.
-  useEffect(() => {
-    if (editando) return;
-    if (!precioConfigurado) return;
-    const valor = Number(precioConfigurado.precio || 0).toFixed(2);
-    const moneda = precioConfigurado.moneda || 'PEN';
-    setForm(f => {
-      if (f.precio_interno === valor && f.moneda === moneda) return f;
-      const sel = { ...f.ascensores_seleccion };
-      const ids = Object.keys(sel);
-      const algunoManual = ids.some(k => sel[k].manual);
-      if (ids.length > 0 && !algunoManual) {
-        const montos = repartirParejo(valor, ids.length);
-        ids.forEach((k, i) => { sel[k] = { ...sel[k], monto: montos[i] }; });
-      }
-      return { ...f, precio_interno: valor, moneda, ascensores_seleccion: sel };
-    });
-  }, [precioConfigurado, editando]);
-
-  const precioCoincideCatalogo = precioConfigurado &&
-    Math.abs(Number(form.precio_interno || 0) - Number(precioConfigurado.precio || 0)) < 0.01;
-
-  const toggleAscensor = (idAsc) => {
-    setForm(f => ({ ...f, ascensores_seleccion: selToggle(f.ascensores_seleccion, idAsc, f.precio_interno) }));
-  };
-
-  const cambiarMontoAscensor = (idAsc, valor) => {
-    setForm(f => ({ ...f, ascensores_seleccion: selMonto(f.ascensores_seleccion, idAsc, valor) }));
-  };
-
-  const cambiarPrecioTotal = (valor) => {
-    setForm(f => ({ ...f, precio_interno: valor, ascensores_seleccion: repartirSegunTotal(f.ascensores_seleccion, valor) }));
-  };
-
-  const repartirAhora = () => {
-    setForm(f => ({ ...f, ascensores_seleccion: repartirForzado(f.ascensores_seleccion, f.precio_interno) }));
-  };
+  // Handlers de las filas de ascensor (existente / nuevo).
+  const agregarAscensor = () => setForm(f => ({ ...f, ascensores: [...f.ascensores, ascensorFilaVacia()] }));
+  const quitarAscensor = (idx) => setForm(f => ({
+    ...f,
+    ascensores: f.ascensores.length > 1 ? f.ascensores.filter((_, i) => i !== idx) : f.ascensores
+  }));
+  const cambiarAscensor = (idx, key, val) => setForm(f => ({
+    ...f,
+    ascensores: f.ascensores.map((a, i) => i === idx ? { ...a, [key]: val } : a)
+  }));
+  const cambiarAscensorNuevo = (idx, key, val) => setForm(f => ({
+    ...f,
+    ascensores: f.ascensores.map((a, i) => i === idx ? { ...a, ascensor_nuevo: { ...a.ascensor_nuevo, [key]: val } } : a)
+  }));
 
   const guardar = async (e) => {
     e.preventDefault();
     if (savingRef.current) return;
     if (!form.id_cliente) { toast.error('Seleccione un cliente'); return; }
-    if (ascensoresSeleccionados.length === 0) { toast.error('Seleccione al menos un ascensor'); return; }
-    if (!sumaOk) { toast.error(`La suma por ascensor (S/ ${sumaActual.toFixed(2)}) no coincide con el precio total (S/ ${precio.toFixed(2)})`); return; }
+    if (!form.id_tipo_servicio) { toast.error('Seleccione el subtipo de servicio'); return; }
+    if (filasValidas.length === 0) { toast.error('Indique al menos un ascensor (existente o nuevo)'); return; }
+    if (!precioValido) { toast.error('Ingrese el precio del proyecto'); return; }
     savingRef.current = true;
     setSaving(true);
     try {
-      const payload = formToPayload(form, ascensoresSeleccionados);
       if (editando) {
-        await serviciosService.update(editando, payload);
+        await serviciosService.update(editando, formToPayloadEditar(form));
         toast.success('Proyecto actualizado');
       } else {
-        await serviciosService.create(payload);
+        await serviciosService.create(formToPayloadCrear(form));
         toast.success('Proyecto creado');
       }
       savingRef.current = false;
@@ -324,7 +327,7 @@ export default function Servicios() {
 
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-          <input className="input col-span-2" placeholder="Buscar por código, título, cliente, tipo de ascensor o cotización…" value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
+          <input className="input col-span-2" placeholder="Buscar por código, título, cliente, edificio/obra, tipo de ascensor o cotización…" value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_servicio} onChange={e => setFiltros(f => ({ ...f, estado_servicio: e.target.value }))}>
             {ESTADOS_FILTRO.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
           </select>
@@ -362,7 +365,7 @@ export default function Servicios() {
                         <td className="table-td text-sm max-w-[240px] truncate" title={s.titulo || ''}>{s.titulo || '—'}</td>
                         <td className="table-td text-xs">{s.tipo_registro}</td>
                         <td className="table-td">
-                          <div className="text-sm">{nombreCliente(s.cliente)}</div>
+                          <div className="text-sm">{nombreEdificioDeAscensores(s) || '—'}</div>
                           <div className="text-xs text-slate-500 font-mono" title={codigos.join(', ')}>{ascResumen}</div>
                         </td>
                         <td className="table-td text-xs">{s.tipo_servicio?.nombre}</td>
@@ -413,7 +416,7 @@ export default function Servicios() {
                         <div>
                           <div className="font-mono text-xs text-brand-700">{s.codigo}</div>
                           <div className="font-medium text-slate-800 text-sm mt-0.5">{s.titulo}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">{nombreCliente(s.cliente)} · {ascResumen}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{nombreEdificioDeAscensores(s)} · {ascResumen}</div>
                         </div>
                         <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
                       </div>
@@ -451,7 +454,7 @@ export default function Servicios() {
       </div>
 
       <Modal open={open} onClose={cerrar} title={tituloModal} size="lg"
-        footer={<><button type="button" className="btn-secondary" onClick={cerrar} disabled={saving}>Cancelar</button><button type="submit" form={FORM_ID} className="btn-primary" disabled={saving || !sumaOk}>{labelGuardar}</button></>}>
+        footer={<><button type="button" className="btn-secondary" onClick={cerrar} disabled={saving}>Cancelar</button><button type="submit" form={FORM_ID} className="btn-primary" disabled={saving || !formOk}>{labelGuardar}</button></>}>
         {!esEdicion && (
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs p-3 flex items-start gap-2">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><circle cx="12" cy="16.5" r="0.5"/></svg>
@@ -463,7 +466,7 @@ export default function Servicios() {
         <form id={FORM_ID} onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
             <label className="label">Subtipo de proyecto *</label>
-            <select className="select" required value={form.id_tipo_servicio} onChange={e => setForm(f => ({ ...f, id_tipo_servicio: e.target.value }))}>
+            <select className="select" required value={form.id_tipo_servicio} onChange={e => cambiarSubtipo(e.target.value)}>
               <option value="">— Seleccione —</option>
               {subtiposProyecto.map(t => <option key={t.id} value={t.id}>{t.padre?.nombre ? `${t.padre.nombre} · ` : ''}{t.nombre}</option>)}
             </select>
@@ -483,14 +486,60 @@ export default function Servicios() {
           </div>
 
           <div className="sm:col-span-2">
-            <label className="label">Ascensores *</label>
-            <AscensoresChecklist
-              ascensores={ascensoresFiltrados}
-              seleccion={form.ascensores_seleccion}
-              onToggle={toggleAscensor}
-              onMonto={cambiarMontoAscensor}
-              hayCliente={!!form.id_cliente}
-            />
+            <div className="flex items-center justify-between">
+              <label className="label">Ascensores *</label>
+              {!esEdicion && <button type="button" onClick={agregarAscensor} className="text-xs text-brand-700 hover:underline" disabled={!form.id_cliente}>+ Agregar ascensor</button>}
+            </div>
+            {!form.id_cliente ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 text-slate-500 text-xs p-3">Seleccione primero un cliente.</div>
+            ) : (
+              <div className="space-y-3">
+                {form.ascensores.map((a, idx) => (
+                  <div key={idx} className="rounded-lg ring-1 ring-slate-200 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-4 text-xs">
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                          <input type="radio" name={`asc_modo_${idx}`} checked={a.modo === 'existente'}
+                            onChange={() => cambiarAscensor(idx, 'modo', 'existente')} disabled={esEdicion} />
+                          Ascensor existente
+                        </label>
+                        <label className={`inline-flex items-center gap-1.5 ${esEdicion ? 'opacity-40 cursor-default' : 'cursor-pointer'}`}>
+                          <input type="radio" name={`asc_modo_${idx}`} checked={a.modo === 'nuevo'}
+                            onChange={() => cambiarAscensor(idx, 'modo', 'nuevo')} disabled={esEdicion} />
+                          Nuevo (a instalar)
+                        </label>
+                      </div>
+                      {!esEdicion && form.ascensores.length > 1 && (
+                        <button type="button" onClick={() => quitarAscensor(idx)} className="text-xs text-rose-600 hover:underline shrink-0">Quitar</button>
+                      )}
+                    </div>
+
+                    {a.modo === 'existente' ? (
+                      <select className="select" value={a.id_ascensor} onChange={e => cambiarAscensor(idx, 'id_ascensor', e.target.value)}>
+                        <option value="">— Seleccione un ascensor —</option>
+                        {ascensoresFiltrados.map(as => (
+                          <option key={as.id} value={as.id}>{as.codigo}{as.edificio?.nombre ? ` · ${as.edificio.nombre}` : ''}{as.ubicacion ? ` · ${as.ubicacion}` : ''}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <select className="select sm:col-span-2" value={a.ascensor_nuevo.id_edificio} onChange={e => cambiarAscensorNuevo(idx, 'id_edificio', e.target.value)}>
+                          <option value="">— Edificio / obra donde se instalará —</option>
+                          {edificiosCliente.map(ed => <option key={ed.id} value={ed.id}>{ed.nombre}{ed.distrito ? ` · ${ed.distrito}` : ''}</option>)}
+                        </select>
+                        <input className="input" placeholder="Ubicación (piso / zona)" value={a.ascensor_nuevo.ubicacion} onChange={e => cambiarAscensorNuevo(idx, 'ubicacion', e.target.value)} />
+                        <input className="input" type="number" placeholder="Pisos" value={a.ascensor_nuevo.pisos} onChange={e => cambiarAscensorNuevo(idx, 'pisos', e.target.value)} />
+                        <input className="input" placeholder="Capacidad (kg / personas)" value={a.ascensor_nuevo.capacidad} onChange={e => cambiarAscensorNuevo(idx, 'capacidad', e.target.value)} />
+                        <input className="input" placeholder="Marca" value={a.ascensor_nuevo.marca} onChange={e => cambiarAscensorNuevo(idx, 'marca', e.target.value)} />
+                        <input className="input" placeholder="Modelo" value={a.ascensor_nuevo.modelo} onChange={e => cambiarAscensorNuevo(idx, 'modelo', e.target.value)} />
+                        <input className="input sm:col-span-2" placeholder="Descripción" value={a.ascensor_nuevo.descripcion} onChange={e => cambiarAscensorNuevo(idx, 'descripcion', e.target.value)} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {esEdicion && <p className="text-[11px] text-slate-500">Para instalar un ascensor nuevo, créalo desde un proyecto nuevo o una cotización.</p>}
+              </div>
+            )}
           </div>
 
           <div className="sm:col-span-2"><label className="label">Título *</label><input className="input" required value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} /></div>
@@ -514,45 +563,17 @@ export default function Servicios() {
             </select>
           </div>
           <div>
-            <label className="label">Precio total (S/) *</label>
-            <input type="number" step="0.01" className="input" required value={form.precio_interno} onChange={e => cambiarPrecioTotal(e.target.value)} />
-            {precioConfigurado && (
-              <div className="mt-1 text-[11px] flex items-center gap-2">
-                {precioCoincideCatalogo ? (
-                  <span className="text-emerald-700">✓ Precio aplicado del catálogo del cliente</span>
-                ) : (
-                  <>
-                    <span className="text-slate-500">
-                      Catálogo del cliente: <span className="font-mono">{formatMonto(precioConfigurado.precio, precioConfigurado.moneda)}</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => cambiarPrecioTotal(Number(precioConfigurado.precio || 0).toFixed(2))}
-                      className="text-brand-700 hover:underline"
-                    >
-                      Aplicar
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+            <label className="label">Precio del proyecto *</label>
+            <div className="flex gap-2">
+              <select className="select w-24" value={form.moneda} onChange={e => setForm(f => ({ ...f, moneda: e.target.value }))}>
+                <option value="PEN">PEN</option><option value="USD">USD</option>
+              </select>
+              <input className="input flex-1" type="number" step="0.01" min="0" required placeholder="0.00"
+                value={form.precio_interno} onChange={e => setForm(f => ({ ...f, precio_interno: e.target.value }))} />
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1">Precio global del proyecto; cubre {filasValidas.length || 1} ascensor(es).</p>
           </div>
-          <div>
-            <label className="label">Moneda</label>
-            <select className="select" value={form.moneda} onChange={e => setForm(f => ({ ...f, moneda: e.target.value }))}>
-              <option value="PEN">PEN (S/)</option><option value="USD">USD ($)</option>
-            </select>
-          </div>
-
-          <div className="sm:col-span-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs flex flex-wrap items-center gap-3">
-            <span className="text-slate-600">Ascensores seleccionados: <strong>{ascensoresSeleccionados.length}</strong></span>
-            <span className="text-slate-600">Suma actual: <strong className="font-mono">S/ {sumaActual.toFixed(2)}</strong></span>
-            {ascensoresSeleccionados.length > 0 && (
-              sumaOk ? <span className="text-emerald-700">✓ coincide con el precio total</span>
-              : <span className="text-rose-700">{diferenciaSuma > 0 ? `Sobran S/ ${diferenciaSuma.toFixed(2)}` : `Faltan S/ ${(-diferenciaSuma).toFixed(2)}`}</span>
-            )}
-            <button type="button" onClick={repartirAhora} className="btn-secondary text-xs ml-auto" disabled={ascensoresSeleccionados.length === 0 || !form.precio_interno}>Repartir parejo</button>
-          </div>
+          <div className="hidden sm:block" />
 
           <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={form.observaciones} onChange={e => setForm(f => ({ ...f, observaciones: e.target.value }))} /></div>
           {!esEdicion && (

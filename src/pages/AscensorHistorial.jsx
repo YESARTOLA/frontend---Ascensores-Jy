@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { ascensoresService } from '../services';
+import { ascensoresService, tiposAscensorService, tiposServicioService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
+import Modal from '../components/common/Modal.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
@@ -10,6 +11,7 @@ import { generarFichaAscensorPDF } from '../utils/pdfReport.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
 import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
+import AscensorForm, { ascensorToForm } from '../components/ascensores/AscensorForm.jsx';
 
 export default function AscensorHistorial() {
   const { id } = useParams();
@@ -17,14 +19,47 @@ export default function AscensorHistorial() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exportandoPdf, setExportandoPdf] = useState(false);
-  const { puedeVerPrecio } = useAuth();
+  const { puedeVerPrecio, esSuperAdmin, esAdmin, esCoordinador } = useAuth();
+  const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
   const toast = useToast();
   const backTo = location.state?.from || '/ascensores';
   const backLabel = location.state?.fromLabel ? `← ${location.state.fromLabel}` : '← Ascensores';
 
+  // Edición del ascensor (reutiliza el mismo AscensorForm del listado).
+  const [tiposAscensor, setTiposAscensor] = useState([]);
+  const [tiposServicio, setTiposServicio] = useState([]);
+  const [openEdit, setOpenEdit] = useState(false);
+  const [editForm, setEditForm] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const cargar = () => ascensoresService.historial(id).then(setData);
   useEffect(() => {
-    ascensoresService.historial(id).then(setData).finally(() => setLoading(false));
+    cargar().finally(() => setLoading(false));
+    if (puedeEditar) {
+      tiposAscensorService.list().then(setTiposAscensor).catch(() => setTiposAscensor([]));
+      tiposServicioService.list().then(setTiposServicio).catch(() => setTiposServicio([]));
+    }
   }, [id]);
+
+  const abrirEdit = async () => {
+    try {
+      const full = await ascensoresService.get(id);
+      setEditForm(ascensorToForm(full));
+      setOpenEdit(true);
+    } catch { toast.error('No se pudo cargar el ascensor'); }
+  };
+
+  const guardarEdit = async () => {
+    if (savingEdit) return;
+    setSavingEdit(true);
+    try {
+      await ascensoresService.update(id, editForm);
+      toast.success('Ascensor actualizado');
+      setOpenEdit(false);
+      await cargar();
+    } catch (err) { toast.error(err.response?.data?.error || 'Error al guardar'); }
+    finally { setSavingEdit(false); }
+  };
 
   if (loading) return <Loader />;
   if (!data) return <p>Ascensor no encontrado</p>;
@@ -58,6 +93,7 @@ export default function AscensorHistorial() {
         subtitle={`${ascensor.tipo} · ${ascensor.marca} ${ascensor.modelo} · ${nombreEdificio(ascensor.edificio)} · ${nombreCliente(ascensor.edificio?.cliente)}`}
         actions={
           <>
+            {puedeEditar && <button onClick={abrirEdit} className="btn-secondary">Editar</button>}
             <button onClick={exportarPdf} disabled={exportandoPdf} className="btn-primary">
               {exportandoPdf ? 'Generando…' : 'Exportar PDF'}
             </button>
@@ -238,6 +274,25 @@ export default function AscensorHistorial() {
           </ol>
         </div>
       </div>
+
+      {puedeEditar && (
+        <Modal open={openEdit} onClose={() => setOpenEdit(false)} title={`Editar ascensor ${ascensor.codigo}`} size="lg"
+          footer={<>
+            <button className="btn-secondary" onClick={() => setOpenEdit(false)} disabled={savingEdit}>Cancelar</button>
+            <button className="btn-primary" type="submit" form="ascensor-edit-form" disabled={savingEdit}>{savingEdit ? 'Guardando…' : 'Guardar'}</button>
+          </>}>
+          {editForm && (
+            <AscensorForm
+              formId="ascensor-edit-form"
+              value={editForm}
+              onChange={setEditForm}
+              onSubmit={guardarEdit}
+              tipos={tiposAscensor}
+              tiposServicio={tiposServicio}
+            />
+          )}
+        </Modal>
+      )}
     </>
   );
 }

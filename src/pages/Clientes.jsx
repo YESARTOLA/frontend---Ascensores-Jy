@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { clientesService, edificiosService, configuracionService, tiposServicioService } from '../services';
+import { clientesService, edificiosService, configuracionService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -26,19 +26,26 @@ const CON_CONTRATO = [
   { value: '0', label: 'Sin contrato adjunto' }
 ];
 
-function estadoContratoBadge(c, diasAviso) {
-  if (!c.contrato_inicio || !c.contrato_fin) return { texto: 'Sin contrato', clase: 'bg-slate-100 text-slate-600' };
+// Teléfono mostrado en el listado: el del contacto principal, con el teléfono
+// general del cliente como respaldo cuando el contacto no tiene uno cargado.
+const telefonoContacto = (c) =>
+  formatTelefono(c.contacto_principal_telefono) || formatTelefono(c.telefono);
+
+function estadoContratoBadge(inicio, fin, diasAviso) {
+  if (!inicio || !fin) return { texto: 'Sin contrato', clase: 'bg-slate-100 text-slate-600' };
   const hoy = hoyISO();
-  const fin = String(c.contrato_fin).slice(0, 10);
-  const inicio = String(c.contrato_inicio).slice(0, 10);
-  if (fin < hoy) return { texto: 'Vencido', clase: 'bg-red-100 text-red-700' };
-  if (inicio > hoy) return { texto: 'Pendiente', clase: 'bg-slate-100 text-slate-600' };
+  const f = String(fin).slice(0, 10);
+  const i = String(inicio).slice(0, 10);
+  if (f < hoy) return { texto: 'Vencido', clase: 'bg-red-100 text-red-700' };
+  if (i > hoy) return { texto: 'Pendiente', clase: 'bg-slate-100 text-slate-600' };
   const dHoy = new Date(hoy + 'T00:00:00.000Z');
-  const dFin = new Date(fin + 'T00:00:00.000Z');
+  const dFin = new Date(f + 'T00:00:00.000Z');
   const dias = Math.round((dFin - dHoy) / 86400000);
-  if (dias <= diasAviso) return { texto: `Por vencer (${dias}d)`, clase: 'bg-amber-100 text-amber-700' };
+  if (dias <= diasAviso) return { texto: 'Por vencer', sub: `${dias}d`, clase: 'bg-amber-100 text-amber-700' };
   return { texto: 'Vigente', clase: 'bg-emerald-100 text-emerald-700' };
 }
+
+const AREAS_CONTRATO_LABEL = { servicio: 'Servicios', proyecto: 'Proyectos' };
 
 export default function Clientes() {
   const [filtros, setFiltros] = useState({ q: '', distrito: '', tipo_ascensor: '', clasificacion: '', estado_contrato: '', con_contrato: '' });
@@ -54,16 +61,37 @@ export default function Clientes() {
   const [diasAviso, setDiasAviso] = useState(30);
   const [distritos, setDistritos] = useState([]);
   const [tiposAscensor, setTiposAscensor] = useState([]);
-  const [tiposServicio, setTiposServicio] = useState([]);
   const toast = useToast();
-  const { esSuperAdmin, esAdmin, esCoordinador, esContabilidad } = useAuth();
+  const { esSuperAdmin, esAdmin, esCoordinador, esContabilidad, accesoServicios, accesoProyectos } = useAuth();
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador || esContabilidad;
+
+  // Áreas de contrato visibles según el ámbito del usuario (Servicios/Proyectos).
+  const areasContrato = ['servicio', 'proyecto'].filter(a => a === 'servicio' ? accesoServicios : accesoProyectos);
+
+  // Resumen de contrato por área para el listado (badge + fechas + PDF).
+  const renderContratoCell = (c) => (
+    <div className="space-y-1">
+      {areasContrato.map(area => {
+        const inicio = c[`contrato_${area}_inicio`];
+        const fin = c[`contrato_${area}_fin`];
+        const arch = c[`archivo_contrato_${area}`];
+        const badge = estadoContratoBadge(inicio, fin, diasAviso);
+        return (
+          <div key={area} className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-slate-400 w-[68px] shrink-0">{AREAS_CONTRATO_LABEL[area]}</span>
+            <span className={`badge ${badge.clase} whitespace-nowrap`}>{badge.texto}{badge.sub ? ` · ${badge.sub}` : ''}</span>
+            {(inicio || fin) && <span className="text-slate-500 whitespace-nowrap">{formatFecha(inicio)} → {formatFecha(fin)}</span>}
+            {arch && <FileLink archivo={arch} className="text-brand-700 hover:underline">PDF</FileLink>}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   useEffect(() => {
     configuracionService.get('CLIENTES_DIAS_AVISO_VENCIMIENTO_CONTRATO')
       .then(r => setDiasAviso(Number(r.valor) || 30))
       .catch(() => {});
-    tiposServicioService.list().then(setTiposServicio).catch(() => setTiposServicio([]));
   }, []);
 
   const opcionesEstadoContrato = useMemo(() => estadosContrato(diasAviso), [diasAviso]);
@@ -94,17 +122,15 @@ export default function Clientes() {
 
   const abrirNuevo = () => { setForm(clienteFormInicial); setEditId(null); setOpen(true); };
   const abrirEdit = async (c) => {
-    // El listado no trae archivos ni precios; los pedimos del detalle.
+    // El listado no trae archivos; los pedimos del detalle.
     let archivos = Array.isArray(c.archivos) ? c.archivos : [];
-    let precios = Array.isArray(c.precios) ? c.precios : [];
-    if (archivos.length === 0 || precios.length === 0) {
+    if (archivos.length === 0) {
       try {
         const full = await clientesService.get(c.id);
-        if (archivos.length === 0) archivos = Array.isArray(full?.archivos) ? full.archivos : [];
-        if (precios.length === 0) precios = Array.isArray(full?.precios) ? full.precios : [];
+        archivos = Array.isArray(full?.archivos) ? full.archivos : [];
       } catch { /* si falla, seguimos con lo que haya */ }
     }
-    setForm(clienteToForm(c, archivos, precios));
+    setForm(clienteToForm(c, archivos));
     setEditId(c.id);
     setOpen(true);
   };
@@ -236,16 +262,22 @@ export default function Clientes() {
                   <th className="table-th">Documento</th>
                   <th className="table-th">Teléfono</th>
                   <th className="table-th">Edificios</th>
-                  <th className="table-th">Inicio contrato</th>
-                  <th className="table-th">Fin contrato</th>
-                  <th className="table-th">Estado contrato</th>
-                  <th className="table-th">Contrato</th>
+                  {areasContrato.map(area => {
+                    const et = areasContrato.length > 1 ? ` (${AREAS_CONTRATO_LABEL[area]})` : '';
+                    return (
+                      <Fragment key={area}>
+                        <th className="table-th">Inicio contrato{et}</th>
+                        <th className="table-th">Fin contrato{et}</th>
+                        <th className="table-th">Estado contrato{et}</th>
+                        <th className="table-th">Contrato{et}</th>
+                      </Fragment>
+                    );
+                  })}
                   <th className="table-th">Registrado por</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.map(c => {
-                    const badge = estadoContratoBadge(c, diasAviso);
                     return (
                       <tr key={c.id} className="table-row-hover">
                         <td className="table-td">
@@ -260,18 +292,47 @@ export default function Clientes() {
                           {c.contacto_principal_nombre && <div className="text-xs text-slate-500">{c.contacto_principal_nombre}</div>}
                         </td>
                         <td className="table-td"><span className="text-xs">{c.tipo_documento}</span> <span className="font-mono">{c.numero_documento || '—'}</span></td>
-                        <td className="table-td font-mono text-xs">{formatTelefono(c.telefono)}</td>
-                        <td className="table-td">{c._count?.edificios ?? 0}</td>
-                        <td className="table-td text-xs">{formatFecha(c.contrato_inicio)}</td>
-                        <td className="table-td text-xs">{formatFecha(c.contrato_fin)}</td>
+                        <td className="table-td font-mono text-xs">{telefonoContacto(c) || <span className="text-slate-400">—</span>}</td>
                         <td className="table-td">
-                          <span className={`badge ${badge.clase}`}>{badge.texto}</span>
+                          <div>{c._count?.edificios ?? 0}</div>
+                          {c.edificios_coincidentes?.length > 0 && (
+                            <div className="text-[11px] text-slate-400 mt-0.5 leading-tight">
+                              <span className="italic">Coincide:</span>{' '}
+                              {c.edificios_coincidentes.slice(0, 2).map((e, i) => (
+                                <span key={e.id}>
+                                  {i > 0 && ', '}
+                                  <span className="font-semibold text-amber-700 bg-amber-50 rounded px-1 py-0.5">{e.nombre}</span>
+                                </span>
+                              ))}
+                              {c.edificios_coincidentes.length > 2 && (
+                                <span className="italic"> +{c.edificios_coincidentes.length - 2} más</span>
+                              )}
+                            </div>
+                          )}
                         </td>
-                        <td className="table-td">
-                          {c.archivo_contrato
-                            ? <FileLink archivo={c.archivo_contrato} className="text-brand-700 hover:underline text-xs">Ver PDF</FileLink>
-                            : <span className="text-slate-400 text-xs">—</span>}
-                        </td>
+                        {areasContrato.map(area => {
+                          const inicio = c[`contrato_${area}_inicio`];
+                          const fin = c[`contrato_${area}_fin`];
+                          const arch = c[`archivo_contrato_${area}`];
+                          const badge = estadoContratoBadge(inicio, fin, diasAviso);
+                          return (
+                            <Fragment key={area}>
+                              <td className="table-td text-xs">{formatFecha(inicio)}</td>
+                              <td className="table-td text-xs">{formatFecha(fin)}</td>
+                              <td className="table-td">
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span className={`badge ${badge.clase} whitespace-nowrap`}>{badge.texto}</span>
+                                  {badge.sub && <span className="text-[11px] font-semibold text-amber-700">Faltan {badge.sub}</span>}
+                                </div>
+                              </td>
+                              <td className="table-td">
+                                {arch
+                                  ? <FileLink archivo={arch} className="text-brand-700 hover:underline text-xs">Ver PDF</FileLink>
+                                  : <span className="text-slate-400 text-xs">—</span>}
+                              </td>
+                            </Fragment>
+                          );
+                        })}
                         <td className="table-td">
                           {c.usuario_registrador ? (
                             <>
@@ -296,30 +357,21 @@ export default function Clientes() {
             {/* Cards móvil */}
             <div className="md:hidden divide-y divide-slate-100">
               {data.map(c => {
-                const badge = estadoContratoBadge(c, diasAviso);
                 return (
                   <div key={c.id} className="p-4 flex items-start gap-3">
                     <div className="h-9 w-9 rounded-full bg-brand-50 text-brand-700 grid place-items-center font-semibold text-sm shrink-0">{c.nombre[0]}</div>
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-slate-800 truncate">{c.nombre}</div>
                       <div className="text-xs text-slate-500">{c.tipo_documento} {c.numero_documento || ''}</div>
-                      <div className="text-xs text-slate-500 mt-0.5 font-mono">{formatTelefono(c.telefono)}</div>
-                      {(c.contrato_inicio || c.contrato_fin) && (
-                        <div className="text-xs text-slate-500 mt-0.5">
-                          Contrato: <span className="text-slate-700">{formatFecha(c.contrato_inicio)} → {formatFecha(c.contrato_fin)}</span>
-                        </div>
-                      )}
-                      <div className="mt-1 flex items-center gap-2 flex-wrap">
-                        <span className={`badge ${badge.clase}`}>{badge.texto}</span>
-                        {c.clasificacion && clasificacionByCodigo[c.clasificacion] && (
+                      <div className="text-xs text-slate-500 mt-0.5 font-mono">{telefonoContacto(c)}</div>
+                      <div className="mt-1.5">{renderContratoCell(c)}</div>
+                      {c.clasificacion && clasificacionByCodigo[c.clasificacion] && (
+                        <div className="mt-1">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${clasificacionByCodigo[c.clasificacion].color}`}>
                             {clasificacionByCodigo[c.clasificacion].etiqueta}
                           </span>
-                        )}
-                        {c.archivo_contrato && (
-                          <FileLink archivo={c.archivo_contrato} className="text-xs text-brand-700">Ver contrato</FileLink>
-                        )}
-                      </div>
+                        </div>
+                      )}
                       <div className="mt-2 flex gap-3">
                         <Link to={`/clientes/${c.id}`} className="text-xs text-brand-700 font-medium">Ver 360 →</Link>
                         {puedeEditar && <button onClick={() => abrirEdit(c)} className="text-xs text-slate-600">Editar</button>}
@@ -351,7 +403,6 @@ export default function Clientes() {
           onChange={setForm}
           onSubmit={guardar}
           clasificaciones={clasificaciones}
-          tiposServicio={tiposServicio}
         />
       </Modal>
 

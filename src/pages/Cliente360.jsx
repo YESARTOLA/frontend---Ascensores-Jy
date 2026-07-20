@@ -11,6 +11,8 @@ import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensor
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
 import { coordsDe } from '../utils/mapa.js';
 import EdificioForm, { edificioFormInicial, edificioToForm } from '../components/edificios/EdificioForm.jsx';
+import ImpactoEliminacionEdificio from '../components/edificios/ImpactoEliminacionEdificio.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 
 const ESTADOS_PENDIENTE = ['Borrador', 'Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida'];
 const ESTADOS_CURSO = ['En camino', 'En curso'];
@@ -23,8 +25,12 @@ export default function Cliente360() {
   const [clasificaciones, setClasificaciones] = useState([]);
   const [tiposEdificio, setTiposEdificio] = useState([]);
   const [distritos, setDistritos] = useState([]);
-  const { puedeVerPrecio, esSuperAdmin, esAdmin, esCoordinador } = useAuth();
+  const { puedeVerPrecio, esSuperAdmin, esAdmin, esCoordinador, accesoServicios, accesoProyectos } = useAuth();
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
+  // Solo cuando el usuario ve ambas áreas tiene sentido desglosar Proyectos/Servicios.
+  const mostrarDesglose = accesoServicios && accesoProyectos;
+  // PATCH /edificios/:id/estado está restringido a super_admin y admin.
+  const puedeCambiarEstadoEd = esSuperAdmin || esAdmin;
   const { open: abrirPreview } = useFilePreview();
   const toast = useToast();
   // Modal de edificio (alta/edición).
@@ -32,9 +38,9 @@ export default function Cliente360() {
   const [edForm, setEdForm] = useState(edificioFormInicial);
   const [edId, setEdId] = useState(null);
   const [savingEd, setSavingEd] = useState(false);
-  // Inactivar/reactivar en bloque todos los edificios del cliente (solo SA).
-  const [openEdMasivo, setOpenEdMasivo] = useState(false);
-  const [cambiandoEdMasivo, setCambiandoEdMasivo] = useState(false);
+  // Confirmación de baja lógica del edificio (la reactivación no la requiere).
+  const [edAEliminar, setEdAEliminar] = useState(null);
+  const [cambiandoEstadoEd, setCambiandoEstadoEd] = useState(false);
 
   const cargar = () => clientesService.vista360(id).then(setData);
   useEffect(() => {
@@ -65,32 +71,19 @@ export default function Cliente360() {
     finally { setSavingEd(false); }
   };
 
-  // Inactiva/reactiva un edificio puntual desde el 360 (solo SA).
+  // Baja/alta lógica del edificio: nunca se borra físicamente, solo alterna
+  // `estado`. Eliminar (estado 0) arrastra en cascada todo lo que depende del
+  // edificio, incluidos sus ingresos; por eso pasa por doble confirmación.
   const cambiarEstadoEdificio = async (ed, estado) => {
+    if (cambiandoEstadoEd) return;
+    setCambiandoEstadoEd(true);
     try {
       await edificiosService.setEstado(ed.id, estado);
-      toast.success(estado === 0 ? 'Edificio inactivado' : 'Edificio reactivado');
+      toast.success(estado === 1 ? 'Edificio reactivado' : 'Edificio eliminado');
+      setEdAEliminar(null);
       await cargar();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'No se pudo cambiar el estado del edificio');
-    }
-  };
-
-  const cambiarEstadoEdificiosMasivo = async (estado) => {
-    if (cambiandoEdMasivo) return;
-    setCambiandoEdMasivo(true);
-    try {
-      const { afectados } = await edificiosService.setEstadoCliente(Number(id), estado);
-      toast.success(afectados > 0
-        ? `${afectados} edificio(s) ${estado === 0 ? 'inactivado(s)' : 'reactivado(s)'}`
-        : 'No había edificios para cambiar');
-      setOpenEdMasivo(false);
-      await cargar();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'No se pudo cambiar el estado de los edificios');
-    } finally {
-      setCambiandoEdMasivo(false);
-    }
+    } catch (err) { toast.error(err.response?.data?.error || 'Error al cambiar el estado'); }
+    finally { setCambiandoEstadoEd(false); }
   };
 
   const grupos = useMemo(() => {
@@ -129,17 +122,22 @@ export default function Cliente360() {
             <Info label="Teléfono" value={formatTelefono(data.telefono) || '—'} />
             <Info label="WhatsApp" value={formatTelefono(data.whatsapp) || '—'} />
             <Info label="Correo" value={data.correo || '—'} cols={2} />
-            <Info label="Inicio contrato" value={formatFecha(data.contrato_inicio)} />
-            <Info label="Fin contrato" value={formatFecha(data.contrato_fin)} />
-            <Info
-              label="Contrato firmado"
-              cols={2}
-              value={data.archivo_contrato
-                ? <FileLink archivo={data.archivo_contrato} className="text-brand-700 hover:underline text-sm break-all inline-flex items-center gap-1">
-                    📎 {data.archivo_contrato.nombre_original}
-                  </FileLink>
-                : '—'}
-            />
+            {['servicio', 'proyecto']
+              .filter(area => area === 'servicio' ? accesoServicios : accesoProyectos)
+              .map(area => {
+                const etiqueta = area === 'servicio' ? 'Servicios' : 'Proyectos';
+                const arch = data[`archivo_contrato_${area}`];
+                return (
+                  <Info key={area} cols={2} label={`Contrato · ${etiqueta}`} value={
+                    <span className="text-sm">
+                      {formatFecha(data[`contrato_${area}_inicio`])} → {formatFecha(data[`contrato_${area}_fin`])}
+                      {arch && (
+                        <> · <FileLink archivo={arch} className="text-brand-700 hover:underline inline-flex items-center gap-1">📎 {arch.nombre_original}</FileLink></>
+                      )}
+                    </span>
+                  } />
+                );
+              })}
             <Info label="Registro" value={formatFechaHora(data.date_time_registration)} cols={2} />
           </div>
         </div>
@@ -186,7 +184,10 @@ export default function Cliente360() {
                   <span className="text-lg leading-none">📎</span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm text-brand-700 truncate" title={a.archivo?.nombre_original}>{a.archivo?.nombre_original}</div>
-                    {a.descripcion && <div className="text-xs text-slate-500 truncate">{a.descripcion}</div>}
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[10px] ${a.area === 'proyecto' ? 'badge-violet' : 'badge-blue'}`}>{a.area === 'proyecto' ? 'Proyectos' : 'Servicios'}</span>
+                      {a.descripcion && <span className="text-xs text-slate-500 truncate">{a.descripcion}</span>}
+                    </div>
                   </div>
                 </button>
               ))}
@@ -196,27 +197,22 @@ export default function Cliente360() {
 
         <div className="card lg:col-span-3">
           <div className="card-header flex items-center justify-between">
-            <h3 className="card-title">Edificios / Obras ({data.edificios?.length || 0})</h3>
-            <div className="flex items-center gap-2">
-              {esSuperAdmin && (data.edificios?.length || 0) > 0 && (
-                <button onClick={() => setOpenEdMasivo(true)} className="btn-secondary btn-sm">Inactivar/Reactivar</button>
-              )}
-              {puedeEditar && <button onClick={abrirNuevoEdificio} className="btn-primary btn-sm">+ Nuevo edificio</button>}
-            </div>
+            <h3 className="card-title">Edificios / Obras ({data.edificios?.filter(e => e.estado === 1).length || 0})</h3>
+            {puedeEditar && <button onClick={abrirNuevoEdificio} className="btn-primary btn-sm">+ Nuevo edificio</button>}
           </div>
           <div className="card-body space-y-3">
             {(!data.edificios || data.edificios.length === 0) && (
               <p className="text-sm text-slate-500">Sin edificios registrados. Crea el primero para poder agregarle ascensores.</p>
             )}
             {data.edificios?.map(ed => (
-              <div key={ed.id} className="rounded-lg ring-1 ring-slate-200 p-3">
+              <div key={ed.id} className={`rounded-lg ring-1 p-3 ${ed.estado === 1 ? 'ring-slate-200' : 'ring-slate-200 bg-slate-50/70 opacity-75'}`}>
                 <div className="flex items-start justify-between gap-2 flex-wrap">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-slate-800">{ed.nombre}</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-slate-200">{ed.tipo}</span>
-                      {ed.estado === 0 && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 ring-1 ring-rose-200">Inactivo</span>
+                      {ed.estado !== 1 && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 ring-1 ring-rose-200">Eliminado</span>
                       )}
                     </div>
                     <div className="text-xs text-slate-500">{[ed.direccion, ed.distrito].filter(Boolean).join(' · ') || '—'}</div>
@@ -225,23 +221,26 @@ export default function Cliente360() {
                     {coordsDe(ed) && (
                       <a href={`https://www.google.com/maps/search/?api=1&query=${ed.latitud},${ed.longitud}`} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline">📍 Mapa</a>
                     )}
-                    {puedeEditar && <button onClick={() => abrirEditarEdificio(ed)} className="text-slate-600 hover:underline">Editar</button>}
-                    {esSuperAdmin && (ed.estado === 0
-                      ? <button onClick={() => cambiarEstadoEdificio(ed, 1)} className="text-emerald-600 hover:underline">Reactivar</button>
-                      : <button onClick={() => cambiarEstadoEdificio(ed, 0)} className="text-rose-600 hover:underline">Inactivar</button>)}
+                    {puedeEditar && ed.estado === 1 && <button onClick={() => abrirEditarEdificio(ed)} className="text-slate-600 hover:underline">Editar</button>}
+                    {puedeCambiarEstadoEd && (ed.estado === 1
+                      ? <button onClick={() => setEdAEliminar(ed)} className="text-rose-600 hover:underline">Eliminar</button>
+                      : <button onClick={() => cambiarEstadoEdificio(ed, 1)} disabled={cambiandoEstadoEd} className="text-emerald-700 hover:underline disabled:opacity-50">Reactivar</button>
+                    )}
                   </div>
                 </div>
                 <div className="mt-2 grid sm:grid-cols-2 gap-2">
                   {(ed.ascensores || []).length === 0 && <p className="text-xs text-slate-400">Sin ascensores en este edificio</p>}
                   {(ed.ascensores || []).map(a => (
-                    <Link key={a.id} to={`/ascensores/${a.id}`} state={{ from: `/clientes/${id}`, fromLabel: data.nombre }} className="block rounded-md ring-1 ring-slate-100 hover:ring-brand-200 p-2 transition">
+                    <Link key={a.id} to={`/ascensores/${a.id}`} state={{ from: `/clientes/${id}`, fromLabel: data.nombre }} className={`block rounded-md ring-1 p-2 transition ${a.estado === 0 ? 'ring-slate-100 bg-slate-50/70 opacity-75 hover:ring-slate-200' : 'ring-slate-100 hover:ring-brand-200'}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="font-mono text-[11px] text-slate-500">{a.codigo}</div>
                           <div className="text-sm text-slate-800">{a.tipo} · {a.marca} {a.modelo}</div>
                           {a.ubicacion && <div className="text-xs text-slate-500">{a.ubicacion}</div>}
                         </div>
-                        <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>
+                        {a.estado === 0
+                          ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 ring-1 ring-rose-200 shrink-0">Inactivo</span>
+                          : <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>}
                       </div>
                     </Link>
                   ))}
@@ -251,13 +250,19 @@ export default function Cliente360() {
           </div>
         </div>
 
-        <SeccionServicios titulo="Servicios pendientes" data={grupos.pendientes} accent="amber" puedeVerPrecio={puedeVerPrecio} />
-        <SeccionServicios titulo="En curso" data={grupos.curso} accent="violet" puedeVerPrecio={puedeVerPrecio} />
-        <SeccionServicios titulo="Finalizados" data={grupos.finalizados} accent="green" puedeVerPrecio={puedeVerPrecio} />
+        <SeccionServicios titulo="Servicios pendientes" data={grupos.pendientes} accent="amber" puedeVerPrecio={puedeVerPrecio} clienteId={id} clienteNombre={data.nombre} mostrarDesglose={mostrarDesglose} />
+        <SeccionServicios titulo="En curso" data={grupos.curso} accent="violet" puedeVerPrecio={puedeVerPrecio} clienteId={id} clienteNombre={data.nombre} mostrarDesglose={mostrarDesglose} />
+        <SeccionServicios titulo="Finalizados" data={grupos.finalizados} accent="green" puedeVerPrecio={puedeVerPrecio} clienteId={id} clienteNombre={data.nombre} mostrarDesglose={mostrarDesglose} />
 
         {puedeVerPrecio && (
           <div className="card lg:col-span-3">
-            <div className="card-header"><h3 className="card-title">Cotizaciones ({data.cotizaciones?.length || 0})</h3></div>
+            <div className="card-header"><h3 className="card-title">
+              Cotizaciones ({data.cotizaciones?.length || 0})
+              {mostrarDesglose && data.cotizaciones?.length > 0 && (() => {
+                const nProy = data.cotizaciones.filter(c => c.tipo_servicio?.categoria_funcional === 'PROYECTOS').length;
+                return <span className="ml-2 text-xs font-normal text-slate-500">· {nProy} proyecto(s) · {data.cotizaciones.length - nProy} servicio(s)</span>;
+              })()}
+            </h3></div>
             <div className="card-body">
               {!data.cotizaciones?.length ? <p className="text-sm text-slate-500">Sin cotizaciones</p> : (
                 <div className="overflow-x-auto scroll-thin">
@@ -276,7 +281,7 @@ export default function Cliente360() {
                         const v = c.versiones?.[0];
                         return (
                           <tr key={c.id} className="table-row-hover">
-                            <td className="table-td"><Link to={`/cotizaciones/${c.id}`} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link></td>
+                            <td className="table-td"><Link to={`/cotizaciones/${c.id}`} state={{ from: `/clientes/${id}`, fromLabel: data.nombre }} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link></td>
                             <td className="table-td text-xs">{c.tipo_servicio?.nombre || '—'}</td>
                             <td className="table-td">v{v?.numero_version || c.version_activa}</td>
                             <td className="table-td text-xs">{formatFecha(v?.fecha_validez)}</td>
@@ -397,7 +402,7 @@ export default function Cliente360() {
                   {data.cobros?.length === 0 && <tr><td colSpan="5" className="table-td text-center text-slate-400 py-6">Sin cobros</td></tr>}
                   {data.cobros?.map(c => (
                     <tr key={c.id} className="table-row-hover">
-                      <td className="table-td"><Link to={`/cobros/${c.id}`} className="text-brand-700 hover:underline text-xs">Ver</Link></td>
+                      <td className="table-td"><Link to={`/cobros/${c.id}`} state={{ from: `/clientes/${id}`, fromLabel: data.nombre }} className="text-brand-700 hover:underline text-xs">Ver</Link></td>
                       <td className="table-td font-mono">{formatMonto(c.monto_total, c.moneda)}</td>
                       <td className="table-td font-mono text-emerald-700">{formatMonto(c.total_abonado, c.moneda)}</td>
                       <td className="table-td font-mono text-rose-700">{formatMonto(c.saldo_pendiente, c.moneda)}</td>
@@ -443,6 +448,16 @@ export default function Cliente360() {
         </div>
       </div>
 
+      <ConfirmarEliminacion
+        open={!!edAEliminar}
+        onClose={() => setEdAEliminar(null)}
+        titulo="Eliminar edificio / obra"
+        palabraClave="ELIMINAR"
+        textoBoton="Eliminar edificio"
+        onConfirmar={() => cambiarEstadoEdificio(edAEliminar, 0)}
+        descripcion={edAEliminar && <ImpactoEliminacionEdificio edificio={edAEliminar} />}
+      />
+
       <Modal open={openEd} onClose={() => setOpenEd(false)} title={edId ? 'Editar edificio / obra' : 'Nuevo edificio / obra'} size="lg"
         footer={<>
           <button className="btn-secondary" onClick={() => setOpenEd(false)} disabled={savingEd}>Cancelar</button>
@@ -451,29 +466,23 @@ export default function Cliente360() {
         <EdificioForm formId="edificio-form" value={edForm} onChange={setEdForm} onSubmit={guardarEdificio}
           tipos={tiposEdificio} distritos={distritos} />
       </Modal>
-
-      <Modal open={openEdMasivo} onClose={() => setOpenEdMasivo(false)} title="Edificios del cliente" size="sm"
-        footer={<>
-          <button className="btn-secondary" onClick={() => setOpenEdMasivo(false)} disabled={cambiandoEdMasivo}>Cerrar</button>
-          <button className="btn-primary" onClick={() => cambiarEstadoEdificiosMasivo(1)} disabled={cambiandoEdMasivo}>Reactivar todos</button>
-          <button className="btn-danger" onClick={() => cambiarEstadoEdificiosMasivo(0)} disabled={cambiandoEdMasivo}>Inactivar todos</button>
-        </>}>
-        <p className="text-sm text-slate-600">
-          Acción exclusiva del Super Admin. Al inactivar todos los edificios de <span className="font-semibold text-slate-800">{data.nombre}</span> dejarán
-          de verse para los demás roles, junto con sus ascensores, servicios y proyectos; solo el Super Admin seguirá viéndolos.
-          No se elimina nada y puedes reactivarlos cuando quieras.
-        </p>
-      </Modal>
     </>
   );
 }
 
-function SeccionServicios({ titulo, data, accent, puedeVerPrecio }) {
+function SeccionServicios({ titulo, data, accent, puedeVerPrecio, clienteId, clienteNombre, mostrarDesglose }) {
   const colors = { amber: 'border-amber-300', violet: 'border-violet-300', green: 'border-emerald-300' };
+  const nProyectos = data.filter(s => s.tipo_registro === 'proyecto').length;
+  const nServicios = data.length - nProyectos;
   return (
     <div className="card lg:col-span-3">
       <div className={`card-header border-l-4 ${colors[accent] || 'border-slate-300'}`}>
-        <h3 className="card-title">{titulo} ({data.length})</h3>
+        <h3 className="card-title">
+          {titulo} ({data.length})
+          {mostrarDesglose && data.length > 0 && (
+            <span className="ml-2 text-xs font-normal text-slate-500">· {nProyectos} proyecto(s) · {nServicios} servicio(s)</span>
+          )}
+        </h3>
       </div>
       {data.length === 0 ? (
         <div className="card-body text-sm text-slate-500">Sin servicios en esta categoría</div>
@@ -493,9 +502,14 @@ function SeccionServicios({ titulo, data, accent, puedeVerPrecio }) {
             <tbody className="divide-y divide-slate-100">
               {data.map(s => (
                 <tr key={s.id} className="table-row-hover">
-                  <td className="table-td"><Link to={`/servicios/${s.id}`} className="font-mono text-xs text-brand-700 hover:underline">{s.codigo}</Link></td>
+                  <td className="table-td"><Link to={`/servicios/${s.id}`} state={{ from: `/clientes/${clienteId}`, fromLabel: clienteNombre }} className="font-mono text-xs text-brand-700 hover:underline">{s.codigo}</Link></td>
                   <td className="table-td">{s.titulo}</td>
-                  <td className="table-td font-mono text-xs" title={codigosAscensores(s).join(', ')}>{resumenAscensores(s)}</td>
+                  <td className="table-td text-xs" title={codigosAscensores(s).join(', ')}>
+                    <div className="font-mono">{resumenAscensores(s)}</div>
+                    {s.ascensores?.[0]?.ascensor?.edificio?.nombre && (
+                      <div className="text-[11px] text-slate-400">{s.ascensores[0].ascensor.edificio.nombre}</div>
+                    )}
+                  </td>
                   <td className="table-td text-xs">{s.tipo_servicio?.nombre}</td>
                   <td className="table-td text-xs">{formatFecha(s.fecha_programada)} {s.hora_programada || ''}</td>
                   <td className="table-td text-xs">{s.asignaciones?.map(a => a.tecnico?.nombre).join(', ') || '—'}</td>

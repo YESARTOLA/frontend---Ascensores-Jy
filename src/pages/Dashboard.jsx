@@ -62,16 +62,23 @@ function KpiCard({ label, value, tone = 'brand', sub, icon, delay = 0, href }) {
       {/* grano */}
       <span className="pointer-events-none absolute inset-0 bg-noise opacity-20 mix-blend-multiply" />
 
-      <div className="relative">
+      {/* Ícono a la izquierda de todo */}
+      <div className="relative shrink-0">
         <div className={`h-11 w-11 rounded-xl ${t.icon} grid place-items-center shadow-card`}>{icon}</div>
       </div>
-      <div className="relative min-w-0 flex-1">
-        <p className="text-[10.5px] uppercase tracking-[0.15em] font-bold text-carbon-500 truncate">{label}</p>
-        <p className="font-display text-[1.75rem] leading-none font-bold text-carbon-900 mt-1.5 tabular-nums">{value}</p>
-        {sub && <p className="text-[11px] text-carbon-500 mt-1.5 truncate">{sub}</p>}
-      </div>
-      <div className="relative hidden sm:block self-end mb-0.5">
-        <Sparkline tone={tone} />
+
+      {/* Columna derecha: título arriba (a todo el ancho de esta zona), número + sparkline debajo */}
+      <div className="relative min-w-0 flex-1 flex flex-col gap-2">
+        <p className="text-[10.5px] uppercase tracking-[0.15em] font-bold text-carbon-500 leading-tight truncate">{label}</p>
+        <div className="flex items-end gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="font-display text-[1.75rem] leading-none font-bold text-carbon-900 tabular-nums">{value}</p>
+            {sub && <p className="text-[11px] text-carbon-500 mt-1.5 truncate">{sub}</p>}
+          </div>
+          <div className="hidden sm:block shrink-0 mb-0.5">
+            <Sparkline tone={tone} />
+          </div>
+        </div>
       </div>
       {/* barra inferior */}
       <span className={`pointer-events-none absolute left-3 right-3 bottom-0 h-0.5 rounded-full bg-gradient-to-r ${t.bar} opacity-60 group-hover:opacity-100 transition`} />
@@ -196,7 +203,7 @@ export default function Dashboard() {
         </div>
       ) : esCoordinador ? (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 sm:gap-4">
             <KpiCard label="Agenda hoy"           value={data.coordinador?.agendaHoy?.length || 0} tone="brand"  icon={Icons.cal}     delay={0}   href="/calendario" />
             <KpiCard label="Emergencias activas"  value={data.emergenciasActivas}                  tone="red"    icon={Icons.alert}   delay={60}  href="/emergencias" />
             <KpiCard label="Servicios pendientes" value={data.pendientes}                          tone="amber"  icon={Icons.pending} delay={120} href="/asignaciones" />
@@ -244,7 +251,7 @@ export default function Dashboard() {
         </>
       ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 sm:gap-4">
             <KpiCard label="Pendientes"           value={data.pendientes}          tone="amber"  icon={Icons.pending} delay={0}   href="/servicios" />
             <KpiCard label="Asignados"            value={data.asignados}           tone="brand"  icon={Icons.users}   delay={50}  href="/asignaciones" />
             <KpiCard label="En curso"             value={data.enCurso}             tone="violet" icon={Icons.check}   delay={100} href="/servicios" />
@@ -252,7 +259,7 @@ export default function Dashboard() {
             <KpiCard label="Emergencias activas"  value={data.emergenciasActivas}  tone="red"    icon={Icons.alert}   delay={200} href="/emergencias" />
             <KpiCard label="Técnicos disponibles" value={data.tecnicosDisponibles} tone="slate"  icon={Icons.users}   delay={250} href="/tecnicos" />
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mt-3 sm:mt-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 sm:gap-4 mt-3 sm:mt-4">
             <KpiCard label="Proyectos activos"    value={data.proyectosActivos}       tone="brand"  icon={Icons.briefcase || Icons.check} delay={290} href="/servicios" />
             <KpiCard label="Mant. activos"        value={data.mantenimientosProximos} tone="brand"  icon={Icons.cal}   delay={300} href="/mantenimientos" />
             <KpiCard label="Leads del mes"        value={data.leadsMes}               tone="violet" icon={Icons.users} delay={340} href="/leads" />

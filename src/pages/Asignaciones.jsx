@@ -11,7 +11,7 @@ import { badgeEstado, formatFecha, codigosAscensores, resumenAscensores } from '
 import { ESTADOS_SERVICIO_EN_GESTION } from '../utils/estadoServicio.js';
 
 export default function Asignaciones() {
-  const [filtros, setFiltros] = useState({ estado_servicio: '', origen: '', prioridad: '' });
+  const [filtros, setFiltros] = useState({ estado_servicio: '', origen: '', prioridad: '', desde: '', hasta: '' });
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esCoordinador } = useAuth();
   const puedeGestionar = esSuperAdmin || esAdmin || esCoordinador;
@@ -24,7 +24,9 @@ export default function Asignaciones() {
       ? { estado_servicio: filtros.estado_servicio }
       : { estados: ESTADOS_SERVICIO_EN_GESTION.join(',') }),
     origen: filtros.origen,
-    prioridad: filtros.prioridad
+    prioridad: filtros.prioridad,
+    desde: filtros.desde,
+    hasta: filtros.hasta
   };
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(serviciosService.paginate, filtrosServidor, { initialPageSize: 25 });
@@ -41,7 +43,7 @@ export default function Asignaciones() {
       <PageHeader title="Asignaciones" subtitle={`${total} servicio(s) en gestión`} />
 
       <div className="card mb-4">
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <div>
             <label className="label">Estado</label>
             <select className="select" value={filtros.estado_servicio} onChange={e => setFiltros(f => ({ ...f, estado_servicio: e.target.value }))}>
@@ -69,7 +71,19 @@ export default function Asignaciones() {
               <option value="baja">Baja</option>
             </select>
           </div>
-          <div className="flex items-end"><button onClick={() => setFiltros({ estado_servicio: '', origen: '', prioridad: '' })} className="btn-secondary w-full">Limpiar</button></div>
+          <div>
+            <label className="label">Desde</label>
+            <input type="date" className="input" value={filtros.desde}
+              max={filtros.hasta || undefined}
+              onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Hasta</label>
+            <input type="date" className="input" value={filtros.hasta}
+              min={filtros.desde || undefined}
+              onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} />
+          </div>
+          <div className="flex items-end"><button onClick={() => setFiltros({ estado_servicio: '', origen: '', prioridad: '', desde: '', hasta: '' })} className="btn-secondary w-full">Limpiar</button></div>
         </div>
       </div>
 

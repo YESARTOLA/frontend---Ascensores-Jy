@@ -580,7 +580,7 @@ function TablaCorrectivos({ data }) {
     <table className="table-base">
       <thead><tr>
         <th className="table-th">Reportado</th><th className="table-th">Cliente</th>
-        <th className="table-th">Ascensor</th><th className="table-th">Falla</th>
+        <th className="table-th">Ascensor</th><th className="table-th">Motivo</th>
         <th className="table-th">Urgencia</th><th className="table-th">Estado</th>
         <th className="table-th">Servicio</th><th className="table-th">Técnicos</th>
       </tr></thead>

@@ -10,6 +10,17 @@ import { ROLES_CON_ALCANCE, esRolConAlcanceEdificios } from '../features/auth/al
 
 const inicial = { nombres: '', correo: '', contrasena: '', id_rol: '', id_tecnico: '', telefono: '', acceso_servicios: 1, acceso_proyectos: 1, acceso_edificios: 1, acceso_obras: 1 };
 
+// Área de acceso cuando el usuario tiene un ÚNICO ámbito (Servicios XOR Proyectos).
+// Los roles sin alcance configurable siempre traen ambos ámbitos (1/1) desde el
+// backend, así que esto solo distingue a Administradores/Coordinadores acotados
+// a un área (p. ej. "AdminServicio" vs "AdminProyecto").
+function areaAmbitoUnico(u) {
+  const s = u.acceso_servicios ? 1 : 0;
+  const p = u.acceso_proyectos ? 1 : 0;
+  if (s + p !== 1) return null;
+  return s ? 'Servicios' : 'Proyectos';
+}
+
 export default function Usuarios() {
   const [roles, setRoles] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
@@ -136,7 +147,19 @@ export default function Usuarios() {
                     <tr key={u.id} className="table-row-hover">
                       <td className="table-td font-medium text-sm">{u.nombres}</td>
                       <td className="table-td text-xs font-mono">{u.correo}</td>
-                      <td className="table-td text-xs">{u.rol?.nombre}</td>
+                      <td className="table-td text-xs">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{u.rol?.nombre}</span>
+                          {(() => {
+                            const area = areaAmbitoUnico(u);
+                            if (!area) return null;
+                            const clase = area === 'Servicios'
+                              ? 'bg-sky-50 text-sky-700 ring-sky-100'
+                              : 'bg-violet-50 text-violet-700 ring-violet-100';
+                            return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ring-1 ${clase}`}>{area}</span>;
+                          })()}
+                        </div>
+                      </td>
                       <td className="table-td text-xs">{u.tecnico?.nombre || '—'}</td>
                       <td className="table-td text-xs">{formatFecha(u.ultimo_login) || '—'}</td>
                       <td className="table-td"><span className={u.estado === 1 ? 'badge-green' : 'badge-gray'}>{u.estado === 1 ? 'Activo' : 'Inactivo'}</span></td>

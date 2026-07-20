@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { formatFecha, hoyISO } from '../../utils/formatters.js';
 
 /**
@@ -57,19 +58,53 @@ export default function DateRangePicker({
   const [abierto, setAbierto] = useState(false);
   const [cursor, setCursor] = useState(() => parseYMD(desde) || parseYMD(hasta) || new Date());
   const contRef = useRef(null);
+  const popupRef = useRef(null);
 
-  // Cerrar al hacer click fuera.
+  // El popup se renderiza en un portal (document.body) con posición fija para
+  // que quede SIEMPRE delante y no lo recorte el stacking-context de las cards
+  // (que usan backdrop-blur). Posición calculada bajo el botón y acotada al viewport.
+  const POPUP_W = 288; // = w-72
+  const POPUP_H = 372; // alto aproximado del calendario
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  const posicionar = () => {
+    const el = contRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    let left = Math.min(r.left, window.innerWidth - POPUP_W - 8);
+    left = Math.max(8, left);
+    let top = r.bottom + 4;
+    // Si no cabe hacia abajo, abrir hacia arriba del botón.
+    if (top + POPUP_H > window.innerHeight - 8) {
+      const arriba = r.top - POPUP_H - 4;
+      top = arriba >= 8 ? arriba : Math.max(8, window.innerHeight - POPUP_H - 8);
+    }
+    setPos({ top, left });
+  };
+
+  // Cerrar al hacer click fuera (contemplando el popup portaleado).
   useEffect(() => {
     const onDocClick = (e) => {
-      if (contRef.current && !contRef.current.contains(e.target)) setAbierto(false);
+      const dentroBoton = contRef.current && contRef.current.contains(e.target);
+      const dentroPopup = popupRef.current && popupRef.current.contains(e.target);
+      if (!dentroBoton && !dentroPopup) setAbierto(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  // Al abrir, posicionar el calendario sobre el inicio del rango (o el mes actual).
+  // Al abrir: posicionar el calendario sobre el inicio del rango y calcular su ubicación.
+  useLayoutEffect(() => {
+    if (abierto) { setCursor(parseYMD(desde) || parseYMD(hasta) || new Date()); posicionar(); }
+  }, [abierto]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reposicionar mientras está abierto si cambia el scroll o el tamaño de ventana.
   useEffect(() => {
-    if (abierto) setCursor(parseYMD(desde) || parseYMD(hasta) || new Date());
+    if (!abierto) return;
+    const h = () => posicionar();
+    window.addEventListener('resize', h);
+    window.addEventListener('scroll', h, true);
+    return () => { window.removeEventListener('resize', h); window.removeEventListener('scroll', h, true); };
   }, [abierto]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dias = useMemo(() => diasDelCalendario(cursor), [cursor]);
@@ -122,8 +157,12 @@ export default function DateRangePicker({
         >×</button>
       )}
 
-      {abierto && (
-        <div className="absolute z-30 mt-1 w-72 rounded-lg border border-slate-200 bg-white shadow-lg p-3">
+      {abierto && createPortal(
+        <div
+          ref={popupRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: POPUP_W }}
+          className="z-50 rounded-lg border border-slate-200 bg-white shadow-lg p-3"
+        >
           <div className="flex items-center justify-between mb-2">
             <button type="button" onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))}
               className="h-7 w-7 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50" aria-label="Mes anterior">‹</button>
@@ -175,7 +214,8 @@ export default function DateRangePicker({
               <button type="button" onClick={() => setAbierto(false)} className="text-xs text-brand-700 hover:underline">Cerrar</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

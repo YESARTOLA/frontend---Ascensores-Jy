@@ -1,6 +1,15 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
+  // Badges de clasificación de cliente: las clases llegan desde la API
+  // (backend/utils/catalogosClientes.js) y el escáner de contenido no las ve.
+  safelist: [
+    'bg-violet-100',  'text-violet-800',  'ring-violet-200',
+    'bg-sky-100',     'text-sky-800',     'ring-sky-200',
+    'bg-ember-100',   'text-ember-800',   'ring-ember-200',
+    'bg-emerald-100', 'text-emerald-800', 'ring-emerald-200',
+    'bg-amber-100',   'text-amber-800',   'ring-amber-200'
+  ],
   theme: {
     extend: {
       colors: {

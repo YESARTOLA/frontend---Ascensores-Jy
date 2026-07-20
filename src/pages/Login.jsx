@@ -118,6 +118,55 @@ function ElevatorScene() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Acceso rápido — SOLO ENTORNO LOCAL.
+// Se renderiza únicamente bajo `import.meta.env.DEV`, que Vite reemplaza por
+// `false` en el build de producción (`vite build`); el bloque completo —y estas
+// credenciales demo— quedan eliminados del bundle por tree-shaking. NO aparece
+// en producción bajo ninguna circunstancia.
+// ─────────────────────────────────────────────────────────────────────────
+function QuickAccessDev({ onPick, disabled }) {
+  // Credenciales de los usuarios sembrados por scripts/seed-demo.js (password
+  // 'Demo2026!') y el super admin del seed base (superadmin / 'Admin2026!').
+  const USERS = [
+    { rol: 'Super Admin',   correo: 'superadmin@ascensoresjy.com',   pass: 'Admin2026!', ico: '👑', tono: 'ember' },
+    { rol: 'Administrador',  correo: 'admin@ascensoresjy.com',        pass: 'Demo2026!',  ico: '🛠️', tono: 'brand' },
+    { rol: 'Coordinador',    correo: 'coordinador@ascensoresjy.com',  pass: 'Demo2026!',  ico: '📋', tono: 'brand' },
+    { rol: 'Contabilidad',   correo: 'contabilidad@ascensoresjy.com', pass: 'Demo2026!',  ico: '💸', tono: 'brand' },
+    { rol: 'Vendedora',      correo: 'vendedora@ascensoresjy.com',    pass: 'Demo2026!',  ico: '📈', tono: 'brand' },
+    { rol: 'Técnico',        correo: 'carlos@ascensoresjy.com',       pass: 'Demo2026!',  ico: '👷', tono: 'brand' },
+  ];
+  return (
+    <div className="mt-8 rounded-2xl border border-dashed border-ember-300/80 bg-ember-50/50 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="inline-flex items-center gap-1 rounded-md bg-ember-500 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-white">
+          Dev · Solo local
+        </span>
+        <span className="text-[11px] text-carbon-500">Acceso rápido por rol</span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {USERS.map(u => (
+          <button
+            key={u.correo}
+            type="button"
+            disabled={disabled}
+            onClick={() => onPick(u.correo, u.pass)}
+            title={`${u.correo} · ${u.pass}`}
+            className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-semibold ring-1 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-card ${
+              u.tono === 'ember'
+                ? 'bg-white text-ember-800 ring-ember-300/70 hover:bg-ember-50'
+                : 'bg-white text-brand-800 ring-brand-200/80 hover:bg-brand-50'
+            }`}
+          >
+            <span className="text-sm shrink-0">{u.ico}</span>
+            <span className="truncate">{u.rol}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Login() {
   const [form, setForm] = useState({ correo: '', contrasena: '' });
   const [loading, setLoading] = useState(false);
@@ -126,16 +175,20 @@ export default function Login() {
   const nav = useNavigate();
   const toast = useToast();
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const doLogin = async (correo, contrasena) => {
     setLoading(true);
     try {
-      await login(form.correo, form.contrasena);
+      await login(correo, contrasena);
       toast.success('Bienvenido(a)');
       nav('/');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error al iniciar sesión');
     } finally { setLoading(false); }
+  };
+
+  const submit = (e) => {
+    e.preventDefault();
+    doLogin(form.correo, form.contrasena);
   };
 
   return (
@@ -304,6 +357,8 @@ export default function Login() {
               )}
             </button>
           </form>
+
+          {import.meta.env.DEV && <QuickAccessDev onPick={doLogin} disabled={loading} />}
         </div>
       </div>
     </div>

@@ -1,8 +1,12 @@
 import { useState } from 'react';
 import { archivosService } from '../../services';
 import { useToast } from '../common/Toast.jsx';
+import { useAuth } from '../../features/auth/AuthContext.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import { sanearTelefono, formatTelefono } from '../../utils/formatters.js';
+
+// Campo del form (estado) para cada área de adjuntos.
+const campoArea = (area) => area === 'proyecto' ? 'archivos_proyecto' : 'archivos_servicio';
 
 /**
  * Formulario completo de cliente (alta/edición), reutilizable desde cualquier
@@ -16,7 +20,9 @@ import { sanearTelefono, formatTelefono } from '../../utils/formatters.js';
  *   onChange        — setter del estado (estilo setForm)
  *   onSubmit        — callback con el payload ya construido y validado
  *   clasificaciones — catálogo de clasificaciones ({ codigo, etiqueta })
- *   tiposServicio   — catálogo de tipos de servicio (grilla de precios)
+ *
+ * Los precios de servicio ya no se gestionan aquí: se configuran por ascensor
+ * (ver AscensorForm), porque el mismo servicio puede costar distinto por ascensor.
  *
  * La ubicación física (tipo Edificio/Obra, dirección, distrito, mapa) ya no vive
  * en el cliente: se gestiona en los edificios del cliente (ver EdificioForm).
@@ -27,17 +33,29 @@ export const clienteFormInicial = {
   contacto_principal_nombre: '', contacto_principal_correo: '', contacto_principal_telefono: '',
   contacto_cobranzas_nombre: '', contacto_cobranzas_correo: '', contacto_cobranzas_telefono: '',
   contacto_admin_nombre: '', contacto_admin_correo: '', contacto_admin_telefono: '',
-  contrato_inicio: '', contrato_fin: '',
   clasificacion: '',
-  id_archivo_contrato: null,
-  archivo_contrato: null,
-  archivos: [], // [{ id_archivo, descripcion, orden, archivo: { id, nombre_original, ruta_almacenamiento, mime_type } }]
-  precios: [] // [{ id_tipo_servicio, precio, moneda }]
+  // Áreas cuyos datos de contrato/documentación se registran (UI, no se envía tal
+  // cual): Servicios, Proyectos o ambas. Evita cargar el formulario sin motivo.
+  areasSeleccionadas: ['servicio'],
+  // Contrato de servicio POR ÁREA (fechas + documento firmado). Debe llenarse al
+  // menos un área (Servicios o Proyectos); se pueden llenar ambas.
+  contrato_servicio_inicio: '', contrato_servicio_fin: '',
+  id_archivo_contrato_servicio: null, archivo_contrato_servicio: null,
+  contrato_proyecto_inicio: '', contrato_proyecto_fin: '',
+  id_archivo_contrato_proyecto: null, archivo_contrato_proyecto: null,
+  // Adjuntos clasificados por área (una área no ve los de la otra).
+  archivos_servicio: [], // [{ id_archivo, descripcion, orden, archivo }]
+  archivos_proyecto: []
 };
 
 /** Mapea un cliente del backend al estado del formulario (modo edición). */
-export function clienteToForm(c, archivos = [], precios = []) {
+export function clienteToForm(c, archivos = []) {
+  const porArea = (area) => (archivos || []).filter(a => (a.area || 'servicio') === area);
+  // Al editar, se preseleccionan las áreas que ya tienen datos (contrato o adjuntos).
+  const conData = ['servicio', 'proyecto'].filter(a =>
+    c[`contrato_${a}_inicio`] || c[`contrato_${a}_fin`] || c[`id_archivo_contrato_${a}`] || porArea(a).length > 0);
   return {
+    areasSeleccionadas: conData.length ? conData : ['servicio'],
     tipo_documento: c.tipo_documento, numero_documento: c.numero_documento || '',
     nombre: c.nombre,
     contacto_principal_nombre: c.contacto_principal_nombre || '',
@@ -50,53 +68,76 @@ export function clienteToForm(c, archivos = [], precios = []) {
     contacto_admin_correo: c.contacto_admin_correo || '',
     contacto_admin_telefono: sanearTelefono(c.contacto_admin_telefono || ''),
     observaciones: c.observaciones || '',
-    contrato_inicio: c.contrato_inicio ? c.contrato_inicio.substring(0, 10) : '',
-    contrato_fin: c.contrato_fin ? c.contrato_fin.substring(0, 10) : '',
     clasificacion: c.clasificacion || '',
-    id_archivo_contrato: c.id_archivo_contrato || null,
-    archivo_contrato: c.archivo_contrato || null,
-    archivos,
-    precios: precios.map(p => ({
-      id_tipo_servicio: p.id_tipo_servicio,
-      precio: p.precio !== undefined && p.precio !== null ? String(p.precio) : '',
-      moneda: p.moneda || 'PEN'
-    }))
+    contrato_servicio_inicio: c.contrato_servicio_inicio ? c.contrato_servicio_inicio.substring(0, 10) : '',
+    contrato_servicio_fin: c.contrato_servicio_fin ? c.contrato_servicio_fin.substring(0, 10) : '',
+    id_archivo_contrato_servicio: c.id_archivo_contrato_servicio || null,
+    archivo_contrato_servicio: c.archivo_contrato_servicio || null,
+    contrato_proyecto_inicio: c.contrato_proyecto_inicio ? c.contrato_proyecto_inicio.substring(0, 10) : '',
+    contrato_proyecto_fin: c.contrato_proyecto_fin ? c.contrato_proyecto_fin.substring(0, 10) : '',
+    id_archivo_contrato_proyecto: c.id_archivo_contrato_proyecto || null,
+    archivo_contrato_proyecto: c.archivo_contrato_proyecto || null,
+    archivos_servicio: porArea('servicio'),
+    archivos_proyecto: porArea('proyecto')
   };
 }
 
 export default function ClienteForm({
   formId, value, onChange, onSubmit,
-  clasificaciones = [], tiposServicio = []
+  clasificaciones = []
 }) {
   const toast = useToast();
-  const [subiendoContrato, setSubiendoContrato] = useState(false);
-  const [subiendoAdjuntos, setSubiendoAdjuntos] = useState(false);
+  const { accesoServicios, accesoProyectos } = useAuth();
+  const [subiendoContrato, setSubiendoContrato] = useState({ servicio: false, proyecto: false });
+  const [subiendoAdjuntos, setSubiendoAdjuntos] = useState({ servicio: false, proyecto: false });
 
-  const subirContrato = async (e) => {
+  // Claves del contrato en el estado del form, por área.
+  const kContrato = (area) => ({
+    inicio: `contrato_${area}_inicio`,
+    fin: `contrato_${area}_fin`,
+    idArchivo: `id_archivo_contrato_${area}`,
+    archivo: `archivo_contrato_${area}`
+  });
+
+  const puedeArea = (area) => area === 'servicio' ? accesoServicios : accesoProyectos;
+  // Áreas que el usuario puede gestionar (por ámbito).
+  const areasDisponibles = ['servicio', 'proyecto'].filter(puedeArea);
+  // Áreas activas = intersección de lo elegido con lo disponible; si queda vacío,
+  // se muestran todas las disponibles (evita ocultar todo por un estado inválido).
+  const elegidas = areasDisponibles.filter(a => (value.areasSeleccionadas || []).includes(a));
+  const areasActivas = elegidas.length ? elegidas : areasDisponibles;
+  // Modo del selector de 3 botones.
+  const modo = areasActivas.length >= 2 ? 'ambos' : areasActivas[0];
+  const setModo = (m) => onChange(f => ({ ...f, areasSeleccionadas: m === 'ambos' ? ['servicio', 'proyecto'] : [m] }));
+
+  const subirContrato = (area) => async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setSubiendoContrato(true);
+    setSubiendoContrato(s => ({ ...s, [area]: true }));
     try {
       const fd = new FormData();
       fd.append('archivo', file);
       const arch = await archivosService.upload(fd, 'contratos');
-      onChange(f => ({ ...f, id_archivo_contrato: arch.id, archivo_contrato: arch }));
+      const k = kContrato(area);
+      onChange(f => ({ ...f, [k.idArchivo]: arch.id, [k.archivo]: arch }));
       toast.success('Contrato adjuntado');
     } catch {
       toast.error('Error al adjuntar el contrato');
     } finally {
-      setSubiendoContrato(false);
+      setSubiendoContrato(s => ({ ...s, [area]: false }));
+      e.target.value = '';
     }
   };
 
-  const quitarContrato = () => {
-    onChange(f => ({ ...f, id_archivo_contrato: null, archivo_contrato: null }));
+  const quitarContrato = (area) => {
+    const k = kContrato(area);
+    onChange(f => ({ ...f, [k.idArchivo]: null, [k.archivo]: null }));
   };
 
-  const subirAdjuntos = async (e) => {
+  const subirAdjuntos = (area) => async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    setSubiendoAdjuntos(true);
+    setSubiendoAdjuntos(s => ({ ...s, [area]: true }));
     try {
       const nuevos = [];
       for (const file of files) {
@@ -105,66 +146,130 @@ export default function ClienteForm({
         const arch = await archivosService.upload(fd, 'clientes');
         nuevos.push({ id_archivo: arch.id, descripcion: '', archivo: arch });
       }
-      onChange(f => ({ ...f, archivos: [...f.archivos, ...nuevos] }));
+      const campo = campoArea(area);
+      onChange(f => ({ ...f, [campo]: [...(f[campo] || []), ...nuevos] }));
       toast.success(`${nuevos.length} adjunto(s) cargado(s)`);
     } catch {
       toast.error('Error al adjuntar archivo(s)');
     } finally {
-      setSubiendoAdjuntos(false);
+      setSubiendoAdjuntos(s => ({ ...s, [area]: false }));
       e.target.value = '';
     }
   };
-  const cambiarDescripcionAdjunto = (idx, valor) => {
-    onChange(f => ({
-      ...f,
-      archivos: f.archivos.map((a, i) => i === idx ? { ...a, descripcion: valor } : a)
-    }));
+  const cambiarDescripcionAdjunto = (area, idx, valor) => {
+    const campo = campoArea(area);
+    onChange(f => ({ ...f, [campo]: f[campo].map((a, i) => i === idx ? { ...a, descripcion: valor } : a) }));
   };
-  const quitarAdjunto = (idx) => {
-    onChange(f => ({ ...f, archivos: f.archivos.filter((_, i) => i !== idx) }));
+  const quitarAdjunto = (area, idx) => {
+    const campo = campoArea(area);
+    onChange(f => ({ ...f, [campo]: f[campo].filter((_, i) => i !== idx) }));
   };
 
-  const agregarPrecio = () => onChange(f => ({
-    ...f,
-    precios: [...f.precios, { id_tipo_servicio: '', precio: '', moneda: 'PEN' }]
+  const mapArchivos = (arr) => (arr || []).map((a, i) => ({
+    id_archivo: a.id_archivo, descripcion: a.descripcion || null, orden: i + 1
   }));
-  const cambiarPrecio = (idx, key, val) => {
-    onChange(f => ({
-      ...f,
-      precios: f.precios.map((p, i) => i === idx ? { ...p, [key]: val } : p)
-    }));
-  };
-  const quitarPrecio = (idx) => {
-    onChange(f => ({ ...f, precios: f.precios.filter((_, i) => i !== idx) }));
-  };
-  // Solo se asignan precios a SUBTIPOS (los tipos padre no son cotizables/precios).
-  const subtiposServicio = tiposServicio.filter(t => !t.es_padre);
-  // Tipos disponibles para agregar (excluye los ya elegidos en otras filas).
-  const tiposDisponibles = (idx) => {
-    const usados = new Set(value.precios.map((p, i) => i !== idx ? Number(p.id_tipo_servicio) : null).filter(Boolean));
-    return subtiposServicio.filter(t => !usados.has(t.id));
-  };
 
   const enviar = (e) => {
     e.preventDefault();
-    const payload = {
-      ...value,
-      id_archivo_contrato: value.id_archivo_contrato,
-      archivos: value.archivos.map((a, i) => ({
-        id_archivo: a.id_archivo,
-        descripcion: a.descripcion || null,
-        orden: i + 1
-      })),
-      precios: value.precios
-        .filter(p => p.id_tipo_servicio && p.precio !== '' && p.precio !== null)
-        .map(p => ({
-          id_tipo_servicio: Number(p.id_tipo_servicio),
-          precio: Number(p.precio),
-          moneda: p.moneda || 'PEN'
-        }))
-    };
-    delete payload.archivo_contrato;
+    // Validación de "al menos un área con contrato completo" (inicio + fin), solo
+    // sobre las áreas ACTIVAS (elegidas y disponibles). El backend revalida.
+    const completa = (area) => areasActivas.includes(area) && value[`contrato_${area}_inicio`] && value[`contrato_${area}_fin`];
+    if (!areasActivas.some(completa)) {
+      toast.error('Registre el contrato (inicio y fin) de al menos un área.');
+      return;
+    }
+    const payload = { ...value };
+    delete payload.areasSeleccionadas; // campo de UI, no se persiste
+    // Solo se envían las áreas ACTIVAS. Las no elegidas no se mandan: al editar,
+    // el backend conserva sus datos (no los borra) porque no llegan en el body.
+    for (const area of ['servicio', 'proyecto']) {
+      const k = kContrato(area);
+      delete payload[k.archivo]; // solo se manda el id del archivo, no el objeto
+      if (areasActivas.includes(area)) {
+        payload[k.inicio] = value[k.inicio] || null;
+        payload[k.fin] = value[k.fin] || null;
+        payload[k.idArchivo] = value[k.idArchivo] || null;
+        payload[`archivos_${area}`] = mapArchivos(value[`archivos_${area}`]);
+      } else {
+        delete payload[k.inicio];
+        delete payload[k.fin];
+        delete payload[k.idArchivo];
+        delete payload[`archivos_${area}`];
+      }
+    }
     onSubmit(payload);
+  };
+
+  // Sección completa de un área (Servicios / Proyectos): contrato (fechas +
+  // documento firmado) y sus archivos adjuntos. Se renderiza una por cada área
+  // que el usuario puede ver; todo queda clasificado y aislado por área.
+  const seccionArea = (area, titulo) => {
+    const k = kContrato(area);
+    const archivoContrato = value[k.archivo];
+    const campo = campoArea(area);
+    const lista = value[campo] || [];
+    return (
+      <div className="sm:col-span-2 border border-slate-300 rounded-lg p-4 bg-white space-y-3">
+        <div className="text-sm font-semibold text-slate-800">{titulo}</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="label">Inicio contrato</label>
+            <input type="date" className="input" value={value[k.inicio]}
+              onChange={e => onChange(f => ({ ...f, [k.inicio]: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Fin contrato</label>
+            <input type="date" className="input" value={value[k.fin]} min={value[k.inicio] || undefined}
+              onChange={e => onChange(f => ({ ...f, [k.fin]: e.target.value }))} />
+          </div>
+        </div>
+        <div>
+          <label className="label">Contrato firmado</label>
+          {archivoContrato ? (
+            <div className="flex items-center justify-between gap-2 text-sm">
+              <FileLink archivo={archivoContrato} className="text-brand-700 hover:underline truncate">
+                📎 {archivoContrato.nombre_original}
+              </FileLink>
+              <button type="button" onClick={() => quitarContrato(area)} className="text-xs text-red-600 hover:underline">Quitar</button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input type="file" accept=".pdf,image/*" onChange={subirContrato(area)} disabled={subiendoContrato[area]} className="input flex-1" />
+              {subiendoContrato[area] && <span className="text-xs text-slate-500">Subiendo…</span>}
+            </div>
+          )}
+        </div>
+        <div className="border-t border-slate-200 pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <label className="label !mb-0">Archivos adjuntos</label>
+            <label className="btn-ghost text-xs !py-1.5 !px-3 cursor-pointer">
+              {subiendoAdjuntos[area] ? 'Subiendo…' : '+ Subir archivo(s)'}
+              <input type="file" multiple className="hidden" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"
+                disabled={subiendoAdjuntos[area]} onChange={subirAdjuntos(area)} />
+            </label>
+          </div>
+          {lista.length === 0 ? (
+            <p className="text-xs text-slate-500">PDF, imágenes u otros documentos del área. Sin límite.</p>
+          ) : (
+            <ul className="space-y-2">
+              {lista.map((a, idx) => (
+                <li key={idx} className="flex items-center gap-2 bg-slate-50 rounded-md ring-1 ring-slate-200 px-2.5 py-1.5">
+                  <FileLink archivo={a.archivo}
+                    className="text-brand-700 hover:underline text-xs truncate min-w-0 flex-1 text-left"
+                    title={a.archivo?.nombre_original}>
+                    📎 {a.archivo?.nombre_original || `Archivo #${a.id_archivo}`}
+                  </FileLink>
+                  <input className="input !py-1 !text-xs flex-1 min-w-0" placeholder="Descripción (opcional)"
+                    value={a.descripcion || ''} onChange={e => cambiarDescripcionAdjunto(area, idx, e.target.value)} />
+                  <button type="button" onClick={() => quitarAdjunto(area, idx)}
+                    className="text-red-600 hover:underline text-xs whitespace-nowrap">Quitar</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -218,114 +323,22 @@ export default function ClienteForm({
           );
         })}
       </div>
-      <div>
-        <label className="label">Inicio contrato de servicio *</label>
-        <input type="date" className="input" required value={value.contrato_inicio}
-          onChange={e => onChange(f => ({ ...f, contrato_inicio: e.target.value }))} />
-      </div>
-      <div>
-        <label className="label">Fin contrato de servicio *</label>
-        <input type="date" className="input" required value={value.contrato_fin}
-          min={value.contrato_inicio || undefined}
-          onChange={e => onChange(f => ({ ...f, contrato_fin: e.target.value }))} />
-      </div>
-      <div className="sm:col-span-2 border border-slate-200 rounded-lg p-3 bg-slate-50">
-        <label className="label">Contrato firmado</label>
-        {value.archivo_contrato ? (
-          <div className="flex items-center justify-between gap-2 text-sm">
-            <FileLink archivo={value.archivo_contrato} className="text-brand-700 hover:underline truncate">
-              📎 {value.archivo_contrato.nombre_original}
-            </FileLink>
-            <button type="button" onClick={quitarContrato} className="text-xs text-red-600 hover:underline">
-              Quitar
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <input type="file" accept=".pdf,image/*"
-              onChange={subirContrato} disabled={subiendoContrato}
-              className="input flex-1" />
-            {subiendoContrato && <span className="text-xs text-slate-500">Subiendo…</span>}
-          </div>
-        )}
-        <p className="text-xs text-slate-500 mt-1">
-          PDF o imagen. Las fechas de inicio y fin del contrato son obligatorias y se mostrarán en la tabla principal.
-        </p>
-      </div>
-      <div className="sm:col-span-2 border border-slate-200 rounded-lg p-3 bg-slate-50/40">
-        <div className="flex items-center justify-between mb-2">
-          <label className="label !mb-0">Archivos adjuntos</label>
-          <label className="btn-ghost text-xs !py-1.5 !px-3 cursor-pointer">
-            {subiendoAdjuntos ? 'Subiendo…' : '+ Subir archivo(s)'}
-            <input type="file" multiple className="hidden" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"
-              disabled={subiendoAdjuntos} onChange={subirAdjuntos} />
-          </label>
-        </div>
-        {value.archivos.length === 0 ? (
-          <p className="text-xs text-slate-500">PDF, imágenes u otros documentos del cliente. Sin límite.</p>
-        ) : (
-          <ul className="space-y-2">
-            {value.archivos.map((a, idx) => (
-              <li key={idx} className="flex items-center gap-2 bg-white rounded-md ring-1 ring-slate-200 px-2.5 py-1.5">
-                <FileLink archivo={a.archivo}
-                  className="text-brand-700 hover:underline text-xs truncate min-w-0 flex-1 text-left"
-                  title={a.archivo?.nombre_original}>
-                  📎 {a.archivo?.nombre_original || `Archivo #${a.id_archivo}`}
-                </FileLink>
-                <input className="input !py-1 !text-xs flex-1 min-w-0" placeholder="Descripción (opcional)"
-                  value={a.descripcion || ''} onChange={e => cambiarDescripcionAdjunto(idx, e.target.value)} />
-                <button type="button" onClick={() => quitarAdjunto(idx)}
-                  className="text-red-600 hover:underline text-xs whitespace-nowrap">Quitar</button>
-              </li>
+      {areasDisponibles.length > 1 && (
+        <div className="sm:col-span-2">
+          <label className="label">¿Qué datos de contrato y documentación se registrarán?</label>
+          <div className="inline-flex rounded-lg ring-1 ring-slate-300 overflow-hidden">
+            {[{ v: 'servicio', t: 'Área de Servicios' }, { v: 'proyecto', t: 'Área de Proyectos' }, { v: 'ambos', t: 'Ambas' }].map((o, i) => (
+              <button key={o.v} type="button" onClick={() => setModo(o.v)}
+                className={`px-4 py-1.5 text-sm ${i > 0 ? 'border-l border-slate-300' : ''} ${modo === o.v ? 'bg-brand-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}>
+                {o.t}
+              </button>
             ))}
-          </ul>
-        )}
-      </div>
-      <div className="sm:col-span-2 border border-slate-200 rounded-lg p-3 bg-slate-50/40">
-        <div className="flex items-center justify-between mb-2">
-          <label className="label !mb-0">Precios por subtipo de servicio</label>
-          <button type="button" onClick={agregarPrecio} className="btn-ghost text-xs !py-1.5 !px-3"
-            disabled={subtiposServicio.length === 0 || value.precios.length >= subtiposServicio.length}>
-            + Agregar precio
-          </button>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-1">Selecciona el área con la que este cliente trabajará (o ambas). Solo se pedirán los datos del área elegida. Debes registrar el contrato (inicio y fin) de al menos un área.</p>
         </div>
-        {value.precios.length === 0 ? (
-          <p className="text-xs text-slate-500">
-            Configure el precio del cliente para cada tipo de servicio. Se usará como default editable al crear mantenimientos.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {value.precios.map((p, idx) => (
-              <li key={idx} className="grid grid-cols-12 gap-2 items-center bg-white rounded-md ring-1 ring-slate-200 px-2.5 py-2">
-                <select className="select col-span-6 !py-1.5 text-sm" required
-                  value={p.id_tipo_servicio}
-                  onChange={e => cambiarPrecio(idx, 'id_tipo_servicio', e.target.value)}>
-                  <option value="">— Selecciona tipo —</option>
-                  {tiposDisponibles(idx).map(t => (
-                    <option key={t.id} value={t.id}>{t.nombre}</option>
-                  ))}
-                  {/* Preserva el tipo ya elegido aunque haya quedado fuera del filtro */}
-                  {p.id_tipo_servicio && !tiposDisponibles(idx).some(t => t.id === Number(p.id_tipo_servicio)) && (
-                    <option value={p.id_tipo_servicio}>
-                      {tiposServicio.find(t => t.id === Number(p.id_tipo_servicio))?.nombre || `Tipo #${p.id_tipo_servicio}`}
-                    </option>
-                  )}
-                </select>
-                <input className="input col-span-3 !py-1.5 text-sm font-mono" type="number" step="0.01" min="0"
-                  placeholder="0.00" required
-                  value={p.precio} onChange={e => cambiarPrecio(idx, 'precio', e.target.value)} />
-                <select className="select col-span-2 !py-1.5 text-sm" value={p.moneda}
-                  onChange={e => cambiarPrecio(idx, 'moneda', e.target.value)}>
-                  <option value="PEN">PEN</option>
-                  <option value="USD">USD</option>
-                </select>
-                <button type="button" onClick={() => quitarPrecio(idx)}
-                  className="col-span-1 text-red-600 hover:underline text-xs">Quitar</button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      )}
+      {areasActivas.includes('servicio') && seccionArea('servicio', 'Área de Servicios')}
+      {areasActivas.includes('proyecto') && seccionArea('proyecto', 'Área de Proyectos')}
       <div className="sm:col-span-2">
         <label className="label">Observaciones</label>
         <textarea className="textarea" rows="3" value={value.observaciones} onChange={e => onChange(f => ({ ...f, observaciones: e.target.value }))} />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   cotizacionesService,
   clientesService,
@@ -21,10 +21,13 @@ import PadreTabs from '../components/common/PadreTabs.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatFecha, formatMonto, hoyISO, addDaysYMD, nombreEdificioCotizacion } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatMonto, hoyISO, addDaysYMD, nombreEdificioDeAscensores } from '../utils/formatters.js';
 import CuotasEditor, { planCuotasInicial, planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
+import { ESTADO_GLOBAL_ANULADO } from '../utils/estadoCotizacion.js';
 
-const ESTADOS_GLOBALES = ['', 'Cotizado', 'Aceptado', 'Ejecución', 'Pendiente', 'Terminado'];
+// La LISTA de estados del filtro no se declara aquí: se pide al backend
+// (/cotizaciones/catalogos), que es quien los escribe. Duplicarla en un literal
+// fue lo que dejó el filtro ofreciendo valores que la BD no tenía.
 
 const itemVacio = () => ({
   descripcion: '',
@@ -32,11 +35,10 @@ const itemVacio = () => ({
   unidad: 'Unidad',
   precio_unitario: 0,
   descuento_porcentaje: 0,
-  // Trazabilidad cuando el ítem se "jala" desde una observación del técnico:
-  // id de la observación de origen y datos de su foto (para previsualización).
-  // La foto real se copia en el backend al crear la cotización.
-  id_observacion_origen: null,
-  foto: null
+  // Foto del ítem (obligatoria en correctivos). `archivo` es el objeto subido
+  // para previsualizar; `id_archivo` es lo que se envía al backend.
+  id_archivo: null,
+  archivo: null
 });
 
 const ascensorVacio = (modo = 'existente') => ({
@@ -64,7 +66,11 @@ const formInicial = (preset = {}) => ({
   cuentas_pdf: [],
   items: [itemVacio()],
   cuotas: planCuotasInicial(),
-  archivos: []
+  archivos: [],
+  // Observaciones técnicas de origen (si la cotización se jaló desde el panel de
+  // un servicio). Se mandan al crear para que el backend las marque como
+  // cotizadas dentro de la misma transacción.
+  ids_observaciones: preset.ids_observaciones || []
 });
 
 function round2(n) {
@@ -86,28 +92,30 @@ export default function Cotizaciones() {
   const [cuentas, setCuentas] = useState([]);
   const [igvTasa, setIgvTasa] = useState(0.18);
   const [validezDefaultDias, setValidezDefaultDias] = useState(15);
-  const [filtros, setFiltros] = useState({ q: '', estado_global: '', id_cliente: '', id_tipo_servicio: '', desde: '', hasta: '' });
+  const [filtros, setFiltros] = useState({ q: '', estado_global: '', id_cliente: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
+  // Estados posibles según el backend (SSoT). Se cargan una vez al montar.
+  const [estadosGlobales, setEstadosGlobales] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(formInicial);
   // Código de la cotización origen cuando el modal se abre en modo "duplicar".
   const [duplicandoDe, setDuplicandoDe] = useState(null);
   const [saving, setSaving] = useState(false);
   const [subiendoAdjuntos, setSubiendoAdjuntos] = useState(false);
-  const [exportando, setExportando] = useState(false);
   const { esSuperAdmin, esAdmin, accesoServicios, accesoProyectos } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
   const [aEliminar, setAEliminar] = useState(null);
   const toast = useToast();
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
-  const navigate = useNavigate();
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(cotizacionesService.paginate, filtros, { initialPageSize: 25 });
 
   // Abre modal automáticamente si llega ?nuevo=1, con preselección del lead/cliente.
+  // Si además viene ?observaciones=, lo maneja el efecto de abajo (que necesita
+  // resolverlas contra el backend antes de armar el formulario).
   useEffect(() => {
+    if (searchParams.get('observaciones')) return;
     if (searchParams.get('nuevo') === '1' && puedeCrear) {
       setForm({
         ...formInicial({
@@ -127,35 +135,51 @@ export default function Cotizaciones() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, puedeCrear, validezDefaultDias]);
 
-  // Prellenado "crear cotización desde observaciones" (navegación desde el
-  // detalle del plan de mantenimiento). Llega por location.state para poder
-  // transportar ítems con foto sin ensuciar la URL.
+  // Abre el modal prellenado desde observaciones técnicas (?observaciones=1,2,3),
+  // jaladas desde el panel de observaciones de un servicio. El backend resuelve
+  // cliente, ascensores del servicio origen y un ítem (texto + foto) por
+  // observación. El subtipo lo elige el admin: la observación no lo guarda.
   useEffect(() => {
-    const prefill = location.state?.prefillObservaciones;
-    if (!prefill || !puedeCrear) return;
-    setForm({
-      ...formInicial({ id_cliente: prefill.id_cliente ? String(prefill.id_cliente) : '' }),
-      fecha_validez: addDaysYMD(null, validezDefaultDias),
-      cuentas_pdf: cuentas.map(c => c.id),
-      descripcion: prefill.origen ? `Generada desde observaciones de ${prefill.origen}` : '',
-      ascensores: (prefill.id_ascensores || []).length
-        ? prefill.id_ascensores.map(idAsc => ({ modo: 'existente', id_ascensor: String(idAsc), ascensor_nuevo: ascensorVacio().ascensor_nuevo }))
-        : [ascensorVacio()],
-      items: (prefill.items || []).length
-        ? prefill.items.map(it => ({
+    const idsParam = searchParams.get('observaciones');
+    if (!idsParam || !puedeCrear) return;
+    const ids = idsParam.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) return;
+
+    // Limpia los params de entrada: el prellenado ocurre una sola vez.
+    const next = new URLSearchParams(searchParams);
+    ['nuevo', 'observaciones'].forEach(k => next.delete(k));
+    setSearchParams(next, { replace: true });
+
+    cotizacionesService.desdeObservaciones(ids)
+      .then(prefill => {
+        setForm({
+          ...formInicial({
+            id_cliente: String(prefill.id_cliente || ''),
+            ids_observaciones: prefill.items.map(it => it.id_observacion)
+          }),
+          fecha_validez: addDaysYMD(null, validezDefaultDias),
+          cuentas_pdf: cuentas.map(c => c.id),
+          // Si el servicio cubre un solo ascensor se preselecciona; con varios se
+          // deja vacío para que el admin elija cuál se cotiza.
+          ascensores: prefill.ascensores.length === 1
+            ? [{ ...ascensorVacio(), id_ascensor: String(prefill.ascensores[0].id) }]
+            : [ascensorVacio()],
+          descripcion: `Observaciones técnicas del servicio ${prefill.codigo_servicio}`,
+          items: prefill.items.map(it => ({
             ...itemVacio(),
-            descripcion: it.descripcion || '',
-            id_observacion_origen: it.id_observacion_origen || null,
-            foto: it.foto || null
+            descripcion: it.descripcion,
+            id_archivo: it.id_archivo,
+            archivo: it.archivo
           }))
-        : [itemVacio()]
-    });
-    setDuplicandoDe(null);
-    setOpen(true);
-    // limpia el state para que recargar/cerrar no reabra el modal
-    navigate(location.pathname, { replace: true, state: null });
+        });
+        setOpen(true);
+        if (prefill.ascensores.length > 1) {
+          toast.info('El servicio cubre varios ascensores: elige cuál se cotiza.');
+        }
+      })
+      .catch(err => toast.error(err.response?.data?.error || 'No se pudo preparar la cotización'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state, puedeCrear, validezDefaultDias, cuentas]);
+  }, [searchParams, puedeCrear, validezDefaultDias]);
 
   // Abre el modal en modo "duplicar" si llega ?duplicar=ID (p.ej. desde el detalle).
   useEffect(() => {
@@ -176,14 +200,16 @@ export default function Cotizaciones() {
       tiposServicioService.list(),
       configuracionService.get('IGV_RATE').catch(() => ({ valor: 0.18 })),
       configuracionService.get('COTIZACION_VALIDEZ_DIAS').catch(() => ({ valor: 15 })),
-      cuentasBancariasService.list().catch(() => [])
-    ]).then(([cs, as, ts, igv, val, ctas]) => {
+      cuentasBancariasService.list().catch(() => []),
+      cotizacionesService.catalogos().catch(() => ({ estados_globales: [] }))
+    ]).then(([cs, as, ts, igv, val, ctas, cat]) => {
       setClientes(cs);
       setAscensores(as);
       setTipos(ts);
       setIgvTasa(Number(igv.valor) || 0.18);
       setValidezDefaultDias(Number(val.valor) || 15);
       setCuentas(Array.isArray(ctas) ? ctas : []);
+      setEstadosGlobales(cat?.estados_globales || []);
     });
   }, []);
 
@@ -240,7 +266,9 @@ export default function Cotizaciones() {
             cantidad: Number(it.cantidad) || 1,
             unidad: it.unidad || 'Unidad',
             precio_unitario: Number(it.precio_unitario) || 0,
-            descuento_porcentaje: Number(it.descuento_porcentaje) || 0
+            descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
+            id_archivo: it.id_archivo || null,
+            archivo: it.archivo || null
           }))
         : [itemVacio()],
       cuotas: planCuotasDesdeServidor(v)
@@ -259,11 +287,10 @@ export default function Cotizaciones() {
   };
 
   // Jerarquía de tipos: padres y subtipos del padre seleccionado en el form.
-  // Se ocultan los padres fuera del ámbito del usuario (Servicios/Proyectos):
-  // un Administrador acotado a Servicios no ve la pestaña ni la opción Proyectos.
+  // Solo los tipos padre del/los ámbito(s) del usuario: un rol de área cotiza
+  // únicamente en su categoría funcional (Servicios/Proyectos).
   const padresTipo = useMemo(
-    () => tipos.filter(t => t.es_padre &&
-      (t.categoria_funcional === 'PROYECTOS' ? accesoProyectos : accesoServicios)),
+    () => tipos.filter(t => t.es_padre && (t.categoria_funcional === 'PROYECTOS' ? accesoProyectos : accesoServicios)),
     [tipos, accesoServicios, accesoProyectos]
   );
   const subtiposDelPadre = useMemo(
@@ -284,6 +311,24 @@ export default function Cotizaciones() {
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
     : [];
 
+  // Subtipo elegido: en correctivos la foto de cada ítem es obligatoria.
+  const subtipoSel = tipos.find(t => String(t.id) === String(form.id_subtipo_servicio));
+  const esCorrectivo = subtipoSel?.modulo_asociado === 'correctivo';
+  // Los servicios operativos (con módulo: correctivo/emergencia/mantenimiento/…)
+  // se cotizan para un solo ascensor. Los Proyectos (sin módulo) admiten varios.
+  const esServicioUnAscensor = !!subtipoSel?.modulo_asociado;
+
+  // Al elegir subtipo: si es un servicio operativo, recorta a un solo ascensor.
+  const cambiarSubtipoCot = (id) => {
+    const sub = tipos.find(t => String(t.id) === String(id));
+    const unAsc = !!sub?.modulo_asociado;
+    setForm(f => ({
+      ...f,
+      id_subtipo_servicio: id,
+      ascensores: unAsc && f.ascensores.length > 1 ? [f.ascensores[0]] : f.ascensores
+    }));
+  };
+
   // Edificios del cliente elegido (para colocar ascensores nuevos).
   useEffect(() => {
     if (!form.id_cliente) { setEdificiosCliente([]); return; }
@@ -300,6 +345,21 @@ export default function Cotizaciones() {
   };
   const agregarItem = () => setForm(f => ({ ...f, items: [...f.items, itemVacio()] }));
   const quitarItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+
+  const subirFotoItem = async (idx, e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const fd = new FormData();
+      fd.append('archivo', file);
+      const arch = await archivosService.upload(fd, 'cotizaciones');
+      setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, id_archivo: arch.id, archivo: arch } : it) }));
+    } catch {
+      toast.error('Error al subir la foto del ítem');
+    }
+  };
+  const quitarFotoItem = (idx) => setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, id_archivo: null, archivo: null } : it) }));
 
   const cambiarAscensor = (idx, key, val) => {
     setForm(f => ({
@@ -358,6 +418,9 @@ export default function Cotizaciones() {
     if (!form.id_subtipo_servicio) return toast.error('Selecciona un subtipo de servicio');
     if (!form.fecha_validez) return toast.error('Fecha de validez obligatoria');
     if (!form.ascensores.length) return toast.error('Agrega al menos un ascensor');
+    if (esServicioUnAscensor && form.ascensores.length > 1) {
+      return toast.error('Un servicio (correctivo, emergencia o mantenimiento) se cotiza para un solo ascensor.');
+    }
     for (let i = 0; i < form.ascensores.length; i++) {
       const a = form.ascensores[i];
       if (a.modo === 'existente' && !a.id_ascensor) {
@@ -372,6 +435,10 @@ export default function Cotizaciones() {
     }
     if (form.items.length === 0 || form.items.every(it => !it.descripcion.trim())) {
       return toast.error('Agrega al menos un item con descripción');
+    }
+    // En correctivos, cada ítem con descripción debe tener foto.
+    if (esCorrectivo && form.items.some(it => it.descripcion.trim() && !it.id_archivo)) {
+      return toast.error('En una cotización de correctivo, cada ítem debe incluir una foto.');
     }
 
     let payloadCuotas;
@@ -416,14 +483,13 @@ export default function Cotizaciones() {
             unidad: it.unidad || 'Unidad',
             precio_unitario: Number(it.precio_unitario) || 0,
             descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
-            // Si el ítem viene de una observación, el backend clona su foto y
-            // marca la observación como ya cotizada.
-            id_observacion_origen: it.id_observacion_origen || null
+            id_archivo: it.id_archivo || null
           })),
         tiene_cuotas: payloadCuotas.tiene_cuotas,
         plan_cuotas: payloadCuotas.plan_cuotas,
         saldo_variable: payloadCuotas.saldo_variable,
-        archivos: form.archivos.map(a => a.id)
+        archivos: form.archivos.map(a => a.id),
+        ids_observaciones: form.ids_observaciones
       });
       toast.success('Cotización creada');
       setOpen(false);
@@ -436,35 +502,6 @@ export default function Cotizaciones() {
     }
   };
 
-  const exportar = async (formato) => {
-    if (exportando) return;
-    setExportando(formato);
-    try {
-      const blob = await cotizacionesService.exportar(filtros, formato).then(r => r.data);
-      const ext = formato === 'pdf' ? 'pdf' : 'xlsx';
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `cotizaciones-${hoyISO()}.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success(`Exportación ${ext.toUpperCase()} lista`);
-    } catch (err) {
-      // El backend puede devolver el error como blob — intentamos parsearlo
-      let msg = 'Error al exportar';
-      if (err.response?.data instanceof Blob) {
-        try { msg = JSON.parse(await err.response.data.text()).error || msg; } catch {}
-      } else if (err.response?.data?.error) {
-        msg = err.response.data.error;
-      }
-      toast.error(msg);
-    } finally {
-      setExportando(false);
-    }
-  };
-
   return (
     <>
       <PageHeader
@@ -472,12 +509,6 @@ export default function Cotizaciones() {
         subtitle={`${total} registro(s)`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => exportar('excel')} disabled={!!exportando} className="btn-ghost">
-              {exportando === 'excel' ? 'Generando…' : 'Exportar Excel'}
-            </button>
-            <button onClick={() => exportar('pdf')} disabled={!!exportando} className="btn-ghost">
-              {exportando === 'pdf' ? 'Generando…' : 'Exportar PDF'}
-            </button>
             {puedeCrear && (
               <button onClick={abrirModal} className="btn-primary">+ Nueva cotización</button>
             )}
@@ -496,7 +527,8 @@ export default function Cotizaciones() {
           <input className="input col-span-2" placeholder="Buscar por código, edificio/obra, cliente, tipo de ascensor o servicio…" value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_global} onChange={e => setFiltros(f => ({ ...f, estado_global: e.target.value }))}>
-            {ESTADOS_GLOBALES.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
+            <option value="">Todos los estados</option>
+            {estadosGlobales.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <ClienteAutocomplete
             clientes={clientes}
@@ -508,6 +540,14 @@ export default function Cotizaciones() {
           />
           <input type="date" className="input" value={filtros.desde} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} />
           <input type="date" className="input" value={filtros.hasta} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} />
+          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer col-span-2 sm:col-span-1">
+            <input
+              type="checkbox"
+              checked={filtros.incluir_anuladas === '1'}
+              onChange={e => setFiltros(f => ({ ...f, incluir_anuladas: e.target.checked ? '1' : '' }))}
+            />
+            Mostrar anuladas
+          </label>
         </div>
       </div>
 
@@ -520,7 +560,6 @@ export default function Cotizaciones() {
                   <tr>
                     <th className="table-th">Código</th>
                     <th className="table-th">Cliente</th>
-                    <th className="table-th">Creado por</th>
                     <th className="table-th">Tipo</th>
                     <th className="table-th">Versión</th>
                     <th className="table-th">Validez</th>
@@ -537,8 +576,7 @@ export default function Cotizaciones() {
                     return (
                       <tr key={c.id} className="table-row-hover">
                         <td className="table-td"><Link to={`/cotizaciones/${c.id}`} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link></td>
-                        <td className="table-td">{nombreEdificioCotizacion(c) || '—'}</td>
-                        <td className="table-td">{c.creado_por?.nombres || '—'}</td>
+                        <td className="table-td">{nombreEdificioDeAscensores(c) || '—'}</td>
                         <td className="table-td">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre || '—'}</td>
                         <td className="table-td">v{v?.numero_version || c.version_activa}</td>
                         <td className="table-td">{formatFecha(v?.fecha_validez)}</td>
@@ -562,7 +600,7 @@ export default function Cotizaciones() {
                             <button onClick={() => duplicar(c.id)} className="btn-ghost text-xs !py-1.5 !px-3 mr-1">Duplicar</button>
                           )}
                           <Link to={`/cotizaciones/${c.id}`} className="btn-ghost text-xs !py-1.5 !px-3">Abrir</Link>
-                          {esSuperAdmin && c.estado_global === 'Cotizado' && (
+                          {esSuperAdmin && c.estado_global !== ESTADO_GLOBAL_ANULADO && (
                             <button onClick={() => setAEliminar(c)} className="btn-ghost text-xs !py-1.5 !px-3 ml-1 !text-rose-600">Eliminar</button>
                           )}
                         </td>
@@ -582,9 +620,8 @@ export default function Cotizaciones() {
                       <span className="font-mono text-sm text-brand-700">{c.codigo}</span>
                       <span className={`badge ${badgeEstado(c.estado_global)}`}>{c.estado_global}</span>
                     </div>
-                    <div className="text-sm text-carbon-800 font-medium">{nombreEdificioCotizacion(c)}</div>
+                    <div className="text-sm text-carbon-800 font-medium">{nombreEdificioDeAscensores(c)}</div>
                     <div className="text-xs text-carbon-500 mt-0.5">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre} • v{v?.numero_version}</div>
-                    {c.creado_por?.nombres && <div className="text-xs text-carbon-400 mt-0.5">Creada por {c.creado_por.nombres}</div>}
                     <div className="mt-1.5 flex justify-between text-xs">
                       <span className={`badge ${badgeEstado(v?.estado_version)}`}>{v?.estado_version}</span>
                       <span className="font-medium">{formatMonto(v?.monto_total, v?.moneda)}</span>
@@ -655,7 +692,7 @@ export default function Cotizaciones() {
             <div>
               <label className="label">Subtipo *</label>
               <select className="select" value={form.id_subtipo_servicio}
-                onChange={e => setForm(f => ({ ...f, id_subtipo_servicio: e.target.value }))}
+                onChange={e => cambiarSubtipoCot(e.target.value)}
                 disabled={!form.id_tipo_servicio}>
                 <option value="">{form.id_tipo_servicio ? '— Selecciona —' : 'Elige primero el tipo padre'}</option>
                 {subtiposDelPadre.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
@@ -665,11 +702,16 @@ export default function Cotizaciones() {
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="label !mb-0">Ascensores *</label>
-              <button type="button" onClick={agregarAscensor} className="btn-ghost text-xs !py-1.5 !px-3">
-                + Agregar ascensor
-              </button>
+              <label className="label !mb-0">{esServicioUnAscensor ? 'Ascensor *' : 'Ascensores *'}</label>
+              {!esServicioUnAscensor && (
+                <button type="button" onClick={agregarAscensor} className="btn-ghost text-xs !py-1.5 !px-3">
+                  + Agregar ascensor
+                </button>
+              )}
             </div>
+            {esServicioUnAscensor && (
+              <p className="text-[11px] text-carbon-500 -mt-1">Los servicios (correctivo, emergencia, mantenimiento) se cotizan para un solo ascensor. Para otro ascensor, cree una cotización aparte.</p>
+            )}
             {form.ascensores.map((a, idx) => (
               <div key={idx} className="border border-carbon-200 rounded-lg p-3 space-y-2 bg-ivory-50/40">
                 <div className="flex items-center justify-between">
@@ -702,7 +744,11 @@ export default function Cotizaciones() {
                           ? '— Este cliente no tiene ascensores registrados —'
                           : '— Selecciona ascensor —'}
                     </option>
-                    {ascensoresDelCliente.map(x => <option key={x.id} value={x.id}>{x.codigo} — {x.ubicacion || ''}</option>)}
+                    {ascensoresDelCliente.map(x => (
+                      <option key={x.id} value={x.id}>
+                        {x.codigo}{x.edificio?.nombre ? ` — ${x.edificio.nombre}` : ''}{x.ubicacion ? ` · ${x.ubicacion}` : ''}
+                      </option>
+                    ))}
                   </select>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -756,34 +802,20 @@ export default function Cotizaciones() {
               <button type="button" onClick={agregarItem} className="btn-ghost text-xs !py-1.5 !px-3">+ Agregar item</button>
             </div>
             <div className="hidden sm:grid grid-cols-12 gap-2 px-1 pb-1.5 mb-1 border-b border-carbon-100 text-[10px] font-semibold uppercase tracking-wider text-carbon-500">
-              <div className="col-span-5">Descripción</div>
+              <div className="col-span-4">Descripción</div>
               <div className="col-span-1 text-right">Cant.</div>
               <div className="col-span-1">Unidad</div>
               <div className="col-span-2 text-right">P. unitario</div>
               <div className="col-span-1 text-right">% dscto</div>
               <div className="col-span-1 text-right">Importe</div>
+              <div className="col-span-1 text-center">Foto{esCorrectivo && <span className="text-rose-600"> *</span>}</div>
               <div className="col-span-1"></div>
             </div>
             <div className="space-y-2">
               {form.items.map((it, idx) => (
                 <div key={idx} className="grid grid-cols-12 gap-2 items-start">
-                  <div className="col-span-12 sm:col-span-5 space-y-1">
-                    <textarea className="textarea w-full" rows="1" placeholder="Descripción del item"
-                      value={it.descripcion} onChange={e => cambiarItem(idx, 'descripcion', e.target.value)} />
-                    {it.foto && (
-                      <div className="flex items-center gap-2">
-                        <a href={assetUrl(it.foto.ruta_almacenamiento)} target="_blank" rel="noreferrer" title={it.foto.nombre_original}>
-                          <img src={assetUrl(it.foto.ruta_almacenamiento)} alt={it.foto.nombre_original || 'foto'}
-                            className="h-12 w-12 rounded object-cover ring-1 ring-carbon-200" />
-                        </a>
-                        <span className="text-[11px] text-carbon-500">
-                          Foto de la observación{it.id_observacion_origen ? ` #${it.id_observacion_origen}` : ''}
-                        </span>
-                        <button type="button" onClick={() => { cambiarItem(idx, 'foto', null); cambiarItem(idx, 'id_observacion_origen', null); }}
-                          className="text-carbon-400 hover:text-red-600 text-sm leading-none" title="Quitar foto del ítem">×</button>
-                      </div>
-                    )}
-                  </div>
+                  <textarea className="textarea col-span-12 sm:col-span-4" rows="1" placeholder="Descripción del item"
+                    value={it.descripcion} onChange={e => cambiarItem(idx, 'descripcion', e.target.value)} />
                   <input type="number" step="0.01" className="input col-span-3 sm:col-span-1" placeholder="Cant."
                     value={it.cantidad} onChange={e => cambiarItem(idx, 'cantidad', e.target.value)} />
                   <input className="input col-span-3 sm:col-span-1" placeholder="Unidad"
@@ -794,6 +826,19 @@ export default function Cotizaciones() {
                     value={it.descuento_porcentaje} onChange={e => cambiarItem(idx, 'descuento_porcentaje', e.target.value)} />
                   <div className="col-span-9 sm:col-span-1 text-right text-sm font-medium pt-2">
                     {formatMonto(calcImporte(it), form.moneda)}
+                  </div>
+                  <div className="col-span-2 sm:col-span-1 flex items-center justify-center pt-1">
+                    {it.archivo ? (
+                      <img src={assetUrl(it.archivo.ruta_almacenamiento)} alt="foto ítem"
+                        onClick={() => quitarFotoItem(idx)} title="Clic para quitar la foto"
+                        className="h-9 w-9 object-cover rounded ring-1 ring-slate-200 cursor-pointer" />
+                    ) : (
+                      <label className={`text-[11px] cursor-pointer hover:underline ${esCorrectivo ? 'text-rose-600' : 'text-brand-700'}`}
+                        title="Subir foto del ítem">
+                        + Foto
+                        <input type="file" accept="image/*" className="hidden" onChange={e => subirFotoItem(idx, e)} />
+                      </label>
+                    )}
                   </div>
                   <button type="button" onClick={() => quitarItem(idx)}
                     className="col-span-1 text-carbon-400 hover:text-red-600 text-lg leading-none">×</button>
@@ -903,9 +948,9 @@ export default function Cotizaciones() {
         palabraClave={aEliminar?.codigo || 'ELIMINAR'}
         descripcion={
           <>
-            Se dará de baja la cotización <span className="font-mono font-semibold">{aEliminar?.codigo}</span> con todas sus versiones,
-            ítems, ascensores y archivos adjuntos (incluidos los PDFs en almacenamiento). Solo es posible mientras no haya generado un
-            servicio. Acción auditada y recuperable.
+            La cotización <span className="font-mono font-semibold">{aEliminar?.codigo}</span> pasará a estado Anulado y se conservará
+            visible en el listado como historial (con sus versiones, ítems y adjuntos intactos). Si ya generó un servicio, ese servicio se
+            anulará (queda Cancelado con sus datos asociados). Acción auditada.
           </>
         }
         onConfirmar={async () => {

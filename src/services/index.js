@@ -37,8 +37,11 @@ export const edificiosService = {
   get: (id) => api.get(`/edificios/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/edificios', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/edificios/${id}`, d).then(r => r.data?.data ?? r.data),
+  // estado 0 = eliminación lógica en cascada; estado 1 = reactivar.
   setEstado: (id, estado) => api.patch(`/edificios/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data),
-  // Inactiva/reactiva todos los edificios de un cliente (solo Super Admin).
+  // Vista previa de lo que arrastra la eliminación (alimenta la doble confirmación).
+  impactoEliminacion: (id) => api.get(`/edificios/${id}/impacto-eliminacion`).then(r => r.data?.data ?? r.data),
+  // Elimina/reactiva todos los edificios de un cliente (solo Super Admin).
   setEstadoCliente: (idCliente, estado) => api.patch(`/edificios/cliente/${idCliente}/estado`, { estado }).then(r => r.data?.data ?? r.data),
   tipos: () => api.get('/edificios/tipos').then(r => r.data?.data ?? r.data),
   distritos: () => api.get('/edificios/distritos').then(r => r.data?.data ?? r.data)
@@ -47,7 +50,12 @@ export const edificiosService = {
 export const ascensoresService = {
   ...crud('/ascensores'),
   paginate: (params) => api.get('/ascensores', { params }).then(r => r.data),
-  historial: (id) => api.get(`/ascensores/${id}/historial`).then(r => r.data?.data ?? r.data)
+  historial: (id) => api.get(`/ascensores/${id}/historial`).then(r => r.data?.data ?? r.data),
+  // Guarda el precio de UN subtipo sin tocar el resto del catálogo del ascensor
+  // (a diferencia de `update`, que reemplaza el arreglo `precios` completo).
+  // Devuelve { id_ascensor, precios } con el catálogo vigente ya actualizado.
+  guardarPrecio: (id, { id_tipo_servicio, precio, moneda }) =>
+    api.put(`/ascensores/${id}/precios`, { id_tipo_servicio, precio, moneda }).then(r => r.data?.data ?? r.data)
 };
 
 export const tecnicosService = {
@@ -91,6 +99,7 @@ export const serviciosService = {
   // con evidencia; reenviar con { confirmar: true }.
   cambiarDuracion: (id, payload) => api.patch(`/servicios/${id}/duracion`, payload).then(r => r.data),
   setEstado: (id, estado_servicio) => api.patch(`/servicios/${id}/estado`, { estado_servicio }).then(r => r.data?.data ?? r.data),
+  setRequiereFactura: (id, requiere_factura) => api.patch(`/servicios/${id}/requiere-factura`, { requiere_factura }).then(r => r.data?.data ?? r.data),
   asignar: (id, payload) => api.post(`/servicios/${id}/asignar`, payload).then(r => r.data),
   iniciar: (id, accion) => api.post(`/servicios/${id}/iniciar`, { accion }).then(r => r.data),
   finalizar: (id, payload) => api.post(`/servicios/${id}/finalizar`, payload).then(r => r.data),
@@ -151,14 +160,22 @@ export const facturasService = {
 export const emergenciasService = {
   list: (params) => api.get('/emergencias', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/emergencias', { params }).then(r => r.data),
+  get: (id) => api.get(`/emergencias/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/emergencias', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/emergencias/${id}`, d).then(r => r.data?.data ?? r.data),
-  remove: (id) => api.delete(`/emergencias/${id}`).then(r => r.data)
+  remove: (id) => api.delete(`/emergencias/${id}`).then(r => r.data),
+  // Adjuntos de contexto (fotos/videos de la falla) que revisa el técnico asignado.
+  // `listarArchivos` devuelve la respuesta completa porque el backend acompaña
+  // los datos con meta.max y meta.puede_gestionar.
+  listarArchivos: (id) => api.get(`/emergencias/${id}/archivos`).then(r => r.data),
+  agregarArchivos: (id, archivos) => api.post(`/emergencias/${id}/archivos`, { archivos }).then(r => r.data?.data ?? r.data),
+  eliminarArchivo: (id, idVinculo) => api.delete(`/emergencias/${id}/archivos/${idVinculo}`).then(r => r.data)
 };
 
 export const correctivosService = {
   list: (params) => api.get('/correctivos', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/correctivos', { params }).then(r => r.data),
+  get: (id) => api.get(`/correctivos/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/correctivos', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/correctivos/${id}`, d).then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/correctivos/${id}`).then(r => r.data)
@@ -176,6 +193,8 @@ export const mantenimientosService = {
     api.get('/mantenimientos/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   exportarDatos: (params) =>
     api.get('/mantenimientos/exportar', { params: { ...params, formato: 'json' } }).then(r => r.data?.data ?? r.data),
+  // Preview del borrado en cascada: alimenta el modal de confirmación.
+  impactoEliminacion: (id) => api.get(`/mantenimientos/${id}/impacto-eliminacion`).then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/mantenimientos/${id}`).then(r => r.data)
 };
 
@@ -300,8 +319,14 @@ export const cotizacionesService = {
   paginate: (params) => api.get('/cotizaciones', { params }).then(r => r.data),
   exportar: (params, formato = 'excel') =>
     api.get('/cotizaciones/exportar', { params: { ...params, formato }, responseType: 'blob' }),
+  // Catálogos de estado (global y de versión) que alimentan el filtro.
+  catalogos: () => api.get('/cotizaciones/catalogos').then(r => r.data?.data ?? r.data),
   get: (id) => api.get(`/cotizaciones/${id}`).then(r => r.data?.data ?? r.data),
   historial: (id) => api.get(`/cotizaciones/${id}/historial`).then(r => r.data?.data ?? r.data),
+  // Prellenado desde observaciones técnicas: devuelve cliente, ascensores del
+  // servicio origen y un ítem (texto + foto) por observación.
+  desdeObservaciones: (ids) =>
+    api.get('/cotizaciones/desde-observaciones', { params: { ids: ids.join(',') } }).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/cotizaciones', d).then(r => r.data?.data ?? r.data),
   updateCabecera: (id, d) => api.put(`/cotizaciones/${id}`, d).then(r => r.data?.data ?? r.data),
   updateVersion: (id, v, d) => api.put(`/cotizaciones/${id}/versiones/${v}`, d).then(r => r.data?.data ?? r.data),

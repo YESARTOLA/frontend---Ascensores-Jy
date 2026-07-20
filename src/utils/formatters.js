@@ -194,14 +194,14 @@ export function badgeEstado(estado) {
   if (
     e.includes('curso') || e.includes('camino') || e.includes('asignad') ||
     e.includes('emisión') || e.includes('emitid') || e === 'aceptado' ||
-    e === 'ejecución'
+    e === 'ejecución' || e.includes('atenc')
   ) return 'badge-blue';
-  if (e.includes('pendien') || e.includes('checklist') || e === 'cotizado') return 'badge-amber';
+  if (e.includes('pendien') || e.includes('checklist') || e === 'cotizado' || e.includes('reportad')) return 'badge-amber';
   if (
     e.includes('mora') || e.includes('vencid') || e.includes('cancel') ||
-    e.includes('fuera') || e.includes('descart') || e === 'rechazado'
+    e.includes('anul') || e.includes('fuera') || e.includes('descart') || e === 'rechazado'
   ) return 'badge-red';
-  if (e.includes('observ')) return 'badge-violet';
+  if (e.includes('observ') || e.includes('atendid') || e.includes('resuelt')) return 'badge-violet';
   return 'badge-gray';
 }
 
@@ -283,14 +283,15 @@ export function clientesConEdificios(clientes, ascensores) {
 }
 
 /**
- * Nombre del edificio / obra de una cotización, inferido de sus ascensores
- * (la cotización es a nivel cliente; la ubicación física vive en el edificio).
- * Toma el primer ascensor con edificio; si no hay (p. ej. todos "nuevos"), cae
- * al nombre comercial del cliente y, en último caso, al código.
+ * Nombre del edificio / obra de un registro con ascensores (cotización,
+ * servicio o proyecto), inferido de estos: el registro es a nivel cliente y la
+ * ubicación física vive en el edificio. Toma el primer ascensor con edificio;
+ * si no hay (p. ej. todos "nuevos"), cae al nombre comercial del cliente y, en
+ * último caso, al código.
  */
-export function nombreEdificioCotizacion(cot) {
-  const nombre = cot?.ascensores?.map(a => nombreEdificio(a.ascensor?.edificio)).find(Boolean);
-  return nombre || nombreCliente(cot?.cliente) || cot?.codigo || '';
+export function nombreEdificioDeAscensores(registro) {
+  const nombre = registro?.ascensores?.map(a => nombreEdificio(a.ascensor?.edificio)).find(Boolean);
+  return nombre || nombreCliente(registro?.cliente) || registro?.codigo || '';
 }
 
 /**

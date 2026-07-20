@@ -1,26 +1,89 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { recordatoriosService, clientesService } from '../services';
+import { recordatoriosService, clientesService, serviciosService, correctivosService, emergenciasService, mantenimientosService, cobrosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Modal from '../components/common/Modal.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import CalendarioControles from '../components/common/CalendarioControles.jsx';
+import CalendarioMes from '../components/common/CalendarioMes.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFechaHora, nowDateTimeLocalLima, isoToDateTimeLocalLima, dateTimeLocalLimaToISO } from '../utils/formatters.js';
 import { CATALOGO_TIPOS_EVENTO, colorPorTipo } from '../utils/visibilidadCalendario.js';
+import { rangoMes, ymdLima, mesLabelLima, fmtDiaLargo, fechaLima } from '../utils/calendarioFechas.js';
+import { estaServicioFinalizado } from '../utils/estadoServicio.js';
 
-// Tipos disponibles para crear/etiquetar recordatorios. Se deriva del catálogo
+// Tipos que SOLO informan que un servicio/proyecto terminó (sin acción pendiente).
+const TIPOS_AVISO_FINALIZADO = new Set(['servicio_finalizado_aviso']);
+
+// En la vista de Mes se ocultan únicamente los recordatorios que solo avisan que
+// el servicio/proyecto ya finalizó (no hay nada que hacer con ellos). Los demás
+// recordatorios ligados a un servicio finalizado —revisar servicio, facturar,
+// cotización urgente, observaciones, etc.— SÍ se muestran, porque avisan que un
+// paso del flujo está pendiente o que alguien debe intervenir.
+const recordatorioOcultoEnMes = (r) =>
+  TIPOS_AVISO_FINALIZADO.has(r.tipo) && (
+    estaServicioFinalizado(r.servicio?.estado_servicio) ||
+    estaServicioFinalizado(r.emergencia?.servicio?.estado_servicio)
+  );
+
+// Tipos disponibles para filtrar/etiquetar recordatorios. Se deriva del catálogo
 // central (espejado con backend) para que cualquier `tipo` nuevo en BD se
-// pinte automáticamente sin hardcodear listas aquí.
-//   - 'manual' lo agregamos al frente porque es un tipo creado por usuarios
-//     (no aparece en CATALOGO_TIPOS_EVENTO porque no es un evento de calendario).
-//   - Para el resto se toman los de dominio 'operativo' (servicio, mantenimiento,
-//     emergencia, etc.) y 'recordatorio' (cobro, observacion, alertas, etc.).
-const TIPOS = [
-  { value: 'manual', label: 'Manual', color: '#8b5cf6' },
-  ...CATALOGO_TIPOS_EVENTO.map(t => ({ value: t.value, label: t.label, color: t.color }))
+// pinte automáticamente sin hardcodear listas aquí. Incluye 'manual' (creado por
+// el usuario). Se excluye 'servicio': ese tipo genérico es redundante con los
+// módulos específicos (emergencia, correctivo, mantenimiento, atención rápida),
+// que ya son servicios, y sus recordatorios ya no se muestran.
+const TIPOS = CATALOGO_TIPOS_EVENTO
+  .filter(t => t.value !== 'servicio')
+  .map(t => ({ value: t.value, label: t.label, color: t.color }));
+
+// Tipos de proceso que se pueden vincular (opcionalmente) a un recordatorio
+// manual. El recordatorio conserva su tipo 'manual'; esto solo enlaza el proceso.
+const TIPOS_PROCESO = [
+  { value: 'servicio', label: 'Servicio / Proyecto' },
+  { value: 'correctivo', label: 'Correctivo' },
+  { value: 'emergencia', label: 'Emergencia' },
+  { value: 'mantenimiento', label: 'Mantenimiento' },
+  { value: 'cobro', label: 'Cobro' }
 ];
+
+// Fuente de datos por tipo de proceso (cada servicio devuelve un array).
+const CARGA_PROCESO = {
+  servicio: () => serviciosService.list(),
+  correctivo: () => correctivosService.list(),
+  emergencia: () => emergenciasService.list(),
+  mantenimiento: () => mantenimientosService.list(),
+  cobro: () => cobrosService.list()
+};
+
+// Normaliza cada registro a { value, label } para el select. `value` es el id
+// que se enviará en el campo de vínculo correspondiente (para correctivos es el
+// id del servicio vinculado, porque el recordatorio enlaza por id_servicio).
+const NORMALIZA_PROCESO = {
+  servicio: s => ({ value: String(s.id), label: `${s.codigo || `SRV-${s.id}`}${s.cliente?.nombre ? ` · ${s.cliente.nombre}` : (s.titulo ? ` · ${s.titulo}` : '')}` }),
+  correctivo: c => (c.servicio?.id ? { value: String(c.servicio.id), label: `${c.servicio.codigo || `#${c.id}`}${c.falla ? ` · ${c.falla.slice(0, 40)}` : ''}` } : null),
+  emergencia: e => ({ value: String(e.id), label: `${e.servicio?.codigo || `#${e.id}`}${e.motivo ? ` · ${e.motivo.slice(0, 40)}` : ''}` }),
+  mantenimiento: p => ({ value: String(p.id), label: `${p.cliente?.nombre || 'Plan'} · Plan #${p.id}` }),
+  cobro: co => ({ value: String(co.id), label: `Cobro #${co.id}${co.cliente?.nombre ? ` · ${co.cliente.nombre}` : ''}` })
+};
+
+async function cargarListaProceso(tipo) {
+  const fn = CARGA_PROCESO[tipo];
+  if (!fn) return [];
+  const arr = await fn();
+  return (Array.isArray(arr) ? arr : []).map(NORMALIZA_PROCESO[tipo]).filter(o => o && o.value);
+}
+
+// A partir de un recordatorio, deduce el tipo/id de proceso vinculado para
+// precargar el selector (correctivo y servicio comparten id_servicio → 'servicio').
+function procesoDeRecordatorio(r) {
+  if (r.id_emergencia) return { proceso_tipo: 'emergencia', proceso_id: String(r.id_emergencia) };
+  if (r.id_mantenimiento_plan) return { proceso_tipo: 'mantenimiento', proceso_id: String(r.id_mantenimiento_plan) };
+  if (r.id_cobro) return { proceso_tipo: 'cobro', proceso_id: String(r.id_cobro) };
+  if (r.id_servicio) return { proceso_tipo: 'servicio', proceso_id: String(r.id_servicio) };
+  return { proceso_tipo: '', proceso_id: '' };
+}
 
 const PRIORIDADES = [
   { value: 'alta', label: 'Alta', cls: 'text-rose-700 bg-rose-50 border-rose-200' },
@@ -45,7 +108,9 @@ function formInicial() {
     descripcion: '',
     tipo: 'manual',
     fecha_recordatorio: nueve >= ahora ? nueve : ahora,
-    prioridad: 'media'
+    prioridad: 'media',
+    proceso_tipo: '',
+    proceso_id: ''
   };
 }
 
@@ -93,18 +158,86 @@ export default function Recordatorios() {
   const [clientes, setClientes] = useState([]);
   const [modalForm, setModalForm] = useState(null); // null | { form, editId? }
   const [saving, setSaving] = useState(false);
+  const [procesosCache, setProcesosCache] = useState({}); // { [tipo]: [{value,label}] }
+  const [procesoLoading, setProcesoLoading] = useState(false);
   const toast = useToast();
+
+  // Carga perezosa de la lista de procesos cuando se elige un tipo en el modal.
+  const procesoTipoSel = modalForm?.form?.proceso_tipo || '';
+  useEffect(() => {
+    if (!procesoTipoSel || procesosCache[procesoTipoSel]) return;
+    let cancel = false;
+    setProcesoLoading(true);
+    cargarListaProceso(procesoTipoSel)
+      .then(opts => { if (!cancel) setProcesosCache(c => ({ ...c, [procesoTipoSel]: opts })); })
+      .catch(() => { if (!cancel) setProcesosCache(c => ({ ...c, [procesoTipoSel]: [] })); })
+      .finally(() => { if (!cancel) setProcesoLoading(false); });
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [procesoTipoSel]);
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(recordatoriosService.paginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
 
+  // Vista Lista (por defecto) vs. vista Mes, reutilizando el calendario visual.
+  const [modoLista, setModoLista] = useState(true);
+  const [cursor, setCursor] = useState(new Date());
+  const [eventosMes, setEventosMes] = useState([]);
+  const [diaSel, setDiaSel] = useState(null);
+  // En la vista Lista, el botón "Hoy" lleva el grupo de recordatorios de hoy al
+  // inicio (por defecto se muestran primero los Vencidos).
+  const [hoyPrimero, setHoyPrimero] = useState(false);
+
   useEffect(() => { clientesService.list().then(setClientes).catch(() => setClientes([])); }, []);
+
+  // La vista Mes trae TODOS los recordatorios del mes (sin `page` el backend no
+  // pagina, tope 500), aplicando los mismos filtros que la Lista.
+  const recargarMes = () => {
+    const { desde, hasta } = rangoMes(cursor);
+    return recordatoriosService.list({ ...filtros, desde, hasta })
+      .then(r => setEventosMes((Array.isArray(r) ? r : []).filter(ev => !recordatorioOcultoEnMes(ev))))
+      .catch(() => setEventosMes([]));
+  };
+  useEffect(() => { if (!modoLista) recargarMes(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [modoLista, cursor, filtros]);
+
+  // Refresca la vista activa tras crear/atender/descartar/etc.
+  const refrescar = () => { cargar(); if (!modoLista) recargarMes(); };
 
   // La búsqueda (q) y el resto de filtros se resuelven en el servidor; la
   // agrupación por fecha se aplica a la página actual (el backend ordena por
   // fecha_recordatorio asc, así los grupos se mantienen coherentes entre páginas).
   const grupos = useMemo(() => agruparPorFecha(data), [data]);
+
+  // Orden de los grupos en la vista Lista. Con "Hoy" activo, el grupo de hoy va
+  // primero; el resto conserva su orden (sort estable). Por defecto: Vencidos primero.
+  const gruposOrdenados = useMemo(() => {
+    const entries = Object.entries(grupos);
+    if (!hoyPrimero) return entries;
+    return [...entries].sort((a, b) => (a[0] === 'Hoy' ? -1 : b[0] === 'Hoy' ? 1 : 0));
+  }, [grupos, hoyPrimero]);
+
+  const colorRecordatorio = (r) => r.color || TIPOS.find(x => x.value === r.tipo)?.color || colorPorTipo(r.tipo);
+  const itemsPorDia = useMemo(() => {
+    const m = {};
+    eventosMes.forEach(r => {
+      const ymd = ymdLima(new Date(r.fecha_recordatorio));
+      (m[ymd] ||= []).push({
+        id: r.id,
+        color: colorRecordatorio(r),
+        titulo: r.titulo,
+        subtitulo: vinculoEntidad(r)?.label || undefined,
+        title: r.titulo
+      });
+    });
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventosMes]);
+  const mesLabel = mesLabelLima(cursor);
+  const eventosDelDia = useMemo(
+    () => (diaSel ? eventosMes.filter(r => ymdLima(new Date(r.fecha_recordatorio)) === diaSel.ymd) : []),
+    [diaSel, eventosMes]
+  );
 
   const setF = (k, v) => setFiltros(p => ({ ...p, [k]: v }));
 
@@ -117,7 +250,8 @@ export default function Recordatorios() {
       tipo: r.tipo,
       // Mostrar el instante guardado en hora de Lima, no en UTC ni en el huso del navegador.
       fecha_recordatorio: isoToDateTimeLocalLima(r.fecha_recordatorio),
-      prioridad: r.prioridad
+      prioridad: r.prioridad,
+      ...procesoDeRecordatorio(r)
     }
   });
   const cerrarModal = () => setModalForm(null);
@@ -136,7 +270,23 @@ export default function Recordatorios() {
     try {
       // El input datetime-local entrega "YYYY-MM-DDTHH:mm" sin TZ; anclarlo a Lima
       // antes de enviar para que el instante guardado coincida con la hora local del usuario.
-      const payload = { ...modalForm.form, fecha_recordatorio: dateTimeLocalLimaToISO(modalForm.form.fecha_recordatorio) };
+      // El proceso vinculado (opcional) se traduce al campo de id correspondiente.
+      // El recordatorio SIEMPRE se guarda como 'manual' aunque se vincule un proceso.
+      const { proceso_tipo, proceso_id, ...rest } = modalForm.form;
+      const vinculo = { id_servicio: null, id_emergencia: null, id_mantenimiento_plan: null, id_cobro: null };
+      if (proceso_id) {
+        const pid = Number(proceso_id);
+        if (proceso_tipo === 'servicio' || proceso_tipo === 'correctivo') vinculo.id_servicio = pid;
+        else if (proceso_tipo === 'emergencia') vinculo.id_emergencia = pid;
+        else if (proceso_tipo === 'mantenimiento') vinculo.id_mantenimiento_plan = pid;
+        else if (proceso_tipo === 'cobro') vinculo.id_cobro = pid;
+      }
+      const payload = {
+        ...rest,
+        ...vinculo,
+        tipo: 'manual',
+        fecha_recordatorio: dateTimeLocalLimaToISO(rest.fecha_recordatorio)
+      };
       if (modalForm.editId) {
         await recordatoriosService.update(modalForm.editId, payload);
         toast.success('Recordatorio actualizado');
@@ -145,7 +295,7 @@ export default function Recordatorios() {
         toast.success('Recordatorio creado');
       }
       cerrarModal();
-      cargar();
+      refrescar();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Error al guardar');
     } finally { setSaving(false); }
@@ -155,7 +305,7 @@ export default function Recordatorios() {
     try {
       await recordatoriosService.atender(r.id);
       toast.success('Marcado como atendido');
-      cargar();
+      refrescar();
     } catch (e) { toast.error(e.response?.data?.error || 'Error'); }
   };
 
@@ -164,7 +314,7 @@ export default function Recordatorios() {
     try {
       await recordatoriosService.descartar(r.id);
       toast.success('Descartado');
-      cargar();
+      refrescar();
     } catch (e) { toast.error(e.response?.data?.error || 'Error'); }
   };
 
@@ -172,7 +322,7 @@ export default function Recordatorios() {
     try {
       await recordatoriosService.pendiente(r.id);
       toast.success('Reactivado');
-      cargar();
+      refrescar();
     } catch (e) { toast.error(e.response?.data?.error || 'Error'); }
   };
 
@@ -181,14 +331,65 @@ export default function Recordatorios() {
     try {
       await recordatoriosService.remove(r.id);
       toast.success('Eliminado');
-      cargar();
+      refrescar();
     } catch (e) { toast.error(e.response?.data?.error || 'Error'); }
+  };
+
+  // Fila de un recordatorio, reutilizada por la vista Lista y por el modal del día (vista Mes).
+  const filaRecordatorio = (r) => {
+    const link = vinculoEntidad(r);
+    return (
+      <li key={r.id} className="p-4 flex items-start gap-3">
+        <div className="h-3 w-3 mt-1.5 rounded-full shrink-0" style={{ background: colorRecordatorio(r) }} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-slate-800 text-sm">{r.titulo}</span>
+            {badgeTipo(r.tipo)}
+            {badgePrioridad(r.prioridad)}
+            {r.origen === 'auto' && <span className="text-[10px] text-slate-400 uppercase tracking-wider">auto</span>}
+          </div>
+          {r.descripcion && <div className="text-xs text-slate-600 mt-0.5">{r.descripcion}</div>}
+          <div className="text-xs text-slate-500 mt-1 flex items-center gap-3 flex-wrap">
+            <span>{formatFechaHora(r.fecha_recordatorio)}</span>
+            {link && <Link to={link.to} className="text-brand-700 hover:underline">{link.label}</Link>}
+          </div>
+          {r.notas_seguimiento && (
+            <div className="text-xs text-slate-600 mt-2 p-2 bg-slate-50 rounded">{r.notas_seguimiento}</div>
+          )}
+        </div>
+        <div className="flex flex-col gap-1 shrink-0">
+          {r.estado_recordatorio === 'pendiente' && (
+            <>
+              <button onClick={() => atender(r)} className="text-xs text-emerald-700 hover:underline">Atender</button>
+              <button onClick={() => descartar(r)} className="text-xs text-slate-500 hover:underline">Descartar</button>
+              {r.origen === 'manual' && <button onClick={() => abrirEdicion(r)} className="text-xs text-brand-700 hover:underline">Editar</button>}
+            </>
+          )}
+          {r.estado_recordatorio !== 'pendiente' && (
+            <button onClick={() => reactivar(r)} className="text-xs text-brand-700 hover:underline">Reactivar</button>
+          )}
+          {r.origen === 'manual' && <button onClick={() => eliminar(r)} className="text-xs text-rose-700 hover:underline">Eliminar</button>}
+        </div>
+      </li>
+    );
   };
 
   return (
     <>
       <PageHeader title="Recordatorios" subtitle="Seguimiento de programaciones y pendientes"
-        actions={<button onClick={abrirNuevo} className="btn-primary">+ Nuevo recordatorio</button>} />
+        actions={
+          <>
+            <CalendarioControles
+              modoLista={modoLista}
+              onToggleModo={() => setModoLista(v => !v)}
+              onHoy={() => { setCursor(new Date()); if (modoLista) setHoyPrimero(true); }}
+              onPrev={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() - 1); return d; })}
+              onNext={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() + 1); return d; })}
+              mesLabel={mesLabel}
+            />
+            <button onClick={abrirNuevo} className="btn-primary">+ Nuevo recordatorio</button>
+          </>
+        } />
 
       <div className="card mb-4">
         <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -227,11 +428,13 @@ export default function Recordatorios() {
         </div>
       </div>
 
-      {loading ? <Loader /> : data.length === 0 ? (
+      {!modoLista ? (
+        <CalendarioMes cursor={cursor} itemsPorDia={itemsPorDia} onSelectDay={setDiaSel} />
+      ) : loading ? <Loader /> : data.length === 0 ? (
         <div className="card"><EmptyState title="Sin recordatorios" subtitle="No hay recordatorios con los filtros aplicados" /></div>
       ) : (
         <div className="space-y-4">
-          {Object.entries(grupos).map(([titulo, items]) => items.length === 0 ? null : (
+          {gruposOrdenados.map(([titulo, items]) => items.length === 0 ? null : (
             <div key={titulo} className="card">
               <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
                 <h3 className={`font-semibold text-sm ${titulo === 'Vencidos' ? 'text-rose-700' : titulo === 'Hoy' ? 'text-amber-700' : 'text-slate-700'}`}>
@@ -240,43 +443,7 @@ export default function Recordatorios() {
                 <span className="text-xs text-slate-500">{items.length}</span>
               </div>
               <ul className="divide-y divide-slate-100">
-                {items.map(r => {
-                  const link = vinculoEntidad(r);
-                  return (
-                    <li key={r.id} className="p-4 flex items-start gap-3">
-                      <div className="h-3 w-3 mt-1.5 rounded-full shrink-0" style={{ background: r.color || '#8b5cf6' }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-slate-800 text-sm">{r.titulo}</span>
-                          {badgeTipo(r.tipo)}
-                          {badgePrioridad(r.prioridad)}
-                          {r.origen === 'auto' && <span className="text-[10px] text-slate-400 uppercase tracking-wider">auto</span>}
-                        </div>
-                        {r.descripcion && <div className="text-xs text-slate-600 mt-0.5">{r.descripcion}</div>}
-                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-3 flex-wrap">
-                          <span>{formatFechaHora(r.fecha_recordatorio)}</span>
-                          {link && <Link to={link.to} className="text-brand-700 hover:underline">{link.label}</Link>}
-                        </div>
-                        {r.notas_seguimiento && (
-                          <div className="text-xs text-slate-600 mt-2 p-2 bg-slate-50 rounded">{r.notas_seguimiento}</div>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-1 shrink-0">
-                        {r.estado_recordatorio === 'pendiente' && (
-                          <>
-                            <button onClick={() => atender(r)} className="text-xs text-emerald-700 hover:underline">Atender</button>
-                            <button onClick={() => descartar(r)} className="text-xs text-slate-500 hover:underline">Descartar</button>
-                            {r.origen === 'manual' && <button onClick={() => abrirEdicion(r)} className="text-xs text-brand-700 hover:underline">Editar</button>}
-                          </>
-                        )}
-                        {r.estado_recordatorio !== 'pendiente' && (
-                          <button onClick={() => reactivar(r)} className="text-xs text-brand-700 hover:underline">Reactivar</button>
-                        )}
-                        {r.origen === 'manual' && <button onClick={() => eliminar(r)} className="text-xs text-rose-700 hover:underline">Eliminar</button>}
-                      </div>
-                    </li>
-                  );
-                })}
+                {items.map(filaRecordatorio)}
               </ul>
             </div>
           ))}
@@ -286,6 +453,20 @@ export default function Recordatorios() {
           </div>
         </div>
       )}
+
+      <Modal
+        open={diaSel !== null}
+        onClose={() => setDiaSel(null)}
+        title={diaSel ? fmtDiaLargo.format(fechaLima(diaSel.ymd)) : ''}
+        size="md"
+        footer={<button type="button" onClick={() => setDiaSel(null)} className="btn-secondary">Cerrar</button>}
+      >
+        {eventosDelDia.length === 0 ? (
+          <p className="text-sm text-slate-500">Sin recordatorios para este día.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">{eventosDelDia.map(filaRecordatorio)}</ul>
+        )}
+      </Modal>
 
       <Modal open={modalForm !== null} onClose={cerrarModal}
         title={modalForm?.editId ? 'Editar recordatorio' : 'Nuevo recordatorio'}
@@ -316,6 +497,23 @@ export default function Recordatorios() {
                   {PRIORIDADES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
+            </div>
+            <div className="border-t border-slate-100 pt-3">
+              <label className="label">Proceso vinculado (opcional)</label>
+              <div className="grid grid-cols-2 gap-3">
+                <select className="select" value={modalForm.form.proceso_tipo}
+                  onChange={e => setModalForm(m => ({ ...m, form: { ...m.form, proceso_tipo: e.target.value, proceso_id: '' } }))}>
+                  <option value="">— Sin vincular —</option>
+                  {TIPOS_PROCESO.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <select className="select" value={modalForm.form.proceso_id}
+                  disabled={!modalForm.form.proceso_tipo || procesoLoading}
+                  onChange={e => setModalForm(m => ({ ...m, form: { ...m.form, proceso_id: e.target.value } }))}>
+                  <option value="">{procesoLoading ? 'Cargando…' : (modalForm.form.proceso_tipo ? '— Seleccione —' : '—')}</option>
+                  {(procesosCache[modalForm.form.proceso_tipo] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">El recordatorio se mantiene de tipo <b>Manual</b>; vincular un proceso es opcional.</p>
             </div>
           </div>
         )}
