@@ -4,6 +4,7 @@ import {
   cotizacionesService,
   configuracionService,
   archivosService,
+  cuentasBancariasService,
   assetUrl
 } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
@@ -47,6 +48,50 @@ function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
+// Resuelve la selección de cuentas a precargar en un form a partir de la
+// versión: si tiene selección explícita (array) se respeta; si es legacy
+// (null/no-array) se marcan todas las cuentas activas, como hace la creación.
+function cuentasPreseleccionadas(version, cuentas) {
+  return Array.isArray(version?.cuentas_pdf)
+    ? version.cuentas_pdf
+    : cuentas.map(c => c.id);
+}
+
+// Selector de cuentas bancarias (checkboxes) compartido por el form de edición
+// y el modal de aprobación. `seleccion` = array de ids; `onToggle(id, marcada)`.
+function SelectorCuentas({ cuentas, seleccion, onToggle }) {
+  if (!cuentas.length) return null;
+  return (
+    <div>
+      <label className="label">Cuentas bancarias en el PDF</label>
+      <p className="text-[11px] text-carbon-500 mb-2">
+        Se imprimirán en el PDF solo las cuentas marcadas. Se gestionan en Configuración › Cuentas bancarias.
+      </p>
+      <div className="space-y-1.5">
+        {cuentas.map(c => {
+          const marcada = seleccion.includes(c.id);
+          return (
+            <label key={c.id} className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={marcada}
+                onChange={e => onToggle(c.id, e.target.checked)} />
+              <span className="text-sm">
+                <span className="font-medium text-carbon-800">{c.banco}</span>{' '}
+                <span className="text-xs text-carbon-500">({c.moneda})</span>
+                <span className="text-xs text-carbon-500"> · {c.tipo_cuenta} · {c.numero_cuenta}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {seleccion.length === 0 && (
+        <p className="text-[11px] text-amber-600 mt-1">
+          Ninguna cuenta seleccionada: el PDF no incluirá la sección de datos para pago.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function calcImporte(it) {
   const cant = Number(it.cantidad) || 0;
   const pu = Number(it.precio_unitario) || 0;
@@ -73,6 +118,12 @@ export default function CotizacionDetalle() {
   const [cuotasForm, setCuotasForm] = useState(planCuotasDesdeServidor(null));
   const [saving, setSaving] = useState(false);
 
+  // Cuentas bancarias disponibles (para el selector de PDF) + selección editada
+  // en el form de edición y en el modal de aprobación.
+  const [cuentas, setCuentas] = useState([]);
+  const [cuentasForm, setCuentasForm] = useState([]);
+  const [cuentasAprob, setCuentasAprob] = useState([]);
+
   // Modales
   const [openNuevaVersion, setOpenNuevaVersion] = useState(false);
   const [motivoCambio, setMotivoCambio] = useState('');
@@ -91,6 +142,8 @@ export default function CotizacionDetalle() {
   });
   const [archivoRespaldo, setArchivoRespaldo] = useState(null);
   const [subiendoRespaldo, setSubiendoRespaldo] = useState(false);
+  // Foto obligatoria por ítem al aprobar: id del ítem cuya foto se está subiendo.
+  const [subiendoFotoItemId, setSubiendoFotoItemId] = useState(null);
 
   // Reapertura
   const [openReabrir, setOpenReabrir] = useState(false);
@@ -146,6 +199,12 @@ export default function CotizacionDetalle() {
       .then(igv => setIgvTasa(Number(igv.valor) || 0.18));
   }, []);
 
+  useEffect(() => {
+    cuentasBancariasService.list()
+      .then(cs => setCuentas(Array.isArray(cs) ? cs : []))
+      .catch(() => setCuentas([]));
+  }, []);
+
   const versionActiva = useMemo(() => {
     if (!cot || !verActivaNum) return null;
     return cot.versiones.find(v => v.numero_version === verActivaNum);
@@ -186,6 +245,8 @@ export default function CotizacionDetalle() {
     return historial.some(ev => ev.accion === 'REOPEN' && new Date(ev.fecha_evento).getTime() >= aprob);
   })();
   const servicioGen = cot.servicios?.[0];
+  // Al aprobar, cada ítem debe llevar foto (el técnico la ve en el servicio).
+  const faltanFotosItems = (versionActiva.items || []).some(it => !it.id_archivo);
 
   const iniciarEdicion = () => {
     setItemsForm(versionActiva.items.map(it => ({
@@ -200,6 +261,7 @@ export default function CotizacionDetalle() {
     setFechaValidezForm(String(versionActiva.fecha_validez).slice(0, 10));
     setObservForm(versionActiva.observaciones || '');
     setCuotasForm(planCuotasDesdeServidor(versionActiva));
+    setCuentasForm(cuentasPreseleccionadas(versionActiva, cuentas));
     setEditandoItems(true);
     setTab('items');
   };
@@ -228,7 +290,8 @@ export default function CotizacionDetalle() {
         observaciones: observForm,
         tiene_cuotas: payloadCuotas.tiene_cuotas,
         plan_cuotas: payloadCuotas.plan_cuotas,
-        saldo_variable: payloadCuotas.saldo_variable
+        saldo_variable: payloadCuotas.saldo_variable,
+        cuentas_pdf: cuentasForm
       });
       toast.success('Versión actualizada');
       setEditandoItems(false);
@@ -268,8 +331,43 @@ export default function CotizacionDetalle() {
     }
   };
 
+  // Sube la foto de un ítem desde el modal de aprobación y la persiste de
+  // inmediato reenviando todos los ítems de la versión (que sigue en Cotizado),
+  // para que la validación de aprobación del backend la reconozca. Luego recarga.
+  const subirFotoItemAprobacion = async (item, e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || subiendoFotoItemId != null) return;
+    setSubiendoFotoItemId(item.id);
+    try {
+      const fd = new FormData();
+      fd.append('archivo', file);
+      const arch = await archivosService.upload(fd, 'cotizaciones');
+      await cotizacionesService.updateVersion(id, versionActiva.numero_version, {
+        items: versionActiva.items.map(it => ({
+          orden: it.orden,
+          descripcion: it.descripcion,
+          cantidad: Number(it.cantidad) || 1,
+          unidad: it.unidad || 'Unidad',
+          precio_unitario: Number(it.precio_unitario) || 0,
+          descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
+          id_archivo: it.id === item.id ? arch.id : (it.id_archivo || null)
+        }))
+      });
+      toast.success('Foto agregada al ítem');
+      await cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al subir la foto del ítem');
+    } finally {
+      setSubiendoFotoItemId(null);
+    }
+  };
+
   const aprobarVersion = async (e) => {
     e.preventDefault();
+    if ((versionActiva.items || []).some(it => !it.id_archivo)) {
+      return toast.error('Cada ítem debe tener una foto antes de aprobar.');
+    }
     try {
       // El módulo destino lo define el SUBTIPO de la cotización (SSoT), no la
       // categoría libre (eliminada). Si el padre es Proyectos, modulo = null.
@@ -278,7 +376,10 @@ export default function CotizacionDetalle() {
       // registra después desde el detalle del servicio ("Programar fecha").
       const payload = {
         observaciones: aprobarForm.observaciones || null,
-        id_archivo_respaldo: aprobarForm.id_archivo_respaldo
+        id_archivo_respaldo: aprobarForm.id_archivo_respaldo,
+        // Cuentas bancarias a utilizar (opcional): precargadas desde la selección
+        // guardada y ajustables en el modal. Se persisten en la versión al aprobar.
+        cuentas_pdf: cuentasAprob
       };
       if (modulo === 'emergencia') {
         payload.motivo = aprobarForm.motivo;
@@ -416,7 +517,7 @@ export default function CotizacionDetalle() {
             )}
             {puedeEditar && cotizacionDecidible && versionEditable && (
               <>
-                <button onClick={() => setOpenAprobar(true)} className="btn-primary text-xs !py-1.5 !px-3">Aprobar</button>
+                <button onClick={() => { setCuentasAprob(cuentasPreseleccionadas(versionActiva, cuentas)); setOpenAprobar(true); }} className="btn-primary text-xs !py-1.5 !px-3">Aprobar</button>
                 <button onClick={() => setOpenRechazo(true)} className="btn-ghost text-xs !py-1.5 !px-3">Rechazar</button>
               </>
             )}
@@ -564,6 +665,9 @@ export default function CotizacionDetalle() {
                 setObserv={setObservForm}
                 cuotas={cuotasForm}
                 setCuotas={setCuotasForm}
+                cuentas={cuentas}
+                cuentasSel={cuentasForm}
+                setCuentasSel={setCuentasForm}
                 igvTasa={igvTasa}
                 totales={totalesEdit}
                 moneda={versionActiva.moneda}
@@ -784,11 +888,38 @@ export default function CotizacionDetalle() {
         size="md"
         footer={<>
           <button onClick={() => setOpenAprobar(false)} className="btn-ghost">Cancelar</button>
-          <button type="submit" form="form-aprobar" className="btn-primary">Confirmar aprobación</button>
+          <button type="submit" form="form-aprobar" className="btn-primary" disabled={faltanFotosItems || subiendoFotoItemId != null}
+            title={faltanFotosItems ? 'Sube la foto de cada ítem antes de aprobar' : undefined}>
+            Confirmar aprobación
+          </button>
         </>}
       >
         <form id="form-aprobar" onSubmit={aprobarVersion} className="space-y-3">
+          {cot.id_servicio_cobro && (
+            <div className="rounded-md bg-amber-50 ring-1 ring-amber-200 p-3 text-xs text-amber-800">
+              <span className="font-semibold">Cobro sobre servicio existente.</span> Al aprobar
+              <span className="font-semibold"> no se creará un servicio nuevo</span>: se generará el cobro
+              sobre el servicio ya existente (emergencia atendida) y quedará facturable.
+            </div>
+          )}
           {(() => {
+            if (cot.id_servicio_cobro) {
+              return (
+                <div className="text-sm text-carbon-700">
+                  Al aprobar se generará:
+                  <ul className="list-disc list-inside text-xs text-carbon-600 mt-1">
+                    <li>
+                      El cobro en gestión de cobros
+                      {versionActiva.tiene_cuotas && Array.isArray(versionActiva.plan_cuotas) && versionActiva.plan_cuotas.length > 0
+                        ? ` con ${versionActiva.plan_cuotas.length} cuota(s) según el plan definido`
+                        : ' con una sola cuota por el total'}
+                      {versionActiva.saldo_variable && ' · saldo variable habilitado'}
+                    </li>
+                    <li>El servicio existente quedará facturable (requiere factura).</li>
+                  </ul>
+                </div>
+              );
+            }
             const modulo = cot?.subtipo_servicio?.modulo_asociado || null;
             const nAsc = cot.ascensores?.length || 1;
             const moduloDestino = modulo === 'emergencia' ? 'Emergencias'
@@ -820,11 +951,51 @@ export default function CotizacionDetalle() {
               </div>
             );
           })()}
+          {/* Fotos obligatorias por ítem: al aprobar, cada ítem debe llevar su
+              foto porque el técnico asignado la verá en el servicio generado.
+              La foto es opcional al crear la cotización pero se exige aquí. */}
+          {(() => {
+            const items = versionActiva.items || [];
+            if (items.length === 0) return null;
+            const completas = !faltanFotosItems;
+            return (
+              <div className={`rounded-md p-3 space-y-2 ring-1 ${completas ? 'bg-emerald-50 ring-emerald-200' : 'bg-rose-50 ring-rose-200'}`}>
+                <div className={`text-xs font-semibold ${completas ? 'text-emerald-800' : 'text-rose-800'}`}>
+                  Fotos de los ítems {completas ? '✓ completas' : '(obligatorias para aprobar)'}
+                </div>
+                <p className="text-[11px] text-carbon-600">
+                  Cada ítem debe tener una foto: el técnico asignado la verá por cada ítem en el servicio.
+                  {' '}{completas ? 'Todos los ítems tienen foto.' : `Faltan ${items.filter(it => !it.id_archivo).length} de ${items.length}.`}
+                </p>
+                <ul className="space-y-1.5">
+                  {items.map(it => (
+                    <li key={it.id} className="flex items-center gap-2 text-xs">
+                      {it.archivo
+                        ? <a href={assetUrl(it.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer" title="Ver foto">
+                            <img src={assetUrl(it.archivo.ruta_almacenamiento)} alt="foto" className="h-9 w-9 object-cover rounded ring-1 ring-slate-200" />
+                          </a>
+                        : <span className="h-9 w-9 rounded ring-1 ring-rose-200 bg-white grid place-items-center text-rose-400">—</span>}
+                      <span className="flex-1 truncate text-carbon-700">{it.descripcion || '(sin descripción)'}</span>
+                      <label className={`cursor-pointer text-[11px] px-2 py-1 rounded ring-1 whitespace-nowrap ${it.id_archivo ? 'text-carbon-500 ring-slate-200 hover:bg-slate-50' : 'text-rose-600 ring-rose-300 hover:bg-rose-100'} ${subiendoFotoItemId != null ? 'opacity-50 pointer-events-none' : ''}`}>
+                        {subiendoFotoItemId === it.id ? 'Subiendo…' : (it.id_archivo ? 'Cambiar' : '+ Foto')}
+                        <input type="file" accept="image/*" className="hidden" disabled={subiendoFotoItemId != null}
+                          onChange={e => subirFotoItemAprobacion(it, e)} />
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
+
           {/* La fecha de programación se registra después, cuando el servicio
               llega al área correspondiente (detalle del servicio → "Programar
               fecha"). Por eso ya no se piden fecha/hora/prioridad al aprobar. */}
 
           {(() => {
+            // En cobro sobre servicio existente NO se replica en ningún módulo:
+            // no se piden datos de emergencia/correctivo/plan.
+            if (cot.id_servicio_cobro) return null;
             const modulo = cot?.subtipo_servicio?.modulo_asociado || null;
             if (modulo === 'emergencia') {
               return (
@@ -949,6 +1120,15 @@ export default function CotizacionDetalle() {
             <input type="file" className="input" onChange={subirRespaldo} disabled={subiendoRespaldo} />
             {archivoRespaldo && <div className="text-xs text-emerald-600 mt-1">✓ {archivoRespaldo.nombre_original}</div>}
           </div>
+
+          {/* Cuentas bancarias a utilizar: opcional, precargadas desde la
+              selección guardada de la versión y ajustables antes de aprobar. */}
+          <SelectorCuentas
+            cuentas={cuentas}
+            seleccion={cuentasAprob}
+            onToggle={(idc, marcada) => setCuentasAprob(sel =>
+              marcada ? [...sel, idc] : sel.filter(x => x !== idc))}
+          />
         </form>
       </Modal>
 
@@ -1070,7 +1250,7 @@ function ItemsView({ version, igvTasa }) {
   );
 }
 
-function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, setObserv, cuotas, setCuotas, igvTasa, totales, moneda, onCancel, onSave, saving }) {
+function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, setObserv, cuotas, setCuotas, cuentas, cuentasSel, setCuentasSel, igvTasa, totales, moneda, onCancel, onSave, saving }) {
   const toast = useToast();
   const cambiar = (idx, key, val) => setItems(arr => arr.map((it, i) => i === idx ? { ...it, [key]: val } : it));
   const agregar = () => setItems(arr => [...arr, itemVacio()]);
@@ -1165,6 +1345,14 @@ function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, s
         <label className="label">Observaciones</label>
         <textarea className="textarea" rows="2" value={observ} onChange={e => setObserv(e.target.value)} />
       </div>
+
+      <SelectorCuentas
+        cuentas={cuentas}
+        seleccion={cuentasSel}
+        onToggle={(idc, marcada) => setCuentasSel(sel =>
+          marcada ? [...sel, idc] : sel.filter(x => x !== idc))}
+      />
+
       <div className="flex justify-end gap-2">
         <button onClick={onCancel} type="button" className="btn-ghost">Cancelar</button>
         <button onClick={onSave} type="button" disabled={saving} className="btn-primary">

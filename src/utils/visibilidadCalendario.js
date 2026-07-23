@@ -3,13 +3,14 @@
 
 export const VISIBILIDAD_POR_ROL = {
   super_admin:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
-  admin:        { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'servicio_finalizado_aviso'] },
-  coordinador:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'cotizacion_urgente', 'servicio_finalizado_revisar'] },
+  admin:        { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
+  coordinador:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar'] },
   tecnico:      { operativos: 'asignados', tipos_recordatorio: ['mantenimiento', 'emergencia'] },
-  contabilidad: { operativos: 'todos',     tipos_recordatorio: ['manual', 'cobro', 'observacion_alerta', 'servicio_finalizado_facturar'] },
-  // La Vendedora ve TODA la agenda operativa (solo lectura) para validar la
-  // disponibilidad de los técnicos al programar; sin recordatorios.
-  vendedora:    { operativos: 'todos',     tipos_recordatorio: [] }
+  // Contabilidad recibe SOLO el aviso sin detalle (observacion_facturar).
+  contabilidad: { operativos: 'todos',     tipos_recordatorio: ['manual', 'cobro', 'observacion_facturar', 'servicio_finalizado_facturar'] },
+  // La Vendedora ve la agenda operativa (solo lectura) y recibe la alerta de
+  // observación técnica (con detalle) para armar la cotización.
+  vendedora:    { operativos: 'todos',     tipos_recordatorio: ['observacion_alerta'] }
 };
 
 // Catálogo único de tipos de evento para los selects y la leyenda.
@@ -29,6 +30,7 @@ export const CATALOGO_TIPOS_EVENTO = [
   { value: 'cobro',              label: 'Cobro',              label_plural: 'cobros',               color: '#9333ea', dominio: 'recordatorio' }, // púrpura
   { value: 'observacion',        label: 'Observación',        label_plural: 'observaciones',        color: '#0d9488', dominio: 'recordatorio' }, // turquesa
   { value: 'observacion_alerta', label: 'Alerta de observación', label_plural: 'alertas de observación', color: '#e11d48', dominio: 'recordatorio' }, // rosa-rojo
+  { value: 'observacion_facturar', label: 'Observación · facturar', label_plural: 'observaciones por facturar', color: '#0891b2', dominio: 'recordatorio' }, // cian
   { value: 'cotizacion_urgente', label: 'Cotización urgente', label_plural: 'cotizaciones urgentes', color: '#c026d3', dominio: 'recordatorio' }, // fucsia
   { value: 'servicio_finalizado_revisar',  label: 'Revisar servicio',  label_plural: 'revisiones de servicio',   color: '#65a30d', dominio: 'recordatorio' }, // lima
   { value: 'servicio_finalizado_facturar', label: 'Facturar servicio', label_plural: 'facturaciones pendientes', color: '#4f46e5', dominio: 'recordatorio' }, // índigo

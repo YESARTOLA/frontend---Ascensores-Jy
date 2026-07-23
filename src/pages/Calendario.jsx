@@ -18,6 +18,7 @@ import {
   subtituloCalendario
 } from '../utils/visibilidadCalendario.js';
 import { TZ, fmtDiaLargo, ymdLima, fechaLima, rangoMes, mesLabelLima } from '../utils/calendarioFechas.js';
+import { usePersistentState } from '../utils/usePersistentState.js';
 import CalendarioControles from '../components/common/CalendarioControles.jsx';
 import CalendarioMes from '../components/common/CalendarioMes.jsx';
 
@@ -61,7 +62,8 @@ export default function Calendario() {
   const [loading, setLoading] = useState(true);
   const [modoLista, setModoLista] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
-  const [filtros, setFiltros] = useState(filtrosIniciales);
+  // Filtros persistidos: siguen activos al abrir un servicio/proyecto y volver.
+  const [filtros, setFiltros] = usePersistentState('calendario:filtros', filtrosIniciales);
   const [clientes, setClientes] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [materializandoId, setMaterializandoId] = useState(null);

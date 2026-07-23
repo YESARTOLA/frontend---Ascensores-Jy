@@ -148,9 +148,10 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
     return (
       <div className="card lg:col-span-3">
         <div className="card-header"><h3 className="card-title">Checklist de finalización</h3></div>
-        <div className="card-body text-sm text-amber-700 bg-amber-50/60">
-          La plantilla de checklist de esta categoría no tiene ítems configurados. Pídale a un administrador
-          que la configure en <strong>Configuración → Checklist de finalización</strong>.
+        <div className="card-body text-sm text-slate-600 bg-slate-50/60">
+          Esta categoría no tiene una plantilla de checklist configurada. El checklist de finalización es
+          <strong> opcional</strong>: puedes finalizar el servicio sin él. Si deseas usarlo, un administrador
+          puede configurarlo en <strong>Configuración → Checklist de finalización</strong>.
         </div>
       </div>
     );

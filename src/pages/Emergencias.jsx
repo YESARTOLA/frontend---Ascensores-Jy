@@ -13,7 +13,7 @@ import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import AdjuntosEmergenciaModal from '../components/emergencias/AdjuntosEmergenciaModal.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, hoyISO, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
-import { esServicioEditable, esEmergenciaCerrada, ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
+import { esServicioEditable, esEmergenciaCerrada, estaServicioFinalizado, ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
 
 const NIVELES_URGENCIA = ['alta', 'media', 'baja'];
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
@@ -257,6 +257,12 @@ export default function Emergencias() {
                   const editable = puedeEditar
                     && !esEmergenciaCerrada(e.estado_emergencia)
                     && (!e.servicio || esServicioEditable(e.servicio.estado_servicio));
+                  // Cotizable (cobro sobre servicio existente): solo admin, con el
+                  // servicio ya finalizado y aún no ligado a una cotización.
+                  const cotizable = (esSuperAdmin || esAdmin)
+                    && e.servicio
+                    && estaServicioFinalizado(e.servicio.estado_servicio)
+                    && !e.servicio.id_cotizacion;
                   return (
                   <tr key={e.id} className="table-row-hover">
                     <td className="table-td text-xs">{formatFechaHora(e.fecha_reporte)}</td>
@@ -308,6 +314,14 @@ export default function Emergencias() {
                     <td className="table-td text-right whitespace-nowrap">
                       {e.servicio && (
                         <Link to={`/servicios/${e.servicio.id}`} className="text-brand-700 text-xs hover:underline">Ver detalle</Link>
+                      )}
+                      {cotizable && (
+                        <>
+                          <span className="text-slate-300 mx-1.5">·</span>
+                          <Link to={`/cotizaciones?nuevo=1&emergencia=${e.id}`}
+                            title="Crear una cotización de cobro con los datos de esta emergencia (no crea un servicio nuevo)"
+                            className="text-brand-700 text-xs hover:underline">Cotizar</Link>
+                        </>
                       )}
                       {editable && (
                         <>

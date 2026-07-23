@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { serviciosService, clientesService } from '../services';
+import { serviciosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
@@ -8,14 +8,32 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import OtModal from '../components/common/OtModal.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores, hoyISO } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores, nombreEdificioDeAscensores, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
 import { ESTADOS_FACTURACION } from '../utils/estadoFactura.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 
 const FILTROS_INICIALES = {
-  q: '', id_cliente: '', estado_cobro: '', estado_facturacion: '', desde: '', hasta: ''
+  q: '', tipo_categoria: '', situacion: '', estado_cobro: '', estado_facturacion: '', desde: '', hasta: ''
 };
+
+// Opciones del filtro de situación de pago (espejo de la columna "Situación").
+const SITUACIONES = [
+  { value: 'cancelado', label: 'Cancelado' },
+  { value: 'pendiente', label: 'Pendiente' },
+  { value: 'sin_cobro', label: 'Sin cobro' }
+];
+
+// Opciones del filtro por tipo de servicio. El value viaja al backend, que lo
+// mapea a modulo_asociado / tipo_registro.
+const TIPOS_CATEGORIA = [
+  { value: 'correctivo', label: 'Correctivo' },
+  { value: 'preventivo', label: 'Preventivo (mantenimiento)' },
+  { value: 'proyecto', label: 'Proyecto' }
+];
+
+// Estados de cobro que se consideran "Cancelado" (pagado). El resto es "Pendiente".
+const COBRO_CANCELADO = ['Pagado', 'Cerrado'];
 
 const EN_EJECUCION = 'En ejecución';
 
@@ -23,21 +41,49 @@ const EN_EJECUCION = 'En ejecución';
 // precio y estado de cobro distinta, alineada con la tabla).
 const esGratuito = (r) => r.servicio?.sin_cobro === 1;
 
+// Documento del cliente: "RUC 20..." / "DNI 4..." o '—' si no hay número.
+const docCliente = (r) => {
+  const c = r.servicio?.cliente;
+  if (!c?.numero_documento) return '—';
+  return `${c.tipo_documento || ''} ${c.numero_documento}`.trim();
+};
+
+// Fecha de emisión del comprobante: la factura activa más reciente del cobro.
+const fechaComprobante = (r) => {
+  const facturas = (r.servicio?.cobro?.facturas || []).filter(f => f.estado !== 0 && f.fecha_emision);
+  if (!facturas.length) return null;
+  return facturas.reduce((max, f) => (f.fecha_emision > max ? f.fecha_emision : max), facturas[0].fecha_emision);
+};
+
+// Tipo de servicio legible (nombre del subtipo).
+const tipoServicioLabel = (r) => r.servicio?.tipo_servicio?.nombre || '—';
+
+// Situación de pago: Sin cobro (gratuito) | Cancelado (pagado) | Pendiente.
+const situacionPago = (r) => {
+  if (esGratuito(r)) return 'Sin cobro';
+  return COBRO_CANCELADO.includes(r.estado_cobro) ? 'Cancelado' : 'Pendiente';
+};
+
 // Columnas del export (espejo de la tabla, sin la columna de acciones).
 const COLUMNAS_EXPORT = [
-  { header: 'Fecha', get: r => (r.estado_administrativo === EN_EJECUCION ? '' : formatFecha(r.fecha_realizacion)) },
+  { header: 'Fecha servicio', get: r => (r.estado_administrativo === EN_EJECUCION ? '' : formatFecha(r.fecha_realizacion)) },
+  { header: 'Fecha comprobante', get: r => { const f = fechaComprobante(r); return f ? formatFecha(f) : ''; } },
   { header: 'Código', get: r => r.servicio?.codigo },
-  { header: 'Cliente', get: r => r.servicio?.cliente?.nombre },
+  { header: 'DNI / RUC', get: r => (docCliente(r) === '—' ? '' : docCliente(r)) },
+  { header: 'Razón social', get: r => r.servicio?.cliente?.nombre },
+  { header: 'Edificio', get: r => nombreEdificioDeAscensores(r.servicio) },
   { header: 'Ascensor', get: r => resumenAscensores(r.servicio) },
+  { header: 'Tipo de servicio', get: r => tipoServicioLabel(r) },
   { header: 'Etapa', badge: true, get: r => r.estado_administrativo || '' },
-  { header: 'Precio', align: 'right', get: r => (esGratuito(r) ? 'Sin costo' : formatMonto(r.servicio?.precio_interno, r.servicio?.moneda)) },
+  { header: 'Moneda', get: r => r.servicio?.moneda || '' },
+  { header: 'Total', align: 'right', get: r => (esGratuito(r) ? 'Sin costo' : formatMonto(r.servicio?.precio_interno, r.servicio?.moneda)) },
   { header: 'Estado cobro', badge: true, get: r => (esGratuito(r) ? 'Sin cobro' : r.estado_cobro) },
-  { header: 'Estado factura', badge: true, get: r => r.estado_facturacion }
+  { header: 'Estado factura', badge: true, get: r => r.estado_facturacion },
+  { header: 'Situación', badge: true, get: r => situacionPago(r) }
 ];
 
 export default function Contabilidad() {
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
-  const [clientes, setClientes] = useState([]);
   const [exportando, setExportando] = useState(false);
   const [otAbierta, setOtAbierta] = useState(null); // { numero, archivo } | null
   const toast = useToast();
@@ -45,15 +91,14 @@ export default function Contabilidad() {
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize } =
     usePaginatedList(serviciosService.realizadosPaginate, filtros, { initialPageSize: 25 });
 
-  useEffect(() => { clientesService.list().then(setClientes).catch(() => setClientes([])); }, []);
-
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
 
   // Descripción legible de los filtros activos, para la cabecera del export.
   const filtrosLegibles = () => {
     const p = [];
     if (filtros.q) p.push(`Búsqueda: ${filtros.q}`);
-    if (filtros.id_cliente) p.push(`Cliente: ${clientes.find(c => String(c.id) === String(filtros.id_cliente))?.nombre || filtros.id_cliente}`);
+    if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_CATEGORIA.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
+    if (filtros.situacion) p.push(`Situación: ${SITUACIONES.find(s => s.value === filtros.situacion)?.label || filtros.situacion}`);
     if (filtros.estado_cobro) p.push(`Estado cobro: ${filtros.estado_cobro}`);
     if (filtros.estado_facturacion) p.push(`Estado factura: ${filtros.estado_facturacion}`);
     if (filtros.desde) p.push(`Realización desde: ${filtros.desde}`);
@@ -100,12 +145,16 @@ export default function Contabilidad() {
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input lg:col-span-2"
-            placeholder="Buscar por código de servicio o cliente…"
+            placeholder="Buscar por código, RUC/DNI, cliente o código de edificio…"
             value={filtros.q}
             onChange={e => setF('q', e.target.value)} />
-          <select className="select" value={filtros.id_cliente} onChange={e => setF('id_cliente', e.target.value)}>
-            <option value="">Todos los clientes</option>
-            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          <select className="select" value={filtros.tipo_categoria} onChange={e => setF('tipo_categoria', e.target.value)}>
+            <option value="">Tipo de servicio (todos)</option>
+            {TIPOS_CATEGORIA.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <select className="select" value={filtros.situacion} onChange={e => setF('situacion', e.target.value)}>
+            <option value="">Situación (todas)</option>
+            {SITUACIONES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
           <select className="select" value={filtros.estado_cobro} onChange={e => setF('estado_cobro', e.target.value)}>
             <option value="">Estado cobro (todos)</option>
@@ -131,12 +180,18 @@ export default function Contabilidad() {
             <div className="overflow-x-auto scroll-thin">
               <table className="table-base">
                 <thead><tr>
-                  <th className="table-th">Fecha</th><th className="table-th">Código</th>
-                  <th className="table-th">Cliente / Ascensor</th>
+                  <th className="table-th">Fecha servicio</th>
+                  <th className="table-th">Fecha comprobante</th>
+                  <th className="table-th">Código</th>
+                  <th className="table-th">DNI / RUC</th>
+                  <th className="table-th">Razón social</th>
+                  <th className="table-th">Edificio</th>
+                  <th className="table-th">Tipo de servicio</th>
                   <th className="table-th">Etapa</th>
                   <th className="table-th">OT</th>
-                  <th className="table-th text-right">Precio</th>
+                  <th className="table-th text-right">Total</th>
                   <th className="table-th">Estado cobro</th><th className="table-th">Estado factura</th>
+                  <th className="table-th">Situación</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
@@ -156,6 +211,9 @@ export default function Contabilidad() {
                             ? <span className="text-slate-400 italic">— (sin ejecutar)</span>
                             : formatFecha(r.fecha_realizacion)}
                         </td>
+                        <td className="table-td text-xs">
+                          {(() => { const f = fechaComprobante(r); return f ? formatFecha(f) : <span className="text-slate-400">—</span>; })()}
+                        </td>
                         <td className="table-td">
                           <Link to={`/servicios/${r.id_servicio}`} className="font-mono text-xs text-brand-700">{r.servicio?.codigo}</Link>
                           {gratuito && (
@@ -166,7 +224,13 @@ export default function Contabilidad() {
                             </div>
                           )}
                         </td>
-                        <td className="table-td text-xs"><div>{r.servicio?.cliente?.nombre}</div><div className="font-mono text-slate-500" title={codigosAscensores(r.servicio).join(', ')}>{resumenAscensores(r.servicio)}</div></td>
+                        <td className="table-td text-xs font-mono whitespace-nowrap">{docCliente(r)}</td>
+                        <td className="table-td text-xs">{r.servicio?.cliente?.nombre || '—'}</td>
+                        <td className="table-td text-xs">
+                          <div>{nombreEdificioDeAscensores(r.servicio) || '—'}</div>
+                          <div className="font-mono text-slate-500" title={codigosAscensores(r.servicio).join(', ')}>{resumenAscensores(r.servicio)}</div>
+                        </td>
+                        <td className="table-td text-xs">{tipoServicioLabel(r)}</td>
                         <td className="table-td">
                           <span className={badgeEstado(r.estado_administrativo)}>{r.estado_administrativo || '—'}</span>
                         </td>
@@ -195,6 +259,9 @@ export default function Contabilidad() {
                             : <span className={badgeEstado(r.estado_cobro)}>{r.estado_cobro}</span>}
                         </td>
                         <td className="table-td"><span className={badgeEstado(r.estado_facturacion)}>{r.estado_facturacion}</span></td>
+                        <td className="table-td">
+                          {(() => { const sit = situacionPago(r); return <span className={badgeEstado(sit === 'Cancelado' ? 'Pagado' : sit === 'Pendiente' ? 'Pendiente de iniciar' : 'Sin cobro')}>{sit}</span>; })()}
+                        </td>
                         <td className="table-td text-right space-x-3 whitespace-nowrap">
                           {r.servicio?.cobro && <Link to={`/cobros/${r.servicio.cobro.id}`} className="text-brand-700 text-xs">Ir a cobro</Link>}
                           <Link to={`/servicios/${r.id_servicio}`} className="text-slate-600 text-xs">Detalle</Link>

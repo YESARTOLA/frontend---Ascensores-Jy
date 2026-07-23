@@ -93,7 +93,7 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
         genera_alerta: generaAlerta
       });
       toast.success(generaAlerta
-        ? 'Observación registrada — alerta enviada a administración y contabilidad'
+        ? 'Observación registrada — alertas enviadas (detalle a administración/cotización/oficina técnica; aviso a contabilidad)'
         : 'Observación registrada');
       setTexto('');
       setArchivo(null);
@@ -184,14 +184,13 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
               />
               <div className="text-xs leading-snug">
                 <div className={`font-medium ${generaAlerta ? 'text-rose-800' : 'text-slate-700'}`}>
-                  🔔 Enviar alerta a administración y contabilidad
+                  🔔 Enviar alerta de la observación
                 </div>
                 <div className="text-slate-500 text-[11px]">
-                  Marca esta opción si la observación requiere atención inmediata. Llegará un aviso (popup + campana) a los roles Super Admin, Admin y Contabilidad.
+                  Marca esta opción si la observación requiere atención inmediata. Administración, cotización (vendedora) y oficina técnica (coordinador) reciben la alerta <strong>con el detalle</strong> (texto e imagen) para el seguimiento y la cotización; contabilidad recibe <strong>solo el aviso</strong> de que hay un servicio con observación, sin el comentario ni la imagen.
                 </div>
               </div>
             </label>
-            <p className="text-[11px] text-slate-500">Se le envía un aviso al coordinador para seguimiento.</p>
           </form>
         )}
 

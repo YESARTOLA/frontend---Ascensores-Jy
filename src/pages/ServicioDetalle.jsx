@@ -29,6 +29,90 @@ const TIPOS_EVIDENCIA = ['Foto', 'Video', 'Documento', 'Otro'];
 const TIPOS_ENTREGA = ['Entrega parcial', 'Entrega final', 'Entrega documental', 'Entrega técnica'];
 const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
 
+// Tarjeta de una foto de evidencia (secciones "Antes"/"Despues"). El comentario se
+// edita en línea y se registra DESPUÉS de subir la imagen; se puede eliminar mientras
+// el servicio no esté finalizado (`puedeGestionar`).
+function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, onGuardarComentario }) {
+  const [comentario, setComentario] = useState(ev.descripcion || '');
+  const [guardando, setGuardando] = useState(false);
+  const ruta = ev.archivo?.ruta_almacenamiento;
+  const mime = ev.archivo?.mime_type || '';
+  const esImagen = mime.startsWith('image/');
+  const esVideo = mime.startsWith('video/');
+  const url = ruta ? assetUrl(ruta) : null;
+  const cambiado = (comentario || '').trim() !== (ev.descripcion || '').trim();
+  const diaEv = esMultidia && ev.id_dia ? dias.find(x => x.id === ev.id_dia) : null;
+
+  const guardar = async () => {
+    setGuardando(true);
+    try { await onGuardarComentario(ev.id, comentario); }
+    finally { setGuardando(false); }
+  };
+
+  return (
+    <div className="rounded-lg ring-1 ring-slate-100 overflow-hidden bg-white text-sm">
+      <div className="relative aspect-square bg-slate-50">
+        {url && esImagen ? (
+          <button type="button" onClick={() => filePreview.open(ev.archivo)} className="block w-full h-full">
+            <img src={url} alt={ev.descripcion || ev.archivo.nombre_original} className="w-full h-full object-cover hover:scale-105 transition" />
+          </button>
+        ) : url && esVideo ? (
+          <button type="button" onClick={() => filePreview.open(ev.archivo)} className="relative block w-full h-full group" aria-label="Reproducir video">
+            <video src={url} preload="metadata" muted playsInline className="w-full h-full object-cover bg-black" />
+            <span className="absolute inset-0 grid place-items-center bg-black/30 group-hover:bg-black/40 transition">
+              <span className="grid place-items-center h-12 w-12 rounded-full bg-white/90 text-slate-900 shadow-lg">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+              </span>
+            </span>
+          </button>
+        ) : url ? (
+          <FileLink archivo={ev.archivo} className="w-full h-full grid place-items-center text-xs text-brand-700 hover:underline">
+            {ev.tipo_evidencia}<br />Ver archivo
+          </FileLink>
+        ) : (
+          <div className="w-full h-full grid place-items-center text-xs text-slate-400">Sin archivo</div>
+        )}
+        {puedeGestionar && (
+          <button onClick={() => onEliminar(ev.id)}
+                  className="absolute top-1 right-1 h-7 w-7 rounded-full bg-rose-600/90 text-white text-xs grid place-items-center hover:bg-rose-700 shadow"
+                  title="Eliminar foto">
+            ✕
+          </button>
+        )}
+      </div>
+      <div className="p-2 space-y-1">
+        <div className="text-xs text-slate-500">{formatFechaHora(ev.fecha_carga)}</div>
+        <div className="text-xs text-slate-700 truncate">{ev.tecnico?.nombre}</div>
+        {diaEv && <span className="badge-blue mt-0.5 inline-block">Día {diaEv.orden}</span>}
+        {puedeGestionar ? (
+          <div className="pt-0.5">
+            <textarea
+              className="input text-xs min-h-[52px] resize-y"
+              placeholder="Escribe un comentario…"
+              value={comentario}
+              onChange={e => setComentario(e.target.value)}
+            />
+            {cambiado && (
+              <div className="flex justify-end gap-2 mt-1">
+                <button type="button" className="text-xs text-slate-500 hover:underline"
+                        onClick={() => setComentario(ev.descripcion || '')} disabled={guardando}>
+                  Cancelar
+                </button>
+                <button type="button" className="btn-primary text-xs py-1 px-2"
+                        onClick={guardar} disabled={guardando}>
+                  {guardando ? 'Guardando…' : 'Guardar comentario'}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          ev.descripcion && <div className="text-xs text-slate-600 break-words whitespace-pre-wrap">{ev.descripcion}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Configuración del modal de revisión administrativa (aprobar / observar / rechazar).
 // Centraliza copy, obligatoriedad del motivo, estilo del botón y la tematización
 // visual (banner/icono) por resultado, alineada a la línea gráfica del app
@@ -128,6 +212,7 @@ export default function ServicioDetalle() {
   const [subiendoOt, setSubiendoOt] = useState(false);
   const [evidenciasFinalizar, setEvidenciasFinalizar] = useState([]); // [{ id, nombre_original, ruta_almacenamiento, mime_type }]
   const [subiendoEvidencia, setSubiendoEvidencia] = useState(false);
+  const [subiendoMomento, setSubiendoMomento] = useState(null); // 'Antes' | 'Despues' | null (sección que está subiendo fotos)
   const [guardandoFinalizar, setGuardandoFinalizar] = useState(false);
   const filePreview = useFilePreview();
   const [entregaForm, setEntregaForm] = useState({ tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', id_archivo: null, estado_entrega: 'Entregada' });
@@ -190,6 +275,10 @@ export default function ServicioDetalle() {
   // checklist de finalización (id_respuesta). Las fotos por ítem se ven y se
   // gestionan en el panel del checklist, no en la tarjeta de evidencias.
   const evidenciasGenerales = (s.evidencias || []).filter(ev => !ev.id_respuesta);
+  // Secciones "Antes" / "Despues" de la tarjeta de evidencias. Las evidencias sin
+  // momento (legado / cierre / fotos por día) se muestran junto a las de "Despues".
+  const evidenciasAntes = evidenciasGenerales.filter(ev => ev.momento === 'Antes');
+  const evidenciasDespues = evidenciasGenerales.filter(ev => ev.momento !== 'Antes');
   const evidenciasPorDia = evidenciasGenerales.reduce((acc, ev) => {
     if (ev.id_dia) acc[ev.id_dia] = (acc[ev.id_dia] || 0) + 1;
     return acc;
@@ -396,6 +485,43 @@ export default function ServicioDetalle() {
       setEvidenciaForm({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null, id_dia: '' });
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+  };
+
+  // Adjunta fotos de forma masiva a una sección ("Antes"/"Despues"): sube cada
+  // archivo y crea su evidencia con ese momento. El comentario se registra luego,
+  // ya en la tarjeta (guardarComentarioEvidencia).
+  const agregarFotosMomento = async (e, momento) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    setSubiendoMomento(momento);
+    try {
+      for (const file of files) {
+        const fd = new FormData(); fd.append('archivo', file);
+        const arch = await archivosService.upload(fd, 'evidencias');
+        const mime = file.type || '';
+        const tipo = mime.startsWith('video/') ? 'Video'
+          : mime.startsWith('image/') ? 'Foto'
+          : (mime === 'application/pdf' ? 'Documento' : 'Otro');
+        await evidenciasGuiasService.subirEvidencia(id, {
+          tipo_evidencia: tipo, descripcion: '', id_archivo: arch.id, momento
+        });
+      }
+      toast.success(files.length > 1 ? `${files.length} fotos subidas` : 'Foto subida');
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al subir fotos');
+    } finally {
+      setSubiendoMomento(null);
+    }
+  };
+
+  const guardarComentarioEvidencia = async (idEvidencia, comentario) => {
+    try {
+      await evidenciasGuiasService.actualizarEvidencia(idEvidencia, { descripcion: comentario });
+      toast.success('Comentario guardado');
+      cargar();
+    } catch (err) { toast.error(err.response?.data?.error || 'Error al guardar comentario'); }
   };
 
   const eliminarEvidencia = async (idEvidencia) => {
@@ -630,10 +756,8 @@ export default function ServicioDetalle() {
             {puedeFinalizar && (
               <button
                 onClick={iniciarFinalizacion}
-                disabled={generandoInforme || !checklistResumen.completo}
-                title={checklistResumen.completo ? ''
-                  : checklistResumen.plantillaVacia ? 'Un administrador debe configurar la plantilla de checklist de esta categoría antes de finalizar'
-                  : 'Complete el checklist de finalización (todos los ítems respondidos y una foto por cada "Sí")'}
+                disabled={generandoInforme}
+                title="El checklist de finalización es opcional; puedes finalizar sin completarlo"
                 className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed">
                 {generandoInforme ? 'Generando informe…' : 'Finalizar'}
               </button>
@@ -653,9 +777,12 @@ export default function ServicioDetalle() {
             <Info label="Tipo" value={s.tipo_registro} />
             <Info label="Origen" value={
               s.cotizacion
-                ? <Link to={`/cotizaciones/${s.cotizacion.id}`} className="text-brand-700 hover:underline font-mono">
-                    {s.cotizacion.codigo}
-                  </Link>
+                ? (esTecnico
+                    // El técnico no ve la cotización: se muestra el origen sin enlace ni código.
+                    ? <span className="text-slate-800">Cotización</span>
+                    : <Link to={`/cotizaciones/${s.cotizacion.id}`} className="text-brand-700 hover:underline font-mono">
+                        {s.cotizacion.codigo}
+                      </Link>)
                 : s.mantenimiento_plan
                   ? <span className="inline-flex items-center gap-1">
                       <span className="text-slate-800">Plan #{s.mantenimiento_plan.id}</span>
@@ -731,6 +858,44 @@ export default function ServicioDetalle() {
             )}
           </div>
         </div>
+
+        {/* Ítems de la cotización de origen con su foto. El backend ya los envía
+            (precios sanitizados para el técnico); aquí el técnico asignado ve la
+            foto de referencia por cada ítem del servicio. */}
+        {(() => {
+          const cotOrigen = s.cotizacion;
+          const ver = cotOrigen?.versiones?.find(v => v.numero_version === cotOrigen.version_activa)
+            || cotOrigen?.versiones?.[cotOrigen.versiones.length - 1];
+          const itemsCot = ver?.items || [];
+          if (itemsCot.length === 0) return null;
+          return (
+            <div className="card lg:col-span-3">
+              <div className="card-header">
+                <h3 className="card-title">Ítems de la cotización · {itemsCot.length}</h3>
+                {!esTecnico && cotOrigen?.codigo && <span className="text-xs text-slate-500 font-mono">{cotOrigen.codigo}</span>}
+              </div>
+              <div className="card-body">
+                <p className="text-xs text-slate-500 mb-3">Detalle de lo cotizado y la foto de referencia de cada ítem.</p>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {itemsCot.map(it => (
+                    <div key={it.id} className="rounded-lg ring-1 ring-slate-100 p-3 flex gap-3">
+                      {it.archivo
+                        ? <a href={assetUrl(it.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer" title="Ver foto" className="shrink-0">
+                            <img src={assetUrl(it.archivo.ruta_almacenamiento)} alt="foto" className="h-16 w-16 object-cover rounded ring-1 ring-slate-200 hover:ring-brand-300" />
+                          </a>
+                        : <span className="shrink-0 h-16 w-16 rounded ring-1 ring-slate-200 bg-slate-50 grid place-items-center text-slate-300 text-[11px] text-center">Sin foto</span>}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-slate-800 break-words">{it.descripcion || '—'}</div>
+                        <div className="text-xs text-slate-500 mt-1">{Number(it.cantidad)} {it.unidad}</div>
+                        {puedeVerPrecio && it.importe != null && <div className="text-xs font-mono text-slate-600 mt-0.5">{formatMonto(it.importe, ver.moneda || s.moneda)}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {checklist && (() => {
           const itemsCk = checklist.items || [];
@@ -917,74 +1082,53 @@ export default function ServicioDetalle() {
           />
         )}
 
-        <div className="card lg:col-span-3">
-          <div className="card-header">
-            <h3 className="card-title">Evidencias del trabajo · {evidenciasGenerales.length}</h3>
-            {(esTecnico || esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio) && (
-              <button onClick={() => abrirEvidenciaDia(null)} className="btn-secondary">+ Evidencia</button>
-            )}
-          </div>
-          <div className="card-body">
-            {!evidenciasGenerales.length ? <p className="text-sm text-slate-500">Sin evidencias registradas.</p> : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {evidenciasGenerales.map(ev => {
-                  const ruta = ev.archivo?.ruta_almacenamiento;
-                  const mime = ev.archivo?.mime_type || '';
-                  const esImagen = mime.startsWith('image/');
-                  const esVideo = mime.startsWith('video/');
-                  const url = ruta ? assetUrl(ruta) : null;
-                  return (
-                    <div key={ev.id} className="rounded-lg ring-1 ring-slate-100 overflow-hidden bg-white text-sm">
-                      <div className="relative aspect-square bg-slate-50">
-                        {url && esImagen ? (
-                          <button type="button" onClick={() => filePreview.open(ev.archivo)} className="block w-full h-full">
-                            <img src={url} alt={ev.descripcion || ev.archivo.nombre_original} className="w-full h-full object-cover hover:scale-105 transition" />
-                          </button>
-                        ) : url && esVideo ? (
-                          <button type="button" onClick={() => filePreview.open(ev.archivo)} className="relative block w-full h-full group" aria-label="Reproducir video">
-                            <video
-                              src={url}
-                              preload="metadata"
-                              muted
-                              playsInline
-                              className="w-full h-full object-cover bg-black"
-                            />
-                            <span className="absolute inset-0 grid place-items-center bg-black/30 group-hover:bg-black/40 transition">
-                              <span className="grid place-items-center h-12 w-12 rounded-full bg-white/90 text-slate-900 shadow-lg">
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                              </span>
-                            </span>
-                          </button>
-                        ) : url ? (
-                          <FileLink archivo={ev.archivo} className="w-full h-full grid place-items-center text-xs text-brand-700 hover:underline">
-                            {ev.tipo_evidencia}<br />Ver archivo
-                          </FileLink>
-                        ) : (
-                          <div className="w-full h-full grid place-items-center text-xs text-slate-400">Sin archivo</div>
-                        )}
-                        {(esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio) && (
-                          <button onClick={() => eliminarEvidencia(ev.id)}
-                                  className="absolute top-1 right-1 h-7 w-7 rounded-full bg-rose-600/90 text-white text-xs grid place-items-center hover:bg-rose-700 shadow">
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                      <div className="p-2">
-                        <div className="text-xs text-slate-500">{formatFechaHora(ev.fecha_carga)}</div>
-                        <div className="text-xs text-slate-700 truncate">{ev.tecnico?.nombre}</div>
-                        {esMultidia && ev.id_dia && (() => {
-                          const diaEv = dias.find(x => x.id === ev.id_dia);
-                          return diaEv ? <span className="badge-blue mt-0.5 inline-block">Día {diaEv.orden}</span> : null;
-                        })()}
-                        {ev.descripcion && <div className="text-xs text-slate-600 truncate" title={ev.descripcion}>{ev.descripcion}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
+        {[
+          { key: 'Antes', titulo: 'Antes', lista: evidenciasAntes },
+          { key: 'Despues', titulo: 'Después', lista: evidenciasDespues },
+        ].map(sec => {
+          const puedeGestionar = (esTecnico || esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio);
+          const subiendoEsta = subiendoMomento === sec.key;
+          return (
+            <div key={sec.key} className="card lg:col-span-3">
+              <div className="card-header">
+                <h3 className="card-title">Evidencias del trabajo · {sec.titulo} · {sec.lista.length}</h3>
+                {puedeGestionar && (
+                  <div className="flex flex-wrap gap-2">
+                    <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
+                      📷 Tomar foto
+                      <input type="file" className="hidden" accept="image/*" capture="environment" onChange={e => agregarFotosMomento(e, sec.key)} />
+                    </label>
+                    <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
+                      📎 Adjuntar fotos
+                      <input type="file" className="hidden" accept="image/*" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
+                    </label>
+                    {subiendoEsta && <span className="text-xs text-slate-500 self-center">Subiendo…</span>}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
+              <div className="card-body">
+                {!sec.lista.length ? (
+                  <p className="text-sm text-slate-500">Sin evidencias registradas.</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {sec.lista.map(ev => (
+                      <EvidenciaFotoCard
+                        key={ev.id}
+                        ev={ev}
+                        puedeGestionar={puedeGestionar}
+                        esMultidia={esMultidia}
+                        dias={dias}
+                        filePreview={filePreview}
+                        onEliminar={eliminarEvidencia}
+                        onGuardarComentario={guardarComentarioEvidencia}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
 
         {s.entregas?.length > 0 || puedeGestionarEntregas ? (
           <div className="card lg:col-span-3">
@@ -1019,7 +1163,11 @@ export default function ServicioDetalle() {
           </div>
         ) : null}
 
-        <ObservacionesServicioPanel idServicio={s.id} tecnicosAsignados={s.asignaciones} estadoServicio={s.estado_servicio} />
+        {/* Contabilidad no ve las observaciones técnicas (ni comentario ni imagen):
+            solo recibe el aviso de facturación por la campana/recordatorios. */}
+        {user?.rol_codigo !== 'contabilidad' && (
+          <ObservacionesServicioPanel idServicio={s.id} tecnicosAsignados={s.asignaciones} estadoServicio={s.estado_servicio} />
+        )}
 
         {s.finalizacion_checklist?.archivo_pdf && (
           <div className="card">

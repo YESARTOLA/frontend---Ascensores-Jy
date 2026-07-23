@@ -55,11 +55,12 @@ export default function Topbar({ onMenu }) {
     return () => { cancel = true; clearInterval(id); };
   }, []);
 
-  // Popup: detecta alertas tipo 'observacion_alerta' nuevas (no leídas) y
-  // dispara un toast persistente con link al servicio asociado. Solo aplica a
-  // los roles habilitados por la matriz de visibilidad (super_admin, admin,
-  // contabilidad). Se inicializa con las alertas ya pendientes para no spamear
-  // al primer login: solo nuevas a partir de ese punto.
+  // Popup: detecta alertas de observación técnica nuevas (no leídas) y dispara un
+  // toast persistente. `proximos` ya viene filtrado por la matriz de visibilidad,
+  // así que cada rol recibe solo lo suyo: administración/vendedora/coordinador ven
+  // 'observacion_alerta' (con detalle) y contabilidad ve 'observacion_facturar'
+  // (solo aviso, su descripción no incluye el comentario). Se inicializa con las
+  // alertas ya pendientes para no spamear al primer login.
   useEffect(() => {
     let cancel = false;
     const revisar = async () => {
@@ -67,7 +68,7 @@ export default function Topbar({ onMenu }) {
         const lista = await recordatoriosService.proximos(20);
         if (cancel) return;
         const alertas = (lista || []).filter(r =>
-          r.tipo === 'observacion_alerta' && !r.fecha_lectura && r.estado_recordatorio === 'pendiente'
+          ['observacion_alerta', 'observacion_facturar'].includes(r.tipo) && !r.fecha_lectura && r.estado_recordatorio === 'pendiente'
         );
         if (alertaIdsVistosRef.current === null) {
           // Primera carga: registrar lo existente sin notificar.

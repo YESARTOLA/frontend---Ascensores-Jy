@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { cobrosService, clientesService, tecnicosService, tiposServicioService } from '../services';
+import { cobrosService, clientesService, tecnicosService, tiposServicioService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
@@ -11,18 +11,67 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import { useToast } from '../components/common/Toast.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
-import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
 
-// Columnas del export (espejo de la tabla, sin OT, abonos-por-cuenta ni acciones).
+// Opciones del filtro por tipo de servicio (el value viaja al backend).
+const TIPOS_CATEGORIA = [
+  { value: 'correctivo', label: 'Correctivo' },
+  { value: 'preventivo', label: 'Preventivo (mantenimiento)' },
+  { value: 'proyecto', label: 'Proyecto' }
+];
+
+// Opciones del filtro de situación de cobro.
+const SITUACIONES_COBRO = [
+  { value: 'pendiente', label: 'Pendiente' },
+  { value: 'cancelado', label: 'Cancelado' },
+  { value: 'parcial', label: 'Parcial' },
+  { value: 'vencido', label: 'Vencido' }
+];
+
+// Documento del cliente: "RUC 20..." / "DNI 4..." o '—'.
+const docCliente = (c) => {
+  const cl = c.cliente;
+  if (!cl?.numero_documento) return '—';
+  return `${cl.tipo_documento || ''} ${cl.numero_documento}`.trim();
+};
+
+// Fecha del servicio: fecha de realización si existe, si no la programada.
+const fechaServicio = (c) => c.servicio?.servicio_realizado?.fecha_realizacion || c.servicio?.fecha_programada || null;
+
+// Nombre del edificio a partir de los ascensores del servicio o del plan.
+const nombreEdificio = (c) => {
+  const asc = c.servicio?.ascensores || c.mantenimiento_plan?.ascensores || [];
+  return asc.map(a => a.ascensor?.edificio?.nombre).find(Boolean) || '—';
+};
+
+// Tipo de servicio legible (servicio directo o plan de mantenimiento).
+const tipoServicioLabel = (c) => c.servicio?.tipo_servicio?.nombre || c.mantenimiento_plan?.tipo_servicio?.nombre || '—';
+
+// Factura activa más reciente del cobro (para fecha de emisión y N° de serie).
+const facturaReciente = (c) => {
+  const facturas = (c.facturas || []).filter(f => f.estado !== 0);
+  if (!facturas.length) return null;
+  return facturas.reduce((max, f) => ((f.fecha_emision || '') > (max.fecha_emision || '') ? f : max), facturas[0]);
+};
+
+// N° de serie: parte previa al "-" del numero_factura (formato "F001-000123").
+const serieFactura = (f) => (f?.numero_factura ? String(f.numero_factura).split('-')[0] : '—');
+
+// Columnas del export (espejo de la tabla, sin abonos-por-cuenta ni acciones).
 const COLUMNAS_EXPORT = [
   { header: 'Cliente', get: c => c.cliente?.nombre },
+  { header: 'DNI / RUC', get: c => (docCliente(c) === '—' ? '' : docCliente(c)) },
+  { header: 'Edificio', get: c => (nombreEdificio(c) === '—' ? '' : nombreEdificio(c)) },
   { header: 'Proyecto', get: c => c.servicio?.titulo },
   { header: 'Servicio', get: c => c.servicio?.codigo },
+  { header: 'Tipo de servicio', get: c => (tipoServicioLabel(c) === '—' ? '' : tipoServicioLabel(c)) },
+  { header: 'Fecha servicio', get: c => { const f = fechaServicio(c); return f ? formatFecha(f) : ''; } },
+  { header: 'Fecha emisión', get: c => { const f = facturaReciente(c); return f?.fecha_emision ? formatFecha(f.fecha_emision) : ''; } },
+  { header: 'N° serie', get: c => { const f = facturaReciente(c); return f ? serieFactura(f) : ''; } },
   { header: 'Precio total', align: 'right', get: c => formatMonto(c.monto_total, c.moneda) },
   { header: 'Abonos', align: 'right', get: c => formatMonto(c.total_abonado, c.moneda) },
   { header: 'Saldo', align: 'right', get: c => formatMonto(c.saldo_pendiente, c.moneda) },
   { header: 'Cuotas (P/T)', get: c => `${c.cuotas_pagadas}/${c.numero_cuotas}` },
-  { header: 'Próximo abono', get: c => formatFecha(c.fecha_proximo_abono) },
+  { header: 'Fecha de vencimiento', get: c => formatFecha(c.fecha_proximo_abono) },
   { header: 'Mora', align: 'right', get: c => (c.dias_mora > 0 ? c.dias_mora : '') },
   { header: 'Estado', badge: true, get: c => c.estado_cobro }
 ];
@@ -76,8 +125,9 @@ export default function Cobros() {
   const [tecnicos, setTecnicos] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [proyectos, setProyectos] = useState([]);
+  const [bancos, setBancos] = useState([]); // nombres de banco distintos
   const [filtros, setFiltros] = useState({
-    q: '', estado_cobro: '', vencidos: '', en_mora: '', pagados: '', pendientes: '',
+    q: '', situacion_cobro: '', en_mora: '', tipo_categoria: '', banco: '',
     id_cliente: '', id_tecnico: '', id_tipo_servicio: '', id_proyecto: '',
     fecha_proximo_desde: '', fecha_proximo_hasta: '',
     orden: '', direccion: ''
@@ -99,8 +149,14 @@ export default function Cobros() {
       clientesService.list().catch(() => []),
       tecnicosService.list().catch(() => []),
       tiposServicioService.list().catch(() => []),
-      cobrosService.proyectos().catch(() => [])
-    ]).then(([c, t, ts, p]) => { setClientes(c); setTecnicos(t); setTipos(ts); setProyectos(p); });
+      cobrosService.proyectos().catch(() => []),
+      cuentasBancariasService.list().catch(() => [])
+    ]).then(([c, t, ts, p, cb]) => {
+      setClientes(c); setTecnicos(t); setTipos(ts); setProyectos(p);
+      // Bancos distintos (para el filtro), ordenados alfabéticamente.
+      const nombres = [...new Set((Array.isArray(cb) ? cb : []).map(x => x.banco).filter(Boolean))].sort();
+      setBancos(nombres);
+    });
   }, []);
 
   const cargar = recargar;
@@ -146,17 +202,16 @@ export default function Cobros() {
   const filtrosLegibles = () => {
     const p = [];
     if (filtros.q) p.push(`Búsqueda: ${filtros.q}`);
-    if (filtros.estado_cobro) p.push(`Estado: ${filtros.estado_cobro}`);
+    if (filtros.situacion_cobro) p.push(`Situación: ${SITUACIONES_COBRO.find(s => s.value === filtros.situacion_cobro)?.label || filtros.situacion_cobro}`);
+    if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_CATEGORIA.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
+    if (filtros.banco) p.push(`Banco: ${filtros.banco}`);
     if (filtros.id_cliente) p.push(`Cliente: ${clientes.find(c => String(c.id) === String(filtros.id_cliente))?.nombre || filtros.id_cliente}`);
     if (filtros.id_proyecto) p.push(`Proyecto: ${proyectos.find(pr => String(pr.id) === String(filtros.id_proyecto))?.titulo || filtros.id_proyecto}`);
     if (filtros.id_tecnico) p.push(`Técnico: ${tecnicos.find(t => String(t.id) === String(filtros.id_tecnico))?.nombre || filtros.id_tecnico}`);
     if (filtros.id_tipo_servicio) p.push(`Tipo: ${tipos.find(t => String(t.id) === String(filtros.id_tipo_servicio))?.nombre || filtros.id_tipo_servicio}`);
-    if (filtros.vencidos === '1') p.push('Solo vencidos');
     if (filtros.en_mora === '1') p.push('Solo en mora');
-    if (filtros.pagados === '1') p.push('Solo pagados');
-    if (filtros.pendientes === '1') p.push('Solo con saldo');
-    if (filtros.fecha_proximo_desde) p.push(`Próx. desde: ${filtros.fecha_proximo_desde}`);
-    if (filtros.fecha_proximo_hasta) p.push(`Próx. hasta: ${filtros.fecha_proximo_hasta}`);
+    if (filtros.fecha_proximo_desde) p.push(`Venc. desde: ${filtros.fecha_proximo_desde}`);
+    if (filtros.fecha_proximo_hasta) p.push(`Venc. hasta: ${filtros.fecha_proximo_hasta}`);
     return p;
   };
 
@@ -187,7 +242,7 @@ export default function Cobros() {
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
   const limpiar = () => setFiltros({
-    q: '', estado_cobro: '', vencidos: '', en_mora: '', pagados: '', pendientes: '',
+    q: '', situacion_cobro: '', en_mora: '', tipo_categoria: '', banco: '',
     id_cliente: '', id_tecnico: '', id_tipo_servicio: '', id_proyecto: '',
     fecha_proximo_desde: '', fecha_proximo_hasta: '',
     orden: '', direccion: ''
@@ -271,10 +326,10 @@ export default function Cobros() {
       {vistaModo === 'tabla' && (
         <div className="card mb-4">
           <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-            <input className="input col-span-2 sm:col-span-3 lg:col-span-2" placeholder="Buscar cliente, servicio o título…" value={filtros.q} onChange={e => setF('q', e.target.value)} />
-            <select className="select" value={filtros.estado_cobro} onChange={e => setF('estado_cobro', e.target.value)}>
-              <option value="">Todos los estados</option>
-              {ESTADOS_COBRO.map(s => <option key={s}>{s}</option>)}
+            <input className="input col-span-2 sm:col-span-3 lg:col-span-2" placeholder="Buscar cliente, servicio, RUC/DNI o N° de factura…" value={filtros.q} onChange={e => setF('q', e.target.value)} />
+            <select className="select" value={filtros.situacion_cobro} onChange={e => setF('situacion_cobro', e.target.value)}>
+              <option value="">Estado de cobro (todos)</option>
+              {SITUACIONES_COBRO.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
             <select className="select" value={filtros.id_cliente} onChange={e => setF('id_cliente', e.target.value)}>
               <option value="">Todos los clientes</option>
@@ -296,24 +351,20 @@ export default function Cobros() {
               <option value="">Todos los tipos</option>
               {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
             </select>
-            <select className="select" value={filtros.vencidos} onChange={e => setF('vencidos', e.target.value)}>
-              <option value="">Vencimiento (todos)</option>
-              <option value="1">Solo vencidos</option>
+            <select className="select" value={filtros.tipo_categoria} onChange={e => setF('tipo_categoria', e.target.value)}>
+              <option value="">Tipo de servicio (todos)</option>
+              {TIPOS_CATEGORIA.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <select className="select" value={filtros.banco} onChange={e => setF('banco', e.target.value)}>
+              <option value="">Todos los bancos</option>
+              {bancos.map(b => <option key={b} value={b}>{b}</option>)}
             </select>
             <select className="select" value={filtros.en_mora} onChange={e => setF('en_mora', e.target.value)}>
               <option value="">Mora (todos)</option>
               <option value="1">Solo en mora</option>
             </select>
-            <select className="select" value={filtros.pagados} onChange={e => setF('pagados', e.target.value)}>
-              <option value="">Pago (todos)</option>
-              <option value="1">Solo pagados</option>
-            </select>
-            <select className="select" value={filtros.pendientes} onChange={e => setF('pendientes', e.target.value)}>
-              <option value="">Saldo (todos)</option>
-              <option value="1">Solo con saldo</option>
-            </select>
-            <input type="date" className="input" placeholder="Próx. desde" value={filtros.fecha_proximo_desde} onChange={e => setF('fecha_proximo_desde', e.target.value)} />
-            <input type="date" className="input" placeholder="Próx. hasta" value={filtros.fecha_proximo_hasta} onChange={e => setF('fecha_proximo_hasta', e.target.value)} />
+            <input type="date" className="input" placeholder="Venc. desde" value={filtros.fecha_proximo_desde} onChange={e => setF('fecha_proximo_desde', e.target.value)} />
+            <input type="date" className="input" placeholder="Venc. hasta" value={filtros.fecha_proximo_hasta} onChange={e => setF('fecha_proximo_hasta', e.target.value)} />
             <button onClick={limpiar} className="btn-secondary col-span-2 sm:col-span-1">Limpiar</button>
           </div>
         </div>
@@ -328,15 +379,21 @@ export default function Cobros() {
                 <table className="table-base">
                   <thead><tr>
                     <ThOrden col="cliente" filtros={filtros} ordenarPor={ordenarPor}>Cliente</ThOrden>
+                    <th className="table-th">DNI / RUC</th>
+                    <th className="table-th">Edificio</th>
                     <ThOrden col="proyecto" filtros={filtros} ordenarPor={ordenarPor}>Proyecto</ThOrden>
                     <ThOrden col="servicio" filtros={filtros} ordenarPor={ordenarPor}>Servicio</ThOrden>
+                    <th className="table-th">Tipo de servicio</th>
                     <ThOrden col="ot" filtros={filtros} ordenarPor={ordenarPor}>OT</ThOrden>
+                    <th className="table-th">Fecha servicio</th>
+                    <th className="table-th">Fecha emisión</th>
+                    <th className="table-th">N° serie</th>
                     <ThOrden col="precio" filtros={filtros} ordenarPor={ordenarPor} align="right">Precio total</ThOrden>
                     <ThOrden col="abonos" filtros={filtros} ordenarPor={ordenarPor} align="right">Abonos</ThOrden>
                     <th className="table-th">Abonos por cuenta</th>
                     <ThOrden col="cuotas" filtros={filtros} ordenarPor={ordenarPor} align="center">Cuotas (P/T)</ThOrden>
                     <ThOrden col="saldo" filtros={filtros} ordenarPor={ordenarPor} align="right">Saldo</ThOrden>
-                    <ThOrden col="proximo" filtros={filtros} ordenarPor={ordenarPor}>Próximo abono</ThOrden>
+                    <ThOrden col="proximo" filtros={filtros} ordenarPor={ordenarPor}>Fecha de vencimiento</ThOrden>
                     <ThOrden col="mora" filtros={filtros} ordenarPor={ordenarPor} align="center">Mora</ThOrden>
                     <ThOrden col="estado" filtros={filtros} ordenarPor={ordenarPor}>Estado</ThOrden>
                     <th className="table-th text-right">Acciones</th>
@@ -350,6 +407,8 @@ export default function Cobros() {
                       return (
                       <tr key={c.id} className={`table-row-hover ${c.vencido ? 'row-vencido' : ''}`}>
                         <td className="table-td text-sm">{c.cliente?.nombre}</td>
+                        <td className="table-td text-xs font-mono whitespace-nowrap">{docCliente(c)}</td>
+                        <td className="table-td text-xs">{nombreEdificio(c)}</td>
                         <td className="table-td text-sm">
                           <div className="truncate max-w-[220px]" title={c.servicio?.titulo || c.mantenimiento_plan?.tipo_servicio?.nombre || ''}>
                             {c.servicio?.titulo || (esPlan ? (c.mantenimiento_plan?.tipo_servicio?.nombre || 'Mantenimiento (plan)') : '—')}
@@ -378,6 +437,7 @@ export default function Cobros() {
                             <span className="badge-blue text-[10px]">Plan de mantenimiento{c.mantenimiento_plan ? ` #${c.mantenimiento_plan.id}` : ''}</span>
                           )}
                         </td>
+                        <td className="table-td text-xs">{tipoServicioLabel(c)}</td>
                         <td className="table-td">
                           {tieneOt ? (
                             <button
@@ -392,6 +452,9 @@ export default function Cobros() {
                             <span className="text-slate-400 text-xs">—</span>
                           )}
                         </td>
+                        <td className="table-td text-xs">{(() => { const f = fechaServicio(c); return f ? formatFecha(f) : <span className="text-slate-400">—</span>; })()}</td>
+                        <td className="table-td text-xs">{(() => { const f = facturaReciente(c); return f?.fecha_emision ? formatFecha(f.fecha_emision) : <span className="text-slate-400">—</span>; })()}</td>
+                        <td className="table-td text-xs font-mono">{(() => { const f = facturaReciente(c); return f ? serieFactura(f) : <span className="text-slate-400">—</span>; })()}</td>
                         <td className="table-td text-right font-mono">{formatMonto(c.monto_total, c.moneda)}</td>
                         <td className="table-td text-right font-mono text-emerald-700">{formatMonto(c.total_abonado, c.moneda)}</td>
                         <td className="table-td">
@@ -437,6 +500,10 @@ export default function Cobros() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-medium text-sm truncate">{c.cliente?.nombre}</div>
+                      <div className="text-[11px] text-slate-500 font-mono">{docCliente(c)}</div>
+                      {nombreEdificio(c) !== '—' && (
+                        <div className="text-[11px] text-slate-500 truncate">{nombreEdificio(c)}</div>
+                      )}
                       {(c.servicio?.titulo || (!c.servicio && c.mantenimiento_plan)) && (
                         <div className="text-xs text-slate-700 truncate">{c.servicio?.titulo || c.mantenimiento_plan?.tipo_servicio?.nombre || 'Mantenimiento (plan)'}</div>
                       )}
@@ -466,7 +533,7 @@ export default function Cobros() {
                     <Mini label="Abonado" value={formatMonto(c.total_abonado, c.moneda)} cls="text-emerald-700" />
                     <Mini label="Saldo" value={formatMonto(c.saldo_pendiente, c.moneda)} cls="text-rose-700" />
                     <Mini label="Cuotas" value={`${c.cuotas_pagadas}/${c.numero_cuotas}`} />
-                    <Mini label="Próx. abono" value={formatFecha(c.fecha_proximo_abono)} />
+                    <Mini label="Vencimiento" value={formatFecha(c.fecha_proximo_abono)} />
                     <Mini label="Mora" value={c.dias_mora > 0 ? `${c.dias_mora}d` : '—'} cls={c.dias_mora > 0 ? 'text-rose-700' : ''} />
                   </div>
                   {Array.isArray(c.abonos_por_cuenta) && c.abonos_por_cuenta.length > 0 && (

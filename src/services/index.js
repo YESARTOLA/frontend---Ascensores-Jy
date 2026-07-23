@@ -233,7 +233,7 @@ export const reportesService = {
   tecnicos: () => api.get('/reportes/tecnicos').then(r => r.data?.data ?? r.data),
   leads: () => api.get('/reportes/leads').then(r => r.data?.data ?? r.data),
   ascensores: () => api.get('/reportes/ascensores').then(r => r.data?.data ?? r.data),
-  mantenimientosVencidos: () => api.get('/reportes/mantenimientos-vencidos').then(r => r.data?.data ?? r.data),
+  mantenimientosVencidos: (params) => api.get('/reportes/mantenimientos-vencidos', { params }).then(r => r.data?.data ?? r.data),
   mantenimientosCumplidos: (params) => api.get('/reportes/mantenimientos-cumplidos', { params }).then(r => r.data?.data ?? r.data),
   moraPorCliente: () => api.get('/reportes/mora-por-cliente').then(r => r.data?.data ?? r.data),
   facturados: (params) => api.get('/reportes/facturados', { params }).then(r => r.data?.data ?? r.data),
@@ -304,6 +304,7 @@ export const archivosService = {
 export const evidenciasGuiasService = {
   subirEvidencia: (idServicio, payload) => api.post(`/servicios/${idServicio}/evidencias`, payload).then(r => r.data?.data ?? r.data),
   listarEvidencias: (idServicio) => api.get(`/servicios/${idServicio}/evidencias`).then(r => r.data?.data ?? r.data),
+  actualizarEvidencia: (id, payload) => api.put(`/evidencias/${id}`, payload).then(r => r.data?.data ?? r.data),
   eliminarEvidencia: (id) => api.delete(`/evidencias/${id}`).then(r => r.data)
 };
 
@@ -327,6 +328,10 @@ export const cotizacionesService = {
   // servicio origen y un ítem (texto + foto) por observación.
   desdeObservaciones: (ids) =>
     api.get('/cotizaciones/desde-observaciones', { params: { ids: ids.join(',') } }).then(r => r.data?.data ?? r.data),
+  // Prellenado desde una emergencia ya atendida: cliente, ascensor, subtipo y un
+  // ítem (motivo + foto). Al aprobar generará un cobro SIN crear servicio nuevo.
+  desdeEmergencia: (id) =>
+    api.get('/cotizaciones/desde-emergencia', { params: { id } }).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/cotizaciones', d).then(r => r.data?.data ?? r.data),
   updateCabecera: (id, d) => api.put(`/cotizaciones/${id}`, d).then(r => r.data?.data ?? r.data),
   updateVersion: (id, v, d) => api.put(`/cotizaciones/${id}/versiones/${v}`, d).then(r => r.data?.data ?? r.data),

@@ -65,7 +65,7 @@ function fetcher(codigo, params) {
     case 'correctivos': return reportesService.correctivos(params);
     case 'atenciones_rapidas': return reportesService.atencionesRapidas(params);
     case 'mantenimientos_cumplidos': return reportesService.mantenimientosCumplidos(params);
-    case 'mantenimientos_vencidos': return reportesService.mantenimientosVencidos();
+    case 'mantenimientos_vencidos': return reportesService.mantenimientosVencidos(params);
     case 'mantenimientos_por_cliente': return reportesService.mantenimientosPorCliente(params);
     case 'mantenimientos_sin_servicio': return reportesService.mantenimientosProgramadosSinServicio(params);
     case 'pendientes_cobro': return reportesService.pendientesDeCobro(params);
@@ -404,6 +404,24 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
                 </select>
               </div>
             )}
+            <div className="flex items-end"><button onClick={limpiarFiltros} className="btn-secondary w-full">Limpiar filtros</button></div>
+          </div>
+        </div>
+      )}
+
+      {tab.codigo === 'mantenimientos_vencidos' && (
+        // Rango de fechas (inicio y fin en un mismo calendario) para acotar los
+        // vencidos por su fecha programada. z-20 por el popover (ver nota abajo).
+        <div className="card mb-4 relative z-20">
+          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="lg:col-span-2">
+              <label className="label">Rango de fechas (programadas)</label>
+              <RangeCalendar
+                desde={filtros.desde || ''}
+                hasta={filtros.hasta || ''}
+                onChange={({ desde, hasta }) => setFiltros(p => ({ ...p, desde: desde || undefined, hasta: hasta || undefined }))}
+              />
+            </div>
             <div className="flex items-end"><button onClick={limpiarFiltros} className="btn-secondary w-full">Limpiar filtros</button></div>
           </div>
         </div>
@@ -1399,19 +1417,29 @@ function buildAnalitica(codigo, data, puedeVerPrecio) {
 
   if (codigo === 'mantenimientos_cumplidos') {
     const total = data.length;
-    const porFrec = groupCount(data, s => s.mantenimiento_plan?.tipo_plan === 'eventual'
+    const keyFrec = s => s.mantenimiento_plan?.tipo_plan === 'eventual'
       ? 'Eventual'
-      : (s.mantenimiento_plan?.frecuencia || 'Sin frecuencia'));
+      : (s.mantenimiento_plan?.frecuencia || 'Sin frecuencia');
+    const porFrec = groupCount(data, keyFrec);
     const porCliente = topN(groupCount(data, s => s.cliente?.nombre || 'Sin cliente'), 5);
     const monto = puedeVerPrecio ? data.reduce((s, x) => s + (Number(x.precio_interno) || 0), 0) : null;
+    // Cuánto se facturó por cada frecuencia de mantenimiento (suma del monto de
+    // los mantenimientos cumplidos, agrupados por su frecuencia de plan).
+    const facturadoPorFrec = puedeVerPrecio
+      ? topN(groupSum(data, keyFrec, s => s.precio_interno), 12)
+      : null;
     return {
-      pie: { title: 'Por frecuencia de plan', data: porFrec },
-      bar: { title: 'Top 5 clientes', data: porCliente },
+      pie: { title: 'Por frecuencia de plan (cantidad)', data: porFrec },
+      bar: facturadoPorFrec
+        ? { title: 'Facturado por frecuencia', data: facturadoPorFrec, formatValue: v => formatMonto(v) }
+        : { title: 'Top 5 clientes', data: porCliente },
       analisis: [
         `Total mantenimientos: ${total}`,
         porCliente[0] ? `Cliente líder: ${porCliente[0].label} (${porCliente[0].value})` : null,
         porFrec[0] ? `Frecuencia más común: ${porFrec[0].label}` : null,
-        monto !== null ? `Monto acumulado: ${formatMonto(monto)}` : null
+        monto !== null ? `Monto facturado total: ${formatMonto(monto)}` : null,
+        // Desglose explícito del facturado por cada frecuencia.
+        ...(facturadoPorFrec || []).map(f => `Facturado ${f.label}: ${formatMonto(f.value)}`)
       ].filter(Boolean)
     };
   }

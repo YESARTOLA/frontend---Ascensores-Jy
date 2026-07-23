@@ -22,6 +22,7 @@ import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO, addDaysYMD, nombreEdificioDeAscensores } from '../utils/formatters.js';
+import { usePersistentState } from '../utils/usePersistentState.js';
 import CuotasEditor, { planCuotasInicial, planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
 import { ESTADO_GLOBAL_ANULADO } from '../utils/estadoCotizacion.js';
 
@@ -70,11 +71,27 @@ const formInicial = (preset = {}) => ({
   // Observaciones técnicas de origen (si la cotización se jaló desde el panel de
   // un servicio). Se mandan al crear para que el backend las marque como
   // cotizadas dentro de la misma transacción.
-  ids_observaciones: preset.ids_observaciones || []
+  ids_observaciones: preset.ids_observaciones || [],
+  // Cotización de "cobro sobre servicio existente" (emergencia ya atendida). Si
+  // viene id_emergencia, el backend fija el servicio y al aprobar NO crea servicio
+  // nuevo: solo genera el cobro. `_codigo_servicio_cobro` es solo para el aviso.
+  id_emergencia: preset.id_emergencia || null,
+  id_servicio_cobro: preset.id_servicio_cobro || null,
+  _codigo_servicio_cobro: preset._codigo_servicio_cobro || null
 });
 
 function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
+// Código(s) del/los ascensor(es) de una cotización. Los existentes traen `codigo`;
+// los que la cotización describe como "nuevos" (a instalar) aún no tienen código,
+// se cuentan aparte para mostrarlos como "N nuevo(s)".
+function ascensoresCotizacion(c) {
+  const rows = c?.ascensores || [];
+  const codigos = rows.map(a => a.ascensor?.codigo).filter(Boolean);
+  const nuevos = rows.filter(a => !a.ascensor && a.ascensor_nuevo).length;
+  return { codigos, nuevos };
 }
 
 function calcImporte(it) {
@@ -92,9 +109,13 @@ export default function Cotizaciones() {
   const [cuentas, setCuentas] = useState([]);
   const [igvTasa, setIgvTasa] = useState(0.18);
   const [validezDefaultDias, setValidezDefaultDias] = useState(15);
-  const [filtros, setFiltros] = useState({ q: '', estado_global: '', id_cliente: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
+  // Filtros persistidos: siguen activos al abrir una cotización y volver.
+  const [filtros, setFiltros] = usePersistentState('cotizaciones:filtros', { q: '', estado_global: '', id_cliente: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
   // Estados posibles según el backend (SSoT). Se cargan una vez al montar.
   const [estadosGlobales, setEstadosGlobales] = useState([]);
+  // Filtros "virtuales" (p.ej. 'Aprobadas' = todas las aceptadas, incluidas las
+  // que ya pasaron a ejecución). También vienen del backend para no duplicarlos.
+  const [filtrosGlobales, setFiltrosGlobales] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(formInicial);
   // Código de la cotización origen cuando el modal se abre en modo "duplicar".
@@ -115,7 +136,7 @@ export default function Cotizaciones() {
   // Si además viene ?observaciones=, lo maneja el efecto de abajo (que necesita
   // resolverlas contra el backend antes de armar el formulario).
   useEffect(() => {
-    if (searchParams.get('observaciones')) return;
+    if (searchParams.get('observaciones') || searchParams.get('emergencia')) return;
     if (searchParams.get('nuevo') === '1' && puedeCrear) {
       setForm({
         ...formInicial({
@@ -181,6 +202,52 @@ export default function Cotizaciones() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, puedeCrear, validezDefaultDias]);
 
+  // Abre el modal prellenado desde una emergencia ya atendida (?emergencia=ID).
+  // El backend valida que el servicio de la emergencia esté finalizado y sin cobro
+  // con movimiento, y devuelve cliente, ascensor, subtipo y un ítem (motivo+foto).
+  // Al aprobar se generará un cobro SIN crear un servicio nuevo.
+  useEffect(() => {
+    const emId = searchParams.get('emergencia');
+    if (!emId || !puedeCrear) return;
+    const idEmergencia = Number(emId);
+    if (!Number.isInteger(idEmergencia) || idEmergencia <= 0) return;
+
+    const next = new URLSearchParams(searchParams);
+    ['nuevo', 'emergencia'].forEach(k => next.delete(k));
+    setSearchParams(next, { replace: true });
+
+    cotizacionesService.desdeEmergencia(idEmergencia)
+      .then(prefill => {
+        setForm({
+          ...formInicial({
+            id_cliente: String(prefill.id_cliente || ''),
+            id_emergencia: prefill.id_emergencia,
+            id_servicio_cobro: prefill.id_servicio_cobro,
+            _codigo_servicio_cobro: prefill.codigo_servicio
+          }),
+          // Subtipo (y su padre) heredados del servicio de la emergencia.
+          id_tipo_servicio: prefill.id_tipo_servicio ? String(prefill.id_tipo_servicio) : '',
+          id_subtipo_servicio: prefill.id_subtipo_servicio ? String(prefill.id_subtipo_servicio) : '',
+          fecha_validez: addDaysYMD(null, validezDefaultDias),
+          moneda: prefill.moneda || 'PEN',
+          cuentas_pdf: cuentas.map(c => c.id),
+          ascensores: prefill.ascensor
+            ? [{ ...ascensorVacio(), id_ascensor: String(prefill.ascensor.id) }]
+            : [ascensorVacio()],
+          descripcion: `Cobro de emergencia — servicio ${prefill.codigo_servicio}`,
+          items: [{
+            ...itemVacio(),
+            descripcion: prefill.item?.descripcion || '',
+            id_archivo: prefill.item?.id_archivo || null,
+            archivo: prefill.item?.archivo || null
+          }]
+        });
+        setOpen(true);
+      })
+      .catch(err => toast.error(err.response?.data?.error || 'No se pudo preparar la cotización de la emergencia'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, puedeCrear, validezDefaultDias]);
+
   // Abre el modal en modo "duplicar" si llega ?duplicar=ID (p.ej. desde el detalle).
   useEffect(() => {
     const dupId = searchParams.get('duplicar');
@@ -201,7 +268,7 @@ export default function Cotizaciones() {
       configuracionService.get('IGV_RATE').catch(() => ({ valor: 0.18 })),
       configuracionService.get('COTIZACION_VALIDEZ_DIAS').catch(() => ({ valor: 15 })),
       cuentasBancariasService.list().catch(() => []),
-      cotizacionesService.catalogos().catch(() => ({ estados_globales: [] }))
+      cotizacionesService.catalogos().catch(() => ({ estados_globales: [], filtros_globales: [] }))
     ]).then(([cs, as, ts, igv, val, ctas, cat]) => {
       setClientes(cs);
       setAscensores(as);
@@ -210,6 +277,7 @@ export default function Cotizaciones() {
       setValidezDefaultDias(Number(val.valor) || 15);
       setCuentas(Array.isArray(ctas) ? ctas : []);
       setEstadosGlobales(cat?.estados_globales || []);
+      setFiltrosGlobales(cat?.filtros_globales || []);
     });
   }, []);
 
@@ -489,7 +557,10 @@ export default function Cotizaciones() {
         plan_cuotas: payloadCuotas.plan_cuotas,
         saldo_variable: payloadCuotas.saldo_variable,
         archivos: form.archivos.map(a => a.id),
-        ids_observaciones: form.ids_observaciones
+        ids_observaciones: form.ids_observaciones,
+        // Emergencia de origen: el backend fija id_servicio_cobro (cobro sobre
+        // servicio existente, sin crear servicio nuevo al aprobar).
+        id_emergencia: form.id_emergencia || null
       });
       toast.success('Cotización creada');
       setOpen(false);
@@ -528,7 +599,14 @@ export default function Cotizaciones() {
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_global} onChange={e => setFiltros(f => ({ ...f, estado_global: e.target.value }))}>
             <option value="">Todos los estados</option>
-            {estadosGlobales.map(s => <option key={s} value={s}>{s}</option>)}
+            {estadosGlobales.flatMap(s => [
+              <option key={s} value={s}>{s}</option>,
+              // Inserta cada filtro virtual justo después del estado real al que
+              // acompaña (p.ej. 'Aceptadas (incluye ejecución)' tras 'Aceptado').
+              ...filtrosGlobales
+                .filter(f => f.despues_de === s)
+                .map(f => <option key={f.valor} value={f.valor}>{f.etiqueta}</option>)
+            ])}
           </select>
           <ClienteAutocomplete
             clientes={clientes}
@@ -560,6 +638,7 @@ export default function Cotizaciones() {
                   <tr>
                     <th className="table-th">Código</th>
                     <th className="table-th">Cliente</th>
+                    <th className="table-th">Ascensor(es)</th>
                     <th className="table-th">Tipo</th>
                     <th className="table-th">Versión</th>
                     <th className="table-th">Validez</th>
@@ -577,6 +656,18 @@ export default function Cotizaciones() {
                       <tr key={c.id} className="table-row-hover">
                         <td className="table-td"><Link to={`/cotizaciones/${c.id}`} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link></td>
                         <td className="table-td">{nombreEdificioDeAscensores(c) || '—'}</td>
+                        <td className="table-td">
+                          {(() => {
+                            const { codigos, nuevos } = ascensoresCotizacion(c);
+                            if (codigos.length === 0 && nuevos === 0) return <span className="text-carbon-400">—</span>;
+                            return (
+                              <div className="flex flex-wrap items-center gap-1">
+                                {codigos.length > 0 && <span className="font-mono text-xs text-carbon-700">{codigos.join(', ')}</span>}
+                                {nuevos > 0 && <span className="badge badge-amber text-[10px]">{nuevos} nuevo{nuevos > 1 ? 's' : ''}</span>}
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td className="table-td">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre || '—'}</td>
                         <td className="table-td">v{v?.numero_version || c.version_activa}</td>
                         <td className="table-td">{formatFecha(v?.fecha_validez)}</td>
@@ -621,6 +712,16 @@ export default function Cotizaciones() {
                       <span className={`badge ${badgeEstado(c.estado_global)}`}>{c.estado_global}</span>
                     </div>
                     <div className="text-sm text-carbon-800 font-medium">{nombreEdificioDeAscensores(c)}</div>
+                    {(() => {
+                      const { codigos, nuevos } = ascensoresCotizacion(c);
+                      if (codigos.length === 0 && nuevos === 0) return null;
+                      return (
+                        <div className="text-xs text-carbon-500 mt-0.5 flex flex-wrap items-center gap-1">
+                          {codigos.length > 0 && <span className="font-mono text-carbon-600">{codigos.join(', ')}</span>}
+                          {nuevos > 0 && <span className="badge badge-amber text-[10px]">{nuevos} nuevo{nuevos > 1 ? 's' : ''}</span>}
+                        </div>
+                      );
+                    })()}
                     <div className="text-xs text-carbon-500 mt-0.5">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre} • v{v?.numero_version}</div>
                     <div className="mt-1.5 flex justify-between text-xs">
                       <span className={`badge ${badgeEstado(v?.estado_version)}`}>{v?.estado_version}</span>
@@ -663,6 +764,13 @@ export default function Cotizaciones() {
         }
       >
         <form id="form-cotizacion" onSubmit={guardar} className="space-y-4">
+          {form.id_servicio_cobro && (
+            <div className="rounded-md bg-amber-50 ring-1 ring-amber-200 p-3 text-xs text-amber-800">
+              <span className="font-semibold">Cobro de emergencia.</span>{' '}
+              Al aprobar <span className="font-semibold">no se creará un servicio nuevo</span>: se generará el cobro
+              sobre el servicio existente{form._codigo_servicio_cobro ? ` ${form._codigo_servicio_cobro}` : ''} y quedará facturable.
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="label">Cliente *</label>

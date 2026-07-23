@@ -41,6 +41,14 @@ export const ESTADOS_GLOBALES = [
   ESTADO_GLOBAL_ANULADO
 ];
 
+// Filtro VIRTUAL del listado: agrupa todas las etapas posteriores a la
+// aceptación bajo una sola opción del selector. No es un estado real de la BD;
+// su traducción a estados reales la resuelve el backend. El valor que viaja en
+// la query es 'Aprobadas'; la lista de opciones del selector se pide a
+// `cotizacionesService.catalogos()` (campo `filtros_globales`), no se arma aquí.
+// Espejo de backend/utils/estadoCotizacion.js.
+export const FILTRO_GLOBAL_APROBADAS = 'Aprobadas';
+
 // Estados en los que ya existe un servicio en marcha: la cotización se puede
 // reabrir para renegociar las cuotas pendientes. Antes de 'Aceptado' no hay nada
 // que renegociar; en 'Terminado' / 'Anulado' ya es tarde.
