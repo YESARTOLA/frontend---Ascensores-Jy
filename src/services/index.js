@@ -143,6 +143,7 @@ export const cobrosService = {
   recordatorio: (id) => api.post(`/cobros/${id}/recordatorio`).then(r => r.data?.data ?? r.data),
   cerrar: (id) => api.patch(`/cobros/${id}/cerrar`).then(r => r.data),
   cuotasCalendario: (params) => api.get('/cobros/cuotas-calendario', { params }).then(r => r.data?.data ?? r.data),
+  cuotasNoFacturadas: (params) => api.get('/cobros/cuotas-no-facturadas', { params }).then(r => r.data),
   proyectos: () => api.get('/cobros/proyectos').then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/cobros/${id}`).then(r => r.data)
 };
@@ -195,7 +196,12 @@ export const mantenimientosService = {
     api.get('/mantenimientos/exportar', { params: { ...params, formato: 'json' } }).then(r => r.data?.data ?? r.data),
   // Preview del borrado en cascada: alimenta el modal de confirmación.
   impactoEliminacion: (id) => api.get(`/mantenimientos/${id}/impacto-eliminacion`).then(r => r.data?.data ?? r.data),
-  remove: (id) => api.delete(`/mantenimientos/${id}`).then(r => r.data)
+  remove: (id) => api.delete(`/mantenimientos/${id}`).then(r => r.data),
+  // Facturación por PERIODO del plan (una factura + un pago por el total de todos
+  // los ascensores de cada ocurrencia).
+  periodos: (id) => api.get(`/mantenimientos/${id}/periodos`).then(r => r.data?.data ?? r.data),
+  aprobarPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/aprobar`, body || {}).then(r => r.data?.data ?? r.data),
+  ajustarPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/ajustar`, body || {}).then(r => r.data?.data ?? r.data)
 };
 
 export const leadsService = {

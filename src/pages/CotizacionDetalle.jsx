@@ -246,7 +246,10 @@ export default function CotizacionDetalle() {
   })();
   const servicioGen = cot.servicios?.[0];
   // Al aprobar, cada ítem debe llevar foto (el técnico la ve en el servicio).
-  const faltanFotosItems = (versionActiva.items || []).some(it => !it.id_archivo);
+  // Excepción: cobro sobre servicio existente (nace de una emergencia ya
+  // atendida). El servicio ya se realizó, así que la foto deja de ser requisito.
+  const faltanFotosItems = !cot.id_servicio_cobro
+    && (versionActiva.items || []).some(it => !it.id_archivo);
 
   const iniciarEdicion = () => {
     setItemsForm(versionActiva.items.map(it => ({
@@ -365,7 +368,9 @@ export default function CotizacionDetalle() {
 
   const aprobarVersion = async (e) => {
     e.preventDefault();
-    if ((versionActiva.items || []).some(it => !it.id_archivo)) {
+    // Foto por ítem obligatoria al aprobar, salvo cobro sobre servicio existente
+    // (nace de una emergencia ya atendida): el servicio ya se realizó.
+    if (!cot.id_servicio_cobro && (versionActiva.items || []).some(it => !it.id_archivo)) {
       return toast.error('Cada ítem debe tener una foto antes de aprobar.');
     }
     try {
@@ -955,6 +960,10 @@ export default function CotizacionDetalle() {
               foto porque el técnico asignado la verá en el servicio generado.
               La foto es opcional al crear la cotización pero se exige aquí. */}
           {(() => {
+            // Cobro sobre servicio existente: la emergencia ya fue atendida, el
+            // servicio se realizó y no se genera un servicio nuevo → la foto por
+            // ítem deja de ser requisito, así que no se muestra el bloque.
+            if (cot.id_servicio_cobro) return null;
             const items = versionActiva.items || [];
             if (items.length === 0) return null;
             const completas = !faltanFotosItems;

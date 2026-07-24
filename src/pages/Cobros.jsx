@@ -8,6 +8,7 @@ import Modal from '../components/common/Modal.jsx';
 import OtModal from '../components/common/OtModal.jsx';
 import Combobox from '../components/common/Combobox.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import CuotasNoFacturadas from '../components/cobros/CuotasNoFacturadas.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
@@ -294,7 +295,9 @@ export default function Cobros() {
         title="Gestión de cobros"
         subtitle={vistaModo === 'calendario'
           ? `${cuotasMes.length} cuota(s) este mes · S/ ${totalMes.toFixed(2)} total · S/ ${pendienteMes.toFixed(2)} pendiente`
-          : `${data.length} cobro(s)`}
+          : vistaModo === 'no-facturadas'
+            ? 'Cuotas pendientes de facturación con su fecha registrada'
+            : `${data.length} cobro(s)`}
         actions={
           <>
             <button
@@ -305,6 +308,10 @@ export default function Cobros() {
               onClick={() => setVistaModo('calendario')}
               className={vistaModo === 'calendario' ? 'btn-primary' : 'btn-secondary'}
             >Calendario</button>
+            <button
+              onClick={() => setVistaModo('no-facturadas')}
+              className={vistaModo === 'no-facturadas' ? 'btn-primary' : 'btn-secondary'}
+            >Por facturar</button>
             {vistaModo === 'tabla' && (
               <>
                 <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || data.length === 0}>Exportar Excel</button>
@@ -324,7 +331,7 @@ export default function Cobros() {
       />
 
       {vistaModo === 'tabla' && (
-        <div className="card mb-4">
+        <div className="card mb-4 relative z-20">
           <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             <input className="input col-span-2 sm:col-span-3 lg:col-span-2" placeholder="Buscar cliente, servicio, RUC/DNI o N° de factura…" value={filtros.q} onChange={e => setF('q', e.target.value)} />
             <select className="select" value={filtros.situacion_cobro} onChange={e => setF('situacion_cobro', e.target.value)}>
@@ -370,7 +377,9 @@ export default function Cobros() {
         </div>
       )}
 
-      {vistaModo === 'tabla' ? (
+      {vistaModo === 'no-facturadas' ? (
+        <CuotasNoFacturadas clientes={clientes} proyectos={proyectos} />
+      ) : vistaModo === 'tabla' ? (
         loading ? <div className="card"><Loader /></div> : data.length === 0 ? <div className="card"><EmptyState title="Sin cobros" /></div> : (
           <>
             {/* Vista tabla (desktop) */}

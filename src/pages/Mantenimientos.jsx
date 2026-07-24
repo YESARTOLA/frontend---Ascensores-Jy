@@ -52,6 +52,13 @@ export default function Mantenimientos() {
   const [planDetalle, setPlanDetalle] = useState(null);
   const [instanciasPlan, setInstanciasPlan] = useState([]);
   const [cargandoInstanciasPlan, setCargandoInstanciasPlan] = useState(false);
+  // Facturación por periodo del plan (una factura + un pago por el total de cada
+  // ocurrencia). `periodos` = { id_cobro, periodos: [...] } | null.
+  const [periodos, setPeriodos] = useState(null);
+  const [cargandoPeriodos, setCargandoPeriodos] = useState(false);
+  const [forzando, setForzando] = useState(null);   // periodo en el modal de forzar
+  const [modoForzar, setModoForzar] = useState('total');
+  const [aprobandoPeriodo, setAprobandoPeriodo] = useState(false);
   const [editandoGratuitos, setEditandoGratuitos] = useState(false);
   const [nuevoCupoGratuitos, setNuevoCupoGratuitos] = useState('');
   const [guardandoGratuitos, setGuardandoGratuitos] = useState(false);
@@ -144,13 +151,16 @@ export default function Mantenimientos() {
   const cambiarSubtipoPlan = (id_tipo_servicio) =>
     setForm(f => ({ ...f, id_tipo_servicio, ascensores_seleccion: {} }));
 
-  // Selecciona el ascensor del plan. Como un plan es de UN solo ascensor, elegir
-  // uno reemplaza cualquier selección previa (comportamiento tipo radio).
+  // Selecciona/deselecciona un ascensor del plan. Un plan puede cubrir VARIOS
+  // ascensores (varios edificios): cada uno aporta su precio y el periodo factura
+  // la suma de todos. Alterna cada ascensor de forma acumulativa (no radio).
   const toggleAscensorPlan = (idAsc, cfg) =>
     setForm(f => {
-      if (f.ascensores_seleccion[idAsc]) return { ...f, ascensores_seleccion: {} };
+      const sel = { ...f.ascensores_seleccion };
+      if (sel[idAsc]) { delete sel[idAsc]; return { ...f, ascensores_seleccion: sel }; }
       if (!cfg) return f;
-      return { ...f, ascensores_seleccion: { [idAsc]: { monto: Number(cfg.precio).toFixed(2) } } };
+      sel[idAsc] = { monto: Number(cfg.precio).toFixed(2) };
+      return { ...f, ascensores_seleccion: sel };
     });
 
   // Alta/edición del precio del ascensor para el subtipo elegido, sin salir del
@@ -165,9 +175,9 @@ export default function Mantenimientos() {
     // El backend devuelve el catálogo vigente completo del ascensor: se reemplaza
     // en el listado local para no recargar todos los ascensores.
     setAscensores(prev => prev.map(a => (a.id === idAscensor ? { ...a, precios: r.precios } : a)));
-    // Un plan es de UN solo ascensor: configurarle el precio lo deja ya elegido
-    // y con el monto vigente, sin obligar a un clic extra.
-    setForm(f => ({ ...f, ascensores_seleccion: { [idAscensor]: { monto: Number(precio).toFixed(2) } } }));
+    // Configurarle el precio lo deja ya elegido con el monto vigente, sin un clic
+    // extra. Multi-ascensor: se AÑADE a la selección (merge), no la reemplaza.
+    setForm(f => ({ ...f, ascensores_seleccion: { ...f.ascensores_seleccion, [idAscensor]: { monto: Number(precio).toFixed(2) } } }));
     toast.success('Precio guardado en el ascensor');
   };
 
@@ -212,6 +222,10 @@ export default function Mantenimientos() {
     if (!editando) {
       if (!form.id_tipo_servicio) return toast.error('Seleccione el subtipo de servicio');
       if (ascensoresSeleccionados.length === 0) return toast.error('Seleccione al menos un ascensor con precio configurado');
+      // Moneda homogénea: el periodo se factura en un único cobro/cuota (suma de
+      // todos los ascensores), que tiene una sola moneda.
+      const monedasSel = new Set(ascensoresSeleccionados.map(a => precioConfigurado(a, form.id_tipo_servicio)?.moneda).filter(Boolean));
+      if (monedasSel.size > 1) return toast.error('Todos los ascensores del plan deben usar la misma moneda');
     }
     guardandoRef.current = true;
     setGuardando(true);
@@ -272,12 +286,58 @@ export default function Mantenimientos() {
       .then(setInstanciasPlan)
       .catch(() => setInstanciasPlan([]))
       .finally(() => setCargandoInstanciasPlan(false));
+    setPeriodos(null);
+    setCargandoPeriodos(true);
+    mantenimientosService.periodos(plan.id)
+      .then(setPeriodos)
+      .catch(() => setPeriodos(null))
+      .finally(() => setCargandoPeriodos(false));
+  };
+
+  const recargarPeriodos = () => {
+    if (!planDetalle) return;
+    setCargandoPeriodos(true);
+    mantenimientosService.periodos(planDetalle.id)
+      .then(setPeriodos)
+      .catch(() => {})
+      .finally(() => setCargandoPeriodos(false));
+  };
+
+  // Aprueba un periodo (normal si está completo; forzado con total/equivalente si
+  // faltan mantenimientos). Al aprobar se crea la cuota del periodo en el cobro
+  // del plan y queda lista para facturar.
+  const aprobarPeriodoUI = async (p, { forzar = false, modo } = {}) => {
+    if (aprobandoPeriodo || !planDetalle) return;
+    setAprobandoPeriodo(true);
+    try {
+      await mantenimientosService.aprobarPeriodo(planDetalle.id, { fecha_ocurrencia: p.fecha, forzar, modo });
+      toast.success('Periodo aprobado y listo para facturar');
+      setForzando(null);
+      recargarPeriodos();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al aprobar el periodo');
+    } finally {
+      setAprobandoPeriodo(false);
+    }
+  };
+
+  const ajustarPeriodoUI = async (p) => {
+    if (!planDetalle) return;
+    try {
+      await mantenimientosService.ajustarPeriodo(planDetalle.id, { fecha_ocurrencia: p.fecha });
+      toast.success('Monto del periodo ajustado al total');
+      recargarPeriodos();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al ajustar el periodo');
+    }
   };
 
   const cerrarDetallePlan = () => {
     setPlanDetalle(null);
     setInstanciasPlan([]);
     setEditandoGratuitos(false);
+    setPeriodos(null);
+    setForzando(null);
   };
 
   const iniciarEdicionGratuitos = () => {
@@ -728,6 +788,61 @@ export default function Mantenimientos() {
                 )}
               </div>
 
+              {puedeVerPrecio && (
+                <div className="border-t border-slate-100 pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-medium text-slate-800">Periodos / Facturación</h4>
+                    <span className="text-[11px] text-slate-500 text-right">Una factura y un pago por el total de todos los ascensores de cada periodo.</span>
+                  </div>
+                  {cargandoPeriodos ? <Loader /> : !periodos || (periodos.periodos || []).length === 0 ? (
+                    <p className="text-xs text-slate-500">Sin periodos aún.</p>
+                  ) : !periodos.id_cobro ? (
+                    <p className="text-xs text-amber-600">Este plan usa el modelo anterior (cobro por servicio); no admite facturación por periodo.</p>
+                  ) : (
+                    <div className="overflow-x-auto scroll-thin">
+                      <table className="table-base">
+                        <thead><tr>
+                          <th className="table-th">#</th>
+                          <th className="table-th">Fecha</th>
+                          <th className="table-th text-center">Realizados</th>
+                          <th className="table-th text-right">Total</th>
+                          <th className="table-th">Estado</th>
+                          <th className="table-th text-right">Acciones</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {periodos.periodos.map(p => (
+                            <tr key={p.ordinal} className="table-row-hover">
+                              <td className="table-td font-mono">{p.ordinal}</td>
+                              <td className="table-td">{formatFecha(p.fecha)}</td>
+                              <td className="table-td text-center font-mono">{p.done}/{p.total_servicios}</td>
+                              <td className="table-td text-right font-mono">
+                                {p.es_gratuito ? <span className="badge-green">Gratuito</span> : formatMonto(p.total_monto, p.moneda)}
+                              </td>
+                              <td className="table-td"><span className={badgeEstado(p.estado_periodo)}>{p.estado_periodo}</span></td>
+                              <td className="table-td text-right whitespace-nowrap">
+                                {puedeEditarPlan && !p.cuota && p.completo && (
+                                  <button type="button" onClick={() => aprobarPeriodoUI(p)} disabled={aprobandoPeriodo}
+                                    className="btn-primary text-xs !py-1 !px-2">Aprobar y facturar</button>
+                                )}
+                                {puedeEditarPlan && !p.cuota && !p.completo && (
+                                  <button type="button" onClick={() => { setForzando(p); setModoForzar('total'); }}
+                                    className="btn-secondary text-xs !py-1 !px-2">Forzar cierre</button>
+                                )}
+                                {puedeEditarPlan && p.cuota && p.estado_periodo === 'aprobado' && !p.es_gratuito && p.cuota.monto < p.total_monto && (
+                                  <button type="button" onClick={() => ajustarPeriodoUI(p)}
+                                    className="btn-secondary text-xs !py-1 !px-2">Ajustar al total</button>
+                                )}
+                                {p.cuota && <span className="text-[11px] text-slate-400 ml-1">cuota #{p.cuota.numero_cuota}</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="border-t border-slate-100 pt-4">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="font-medium text-slate-800">Mantenimientos del plan</h4>
@@ -784,6 +899,42 @@ export default function Mantenimientos() {
         })()}
       </Modal>
 
+      <Modal open={!!forzando} onClose={() => setForzando(null)} title="Forzar cierre del periodo" size="md">
+        {forzando && (
+          <div className="space-y-4 text-sm">
+            <p className="text-slate-700">
+              El periodo <strong>#{forzando.ordinal}</strong> ({formatFecha(forzando.fecha)}) tiene{' '}
+              <strong>{forzando.done} de {forzando.total_servicios}</strong> mantenimientos realizados. Elija por cuánto facturarlo:
+            </p>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="modo-forzar" checked={modoForzar === 'total'} onChange={() => setModoForzar('total')} />
+                <span>Total del periodo — <strong className="font-mono">{formatMonto(forzando.total_monto, forzando.moneda)}</strong></span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="modo-forzar" checked={modoForzar === 'equivalente'} onChange={() => setModoForzar('equivalente')} />
+                <span>
+                  Equivalente proporcional ({forzando.done}/{forzando.total_servicios}) —{' '}
+                  <strong className="font-mono">
+                    {formatMonto(forzando.total_servicios > 0 ? Math.round(forzando.total_monto * forzando.done / forzando.total_servicios * 100) / 100 : 0, forzando.moneda)}
+                  </strong>
+                </span>
+              </label>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Se genera una sola cuota por este periodo; un único pago continúa el flujo. Si luego se completa el mantenimiento faltante podrás ajustar el monto al total.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setForzando(null)}>Cancelar</button>
+              <button type="button" className="btn-primary" disabled={aprobandoPeriodo}
+                onClick={() => aprobarPeriodoUI(forzando, { forzar: true, modo: modoForzar })}>
+                {aprobandoPeriodo ? 'Aprobando…' : 'Aprobar forzado'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={open} onClose={cerrarModal} title={editando ? 'Editar plan de mantenimiento' : 'Nuevo plan de mantenimiento'}
         footer={
           <>
@@ -817,22 +968,22 @@ export default function Mantenimientos() {
             <select className="select" required value={form.id_tipo_servicio} onChange={e => cambiarSubtipoPlan(e.target.value)} disabled={!!editando}><option value="">—</option>{tiposF.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Ascensor *</label>
-            <p className="text-[11px] text-slate-500 -mt-1 mb-1.5">Cada plan de mantenimiento es de un solo ascensor. Para otro ascensor, cree un plan aparte.</p>
+            <label className="label">Ascensores *</label>
+            <p className="text-[11px] text-slate-500 -mt-1 mb-1.5">Un plan puede cubrir varios ascensores (incluso de distintos edificios). Cada periodo se factura por la suma de todos, en una sola factura y un solo pago. Todos deben usar la misma moneda.</p>
             <AscensoresChecklist
               ascensores={ascensoresF}
               seleccion={form.ascensores_seleccion}
               idTipoServicio={form.id_tipo_servicio}
               onToggle={toggleAscensorPlan}
               disabled={!!editando}
-              single={!editando}
+              single={false}
               hayCliente={!!form.id_cliente}
               onGuardarPrecio={puedeCrear && puedeVerPrecio ? guardarPrecioAscensor : undefined}
             />
             {puedeVerPrecio && ascensoresSeleccionados.length > 0 && (
               <div className="mt-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-sm flex flex-wrap items-center gap-3">
-                <span className="text-slate-600 ml-auto">Precio del mantenimiento:</span>
-                <strong className="font-mono text-slate-900">{formatMonto(sumaActual, monedaSel)}</strong>
+                <span className="text-slate-600">{ascensoresSeleccionados.length} ascensor(es) · total por periodo:</span>
+                <strong className="font-mono text-slate-900 ml-auto">{formatMonto(sumaActual, monedaSel)}</strong>
               </div>
             )}
           </div>
