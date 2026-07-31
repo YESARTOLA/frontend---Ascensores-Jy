@@ -1,8 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { reportesService, clientesService, tecnicosService, tiposServicioService, ascensoresService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
+import Pagination from '../components/common/Pagination.jsx';
 import RangeCalendar from '../components/common/RangeCalendar.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
@@ -133,7 +135,41 @@ export default function Reportes() {
   // transitorio con la data del tab anterior (cada reporte tiene otro shape).
   const seleccionarTab = (t) => { setData(null); setTab(t); };
 
+  // Paginación de la tabla. Es de cliente a propósito: la analítica y las
+  // exportaciones necesitan el dataset completo (totales, top-N, series por
+  // mes), así que el reporte se sigue trayendo entero y lo que se recorta es
+  // solo lo que se pinta. Evita montar miles de <tr> de golpe.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  useEffect(() => { setPage(1); }, [tab.codigo, JSON.stringify(filtros), pageSize]);
+
+  // Mientras se exporta, la tabla se renderiza completa: tanto el Excel como el
+  // PDF se construyen leyendo el <table> del DOM, y una tabla paginada haría
+  // que se exportara únicamente la página visible.
+  const [exportandoTabla, setExportandoTabla] = useState(false);
+
+  const esListaPaginable = Array.isArray(data);
+  const totalFilas = esListaPaginable ? data.length : 0;
+  const totalPages = Math.max(1, Math.ceil(totalFilas / pageSize));
+  const datosTabla = useMemo(() => {
+    if (!esListaPaginable || exportandoTabla) return data;
+    return data.slice((page - 1) * pageSize, page * pageSize);
+  }, [data, esListaPaginable, exportandoTabla, page, pageSize]);
+
   const printRef = useRef(null);
+
+  /**
+   * Ejecuta `fn` con la tabla completa montada en el DOM. `flushSync` fuerza el
+   * re-render antes de leerla, porque `fn` inspecciona el DOM de forma síncrona.
+   */
+  const conTablaCompleta = async (fn) => {
+    flushSync(() => setExportandoTabla(true));
+    try {
+      return await fn();
+    } finally {
+      setExportandoTabla(false);
+    }
+  };
 
   const hayDatos = () => {
     if (tab.codigo === 'leads') return !!data?.leads?.length;
@@ -181,6 +217,7 @@ export default function Reportes() {
 
   const exportarExcel = () => {
     if (!hayDatos()) return toast.error('No hay datos para exportar');
+    return conTablaCompleta(() => {
     const tablaHTML = tablaHTMLDeDOM();
     if (!tablaHTML) return toast.error('No se encontró la tabla');
     const analisis = resumenAnaliticoTexto();
@@ -215,10 +252,12 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Excel descargado');
+    });
   };
 
   const exportarPDF = async () => {
     if (!hayDatos()) return toast.error('No hay datos para exportar');
+    return conTablaCompleta(async () => {
     const tablaEl = printRef.current?.querySelector('table');
     if (!tablaEl) return toast.error('No se encontró la tabla');
     const analitica = Array.isArray(data) || tab.codigo === 'leads' || tab.codigo === 'ingresos_por_banco'
@@ -239,6 +278,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
       console.error(err);
       toast.error('Error al generar el PDF');
     }
+    });
   };
 
   const setF = (k, v) => setFiltros(p => ({ ...p, [k]: v || undefined }));
@@ -467,32 +507,37 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
       <div className="card">
         {loading ? <Loader /> : (
           <div className="overflow-x-auto scroll-thin">
-            {tab.codigo === 'operativos' && Array.isArray(data) && <TablaOperativos data={data} puedeVerPrecio={puedeVerPrecio} />}
-            {tab.codigo === 'servicios_finalizados' && Array.isArray(data) && <TablaServiciosFinalizados data={data} puedeVerPrecio={puedeVerPrecio} />}
-            {tab.codigo === 'emergencias_atendidas' && Array.isArray(data) && <TablaEmergencias data={data} />}
-            {tab.codigo === 'correctivos' && Array.isArray(data) && <TablaCorrectivos data={data} />}
-            {tab.codigo === 'atenciones_rapidas' && Array.isArray(data) && <TablaAtencionesRapidas data={data} />}
-            {tab.codigo === 'mantenimientos_cumplidos' && Array.isArray(data) && <TablaMantenimientosCumplidos data={data} puedeVerPrecio={puedeVerPrecio} />}
-            {tab.codigo === 'mantenimientos_vencidos' && Array.isArray(data) && <TablaMantVencidos data={data} />}
-            {tab.codigo === 'mantenimientos_por_cliente' && Array.isArray(data) && <TablaMantPorCliente data={data} />}
-            {tab.codigo === 'mantenimientos_sin_servicio' && Array.isArray(data) && <TablaMantSinServicio data={data} puedeVerPrecio={puedeVerPrecio} />}
-            {tab.codigo === 'pendientes_cobro' && Array.isArray(data) && <TablaPendientesCobro data={data} />}
-            {tab.codigo === 'cobros_vencidos' && Array.isArray(data) && <TablaCobrosVencidos data={data} />}
-            {tab.codigo === 'mora_cliente' && Array.isArray(data) && <TablaMora data={data} />}
-            {tab.codigo === 'abonos' && Array.isArray(data) && <TablaAbonos data={data} />}
+            {tab.codigo === 'operativos' && Array.isArray(data) && <TablaOperativos data={datosTabla} puedeVerPrecio={puedeVerPrecio} />}
+            {tab.codigo === 'servicios_finalizados' && Array.isArray(data) && <TablaServiciosFinalizados data={datosTabla} puedeVerPrecio={puedeVerPrecio} />}
+            {tab.codigo === 'emergencias_atendidas' && Array.isArray(data) && <TablaEmergencias data={datosTabla} />}
+            {tab.codigo === 'correctivos' && Array.isArray(data) && <TablaCorrectivos data={datosTabla} />}
+            {tab.codigo === 'atenciones_rapidas' && Array.isArray(data) && <TablaAtencionesRapidas data={datosTabla} />}
+            {tab.codigo === 'mantenimientos_cumplidos' && Array.isArray(data) && <TablaMantenimientosCumplidos data={datosTabla} puedeVerPrecio={puedeVerPrecio} />}
+            {tab.codigo === 'mantenimientos_vencidos' && Array.isArray(data) && <TablaMantVencidos data={datosTabla} />}
+            {tab.codigo === 'mantenimientos_por_cliente' && Array.isArray(data) && <TablaMantPorCliente data={datosTabla} />}
+            {tab.codigo === 'mantenimientos_sin_servicio' && Array.isArray(data) && <TablaMantSinServicio data={datosTabla} puedeVerPrecio={puedeVerPrecio} />}
+            {tab.codigo === 'pendientes_cobro' && Array.isArray(data) && <TablaPendientesCobro data={datosTabla} />}
+            {tab.codigo === 'cobros_vencidos' && Array.isArray(data) && <TablaCobrosVencidos data={datosTabla} />}
+            {tab.codigo === 'mora_cliente' && Array.isArray(data) && <TablaMora data={datosTabla} />}
+            {tab.codigo === 'abonos' && Array.isArray(data) && <TablaAbonos data={datosTabla} />}
             {tab.codigo === 'ingresos_por_banco' && data?.grupos && <TablaIngresosPorBanco data={data} />}
-            {(tab.codigo === 'facturados' || tab.codigo === 'no_facturados') && Array.isArray(data) && <TablaFact data={data} puedeVerPrecio={puedeVerPrecio} />}
-            {tab.codigo === 'cobros' && Array.isArray(data) && <TablaCobros data={data} />}
-            {tab.codigo === 'tecnicos' && Array.isArray(data) && <TablaTecnicos data={data} />}
+            {(tab.codigo === 'facturados' || tab.codigo === 'no_facturados') && Array.isArray(data) && <TablaFact data={datosTabla} puedeVerPrecio={puedeVerPrecio} />}
+            {tab.codigo === 'cobros' && Array.isArray(data) && <TablaCobros data={datosTabla} />}
+            {tab.codigo === 'tecnicos' && Array.isArray(data) && <TablaTecnicos data={datosTabla} />}
             {tab.codigo === 'leads' && data?.leads && <BloqueLeads data={data} />}
-            {tab.codigo === 'ascensores' && Array.isArray(data) && <TablaAscensores data={data} />}
-            {tab.codigo === 'clientes_estado_edificios' && Array.isArray(data) && <TablaClientesEstadoEdificios data={data} />}
+            {tab.codigo === 'ascensores' && Array.isArray(data) && <TablaAscensores data={datosTabla} />}
+            {tab.codigo === 'clientes_estado_edificios' && Array.isArray(data) && <TablaClientesEstadoEdificios data={datosTabla} />}
             {tab.codigo === 'historial_tecnico_ascensor' && (
               !filtros.id_ascensor
                 ? <EmptyState title="Seleccione un ascensor" subtitle="Use el filtro para ver el historial técnico" />
                 : data ? <HistorialAscensor data={data} puedeVerPrecio={puedeVerPrecio} /> : <EmptyState title="Sin datos" />
             )}
           </div>
+        )}
+        {/* Oculto durante la exportación: ahí la tabla se pinta completa. */}
+        {!loading && esListaPaginable && !exportandoTabla && (
+          <Pagination page={page} pageSize={pageSize} total={totalFilas} totalPages={totalPages}
+            onPage={setPage} onPageSize={setPageSize} />
         )}
       </div>
       </div>

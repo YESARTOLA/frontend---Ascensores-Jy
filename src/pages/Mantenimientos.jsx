@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { mantenimientosService, clientesService, ascensoresService, tiposServicioService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
@@ -45,8 +45,6 @@ export default function Mantenimientos() {
   const [form, setForm] = useState(inicial);
   const [guardando, setGuardando] = useState(false);
   const guardandoRef = useRef(false);
-  const [instancias, setInstancias] = useState([]);
-  const [cargandoInstancias, setCargandoInstancias] = useState(false);
   const [filtroInst, setFiltroInst] = useState({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '', desde: '', hasta: '' });
   const [filtroPlanes, setFiltroPlanes] = useState({ q: '' });
   const [planDetalle, setPlanDetalle] = useState(null);
@@ -111,8 +109,9 @@ export default function Mantenimientos() {
     ]).then(([c, a, t, f]) => { setClientes(c); setAscensores(a); setTipos(t); setFrecuencias(f); });
   }, []);
 
-  const recargarInstancias = () => {
-    setCargandoInstancias(true);
+  // Solo los filtros con valor viajan al backend: un filtro vacío no debe
+  // formar parte de la clave que dispara la recarga ni llegar como `?q=`.
+  const filtrosInstServidor = useMemo(() => {
     const params = {};
     if (filtroInst.q) params.q = filtroInst.q;
     if (filtroInst.id_cliente) params.id_cliente = filtroInst.id_cliente;
@@ -120,17 +119,14 @@ export default function Mantenimientos() {
     if (filtroInst.estado_ejecucion) params.estado_ejecucion = filtroInst.estado_ejecucion;
     if (filtroInst.desde) params.desde = filtroInst.desde;
     if (filtroInst.hasta) params.hasta = filtroInst.hasta;
-    mantenimientosService.instancias(params)
-      .then(setInstancias)
-      .catch(() => setInstancias([]))
-      .finally(() => setCargandoInstancias(false));
-  };
+    return params;
+  }, [filtroInst]);
 
-  useEffect(() => {
-    if (tabActiva !== 'mantenimientos') return;
-    recargarInstancias();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabActiva, filtroInst.q, filtroInst.id_cliente, filtroInst.id_ascensor, filtroInst.estado_ejecucion, filtroInst.desde, filtroInst.hasta]);
+  const {
+    data: instancias, loading: cargandoInstancias, total: totalInstancias,
+    page: pageInst, pageSize: pageSizeInst, totalPages: totalPagesInst,
+    setPage: setPageInst, setPageSize: setPageSizeInst, recargar: recargarInstancias
+  } = usePaginatedList(mantenimientosService.instanciasPaginate, filtrosInstServidor, { initialPageSize: 25 });
 
   const ascensoresFiltroInst = filtroInst.id_cliente
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(filtroInst.id_cliente))
@@ -440,7 +436,9 @@ export default function Mantenimientos() {
       setPrecioInstancia(null);
       recargarInstanciasPlan();
       recargarPeriodos();
-      if (tabActiva === 'mantenimientos') recargarInstancias();
+      // La pestaña de instancias mantiene su propia página cargada aunque no
+      // esté visible, así que se refresca siempre para no dejarla desfasada.
+      recargarInstancias();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error al actualizar el precio');
     } finally {
@@ -488,7 +486,7 @@ export default function Mantenimientos() {
 
   const subtitle = tabActiva === 'planes'
     ? `${total} plan(es)`
-    : `${instancias.length} mantenimiento(s)`;
+    : `${totalInstancias} mantenimiento(s)`;
 
   const ascensoresExportFiltrados = exportForm.ids_cliente.length > 0
     ? ascensores.filter(a => exportForm.ids_cliente.includes(String(a.edificio?.cliente?.id)))
@@ -660,6 +658,7 @@ export default function Mantenimientos() {
 
           <div className="card">
             {cargandoInstancias ? <Loader /> : instancias.length === 0 ? <EmptyState title="Sin mantenimientos" subtitle="Crea un plan o ajusta los filtros." /> : (
+              <>
               <div className="overflow-x-auto scroll-thin">
                 <table className="table-base">
                   <thead><tr>
@@ -706,6 +705,9 @@ export default function Mantenimientos() {
                   </tbody>
                 </table>
               </div>
+              <Pagination page={pageInst} pageSize={pageSizeInst} total={totalInstancias} totalPages={totalPagesInst}
+                onPage={setPageInst} onPageSize={setPageSizeInst} />
+              </>
             )}
           </div>
         </>

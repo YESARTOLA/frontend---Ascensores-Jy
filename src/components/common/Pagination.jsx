@@ -61,10 +61,9 @@ export function usePaginatedList(fetcher, filtros = {}, opts = {}) {
  * Controles de paginación. Se renderiza al pie de la tabla/lista.
  */
 export default function Pagination({ page, pageSize, total, totalPages, onPage, onPageSize, pageSizes = [10, 25, 50, 100], className = '' }) {
-  if (total === 0) return null;
-  const desde = (page - 1) * pageSize + 1;
-  const hasta = Math.min(page * pageSize, total);
-
+  // El useMemo va antes de cualquier return: si el early return quedara arriba,
+  // pasar de 0 a N resultados sin desmontar cambiaría el número de hooks
+  // entre renders y React abortaría.
   const paginas = useMemo(() => {
     const arr = [];
     const max = totalPages;
@@ -81,6 +80,10 @@ export default function Pagination({ page, pageSize, total, totalPages, onPage, 
     arr.push(max);
     return arr;
   }, [page, totalPages]);
+
+  if (total === 0) return null;
+  const desde = (page - 1) * pageSize + 1;
+  const hasta = Math.min(page * pageSize, total);
 
   return (
     <div className={`flex flex-col sm:flex-row items-center justify-between gap-3 px-3 py-3 border-t border-slate-100 ${className}`}>

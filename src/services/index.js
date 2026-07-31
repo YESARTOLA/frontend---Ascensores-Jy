@@ -199,6 +199,9 @@ export const mantenimientosService = {
   frecuencias: () => api.get('/mantenimientos/frecuencias').then(r => r.data?.data ?? r.data),
   materializarEvento: (idEvento, body) => api.post(`/mantenimientos/eventos/${idEvento}/crear-servicio`, body || {}).then(r => r.data?.data ?? r.data),
   instancias: (params) => api.get('/mantenimientos/instancias', { params }).then(r => r.data?.data ?? r.data),
+  // Igual que `instancias` pero devuelve el sobre { data, total, page, ... }
+  // que espera usePaginatedList. Sin `page` el backend responde sin paginar.
+  instanciasPaginate: (params) => api.get('/mantenimientos/instancias', { params }).then(r => r.data),
   exportar: (params, formato = 'excel') =>
     api.get('/mantenimientos/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   exportarDatos: (params) =>
