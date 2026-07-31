@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { usePopupAnclado } from '../../utils/usePopupAnclado.js';
 
 /**
  * Combobox simple: input + dropdown buscable. Sin dependencias.
@@ -10,6 +12,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
  *   - placeholder: string
  *   - emptyLabel: string mostrado en el dropdown cuando no hay coincidencias
  *   - className: clases adicionales para el contenedor
+ *   - libre: modo "buscador con sugerencias". El `value` ES el texto escrito y
+ *     `onChange` se dispara en cada tecla, así el padre puede seguir buscando por
+ *     texto libre; las opciones quedan como atajo (al elegir una, se escribe su
+ *     `value` en el buscador). Se limpia con '' en vez de null.
  */
 export default function Combobox({
   options = [],
@@ -17,48 +23,58 @@ export default function Combobox({
   onChange,
   placeholder = 'Selecciona…',
   emptyLabel = 'Sin coincidencias',
-  className = ''
+  className = '',
+  libre = false
 }) {
   const [abierto, setAbierto] = useState(false);
   const [texto, setTexto] = useState('');
   const [resaltado, setResaltado] = useState(-1);
   const contRef = useRef(null);
   const inputRef = useRef(null);
+  const popupRef = useRef(null);
 
   const seleccionada = useMemo(
     () => options.find(o => String(o.value) === String(value)) || null,
     [options, value]
   );
 
-  // Sincronizar texto del input cuando el value cambia desde afuera o el dropdown se cierra
+  // En modo libre el input es controlado por el padre (el value ES el texto); en
+  // modo selección se sincroniza con la opción elegida al cerrar el dropdown.
+  const textoInput = libre ? (value ?? '') : texto;
+
   useEffect(() => {
+    if (libre) return;
     if (!abierto) {
       setTexto(seleccionada ? seleccionada.label : '');
     }
-  }, [seleccionada, abierto]);
+  }, [seleccionada, abierto, libre]);
 
-  // Cerrar al hacer click fuera
+  // Cerrar al hacer click fuera (el panel vive en un portal, hay que excluirlo).
   useEffect(() => {
     const onDocClick = (e) => {
-      if (contRef.current && !contRef.current.contains(e.target)) {
-        setAbierto(false);
-      }
+      const dentroInput = contRef.current && contRef.current.contains(e.target);
+      const dentroPanel = popupRef.current && popupRef.current.contains(e.target);
+      if (!dentroInput && !dentroPanel) setAbierto(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
   const filtradas = useMemo(() => {
-    const q = texto.trim().toLowerCase();
-    if (!q || (seleccionada && texto === seleccionada.label)) return options;
+    const q = String(textoInput).trim().toLowerCase();
+    if (!q || (!libre && seleccionada && texto === seleccionada.label)) return options;
     return options.filter(o =>
       o.label.toLowerCase().includes(q) ||
       (o.sublabel && o.sublabel.toLowerCase().includes(q))
     );
-  }, [options, texto, seleccionada]);
+  }, [options, textoInput, texto, seleccionada, libre]);
+
+  // El panel se portalea a document.body: dentro de una `.card` (backdrop-blur)
+  // quedaría detrás de la tarjeta siguiente. Se reposiciona al cambiar la lista.
+  const pos = usePopupAnclado(abierto, contRef, popupRef, [filtradas.length]);
 
   const seleccionar = (opt) => {
-    onChange?.(opt ? opt.value : null);
+    onChange?.(opt ? opt.value : (libre ? '' : null));
     setTexto(opt ? opt.label : '');
     setAbierto(false);
     setResaltado(-1);
@@ -66,7 +82,7 @@ export default function Combobox({
 
   const limpiar = (e) => {
     e.stopPropagation();
-    onChange?.(null);
+    onChange?.(libre ? '' : null);
     setTexto('');
     setResaltado(-1);
     inputRef.current?.focus();
@@ -97,13 +113,18 @@ export default function Combobox({
           ref={inputRef}
           type="text"
           className="input pr-8"
-          value={texto}
+          value={textoInput}
           placeholder={placeholder}
-          onFocus={() => { setAbierto(true); setTexto(''); }}
-          onChange={e => { setTexto(e.target.value); setAbierto(true); setResaltado(-1); }}
+          onFocus={() => { setAbierto(true); if (!libre) setTexto(''); }}
+          onChange={e => {
+            if (libre) onChange?.(e.target.value);
+            else setTexto(e.target.value);
+            setAbierto(true);
+            setResaltado(-1);
+          }}
           onKeyDown={onKeyDown}
         />
-        {seleccionada && (
+        {(libre ? String(textoInput).length > 0 : !!seleccionada) && (
           <button
             type="button"
             onClick={limpiar}
@@ -112,8 +133,11 @@ export default function Combobox({
           >×</button>
         )}
       </div>
-      {abierto && (
-        <ul className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
+      {abierto && createPortal(
+        <ul
+          ref={popupRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+          className="z-[60] max-h-64 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
           {filtradas.length === 0 ? (
             <li className="px-3 py-2 text-sm text-slate-500">{emptyLabel}</li>
           ) : filtradas.map((o, i) => (
@@ -127,7 +151,8 @@ export default function Combobox({
               {o.sublabel && <div className="text-xs text-slate-500 truncate">{o.sublabel}</div>}
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body
       )}
     </div>
   );

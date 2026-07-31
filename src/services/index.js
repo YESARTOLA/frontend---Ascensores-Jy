@@ -1,4 +1,5 @@
 import api, { assetUrl } from './apiClient';
+import { ESTADO_FACTURA_ANULADA } from '../utils/estadoFactura.js';
 
 export { assetUrl };
 
@@ -100,6 +101,9 @@ export const serviciosService = {
   cambiarDuracion: (id, payload) => api.patch(`/servicios/${id}/duracion`, payload).then(r => r.data),
   setEstado: (id, estado_servicio) => api.patch(`/servicios/${id}/estado`, { estado_servicio }).then(r => r.data?.data ?? r.data),
   setRequiereFactura: (id, requiere_factura) => api.patch(`/servicios/${id}/requiere-factura`, { requiere_factura }).then(r => r.data?.data ?? r.data),
+  // Datos de apoyo del card "Datos" que carga el coordinador: contacto en sitio
+  // (nombre + teléfono) y si el edificio tiene cuarto de máquinas ('Si' | 'No').
+  setDatosContacto: (id, payload) => api.patch(`/servicios/${id}/datos-contacto`, payload).then(r => r.data?.data ?? r.data),
   asignar: (id, payload) => api.post(`/servicios/${id}/asignar`, payload).then(r => r.data),
   iniciar: (id, accion) => api.post(`/servicios/${id}/iniciar`, { accion }).then(r => r.data),
   finalizar: (id, payload) => api.post(`/servicios/${id}/finalizar`, payload).then(r => r.data),
@@ -155,6 +159,11 @@ export const facturasService = {
   create: (d) => api.post('/facturas', d).then(r => r.data?.data ?? r.data),
   cambiarEstado: (id, estado_factura) =>
     api.patch(`/facturas/${id}/estado`, { estado_factura }).then(r => r.data?.data ?? r.data),
+  // Anular deja la factura como constancia y libera el servicio/cuota para
+  // emitir una nueva. El motivo queda registrado en la auditoría.
+  anular: (id, motivo) =>
+    api.patch(`/facturas/${id}/estado`, { estado_factura: ESTADO_FACTURA_ANULADA, motivo })
+      .then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/facturas/${id}`).then(r => r.data)
 };
 
@@ -197,6 +206,12 @@ export const mantenimientosService = {
   // Preview del borrado en cascada: alimenta el modal de confirmación.
   impactoEliminacion: (id) => api.get(`/mantenimientos/${id}/impacto-eliminacion`).then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/mantenimientos/${id}`).then(r => r.data),
+  // Precio del plan: { ascensores: [{id_ascensor, monto}] } y/o { precio_total }
+  // (este último se reparte proporcional al desglose vigente).
+  actualizarPrecios: (id, body) => api.put(`/mantenimientos/${id}/precios`, body).then(r => r.data?.data ?? r.data),
+  // Precio de UNA ocurrencia del plan (mantenimiento de un ascensor en una fecha).
+  actualizarPrecioServicio: (idServicio, body) =>
+    api.put(`/mantenimientos/servicios/${idServicio}/precio`, body).then(r => r.data?.data ?? r.data),
   // Facturación por PERIODO del plan (una factura + un pago por el total de todos
   // los ascensores de cada ocurrencia).
   periodos: (id) => api.get(`/mantenimientos/${id}/periodos`).then(r => r.data?.data ?? r.data),

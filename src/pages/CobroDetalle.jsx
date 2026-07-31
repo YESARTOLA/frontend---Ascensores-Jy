@@ -43,11 +43,17 @@ export default function CobroDetalle() {
   const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), monto: '', id_archivo: null, modo: 'general', id_cuota: '' });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
-  const { esSuperAdmin } = useAuth();
+  const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [openEliminar, setOpenEliminar] = useState(false);
   const [facturaAEliminar, setFacturaAEliminar] = useState(null);
+  // Anulación de factura: la factura queda como constancia (estado 'Anulada') y
+  // el servicio/cuota vuelve a admitir la emisión de una nueva.
+  const [facturaAAnular, setFacturaAAnular] = useState(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState('');
+  const [anulando, setAnulando] = useState(false);
+  const puedeAnularFacturas = esSuperAdmin || esAdmin || esContabilidad;
 
   const cargar = async () => { setLoading(true); try { setData(await cobrosService.get(id)); } finally { setLoading(false); } };
   useEffect(() => { cargar(); }, [id]);
@@ -286,6 +292,24 @@ export default function CobroDetalle() {
     .filter(f => f.id_cuota !== null)
     .reduce((acc, f) => acc + Number(f.monto), 0);
   const restanteServicio = Math.max(0, Number(data.monto_total) - sumaFacturasPorCuotaPrevia);
+
+  const abrirAnular = (f) => { setMotivoAnulacion(''); setFacturaAAnular(f); };
+
+  const anularFactura = async () => {
+    if (!facturaAAnular) return;
+    if (!motivoAnulacion.trim()) return toast.error('Indica el motivo de la anulación');
+    setAnulando(true);
+    try {
+      await facturasService.anular(facturaAAnular.id, motivoAnulacion.trim());
+      toast.success(`Factura ${facturaAAnular.numero_factura} anulada. Ya puedes emitir una nueva.`);
+      setFacturaAAnular(null);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al anular la factura');
+    } finally {
+      setAnulando(false);
+    }
+  };
 
   const marcarFacturaEnviada = async (factura) => {
     if (!puedeMarcarseEnviada(factura.estado_factura)) return;
@@ -555,7 +579,9 @@ export default function CobroDetalle() {
                     <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
                     <td className="table-td">{f.archivo ? <FileLink archivo={f.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
                     <td className="table-td text-right">
-                      {puedeMarcarseEnviada(f.estado_factura) ? (
+                      {!esFacturaActiva(f) ? (
+                        <span className="text-slate-400 text-xs">Anulada</span>
+                      ) : puedeMarcarseEnviada(f.estado_factura) ? (
                         <button
                           type="button"
                           onClick={() => marcarFacturaEnviada(f)}
@@ -568,6 +594,17 @@ export default function CobroDetalle() {
                         <span className="text-emerald-700 text-xs font-medium">✓ Enviada</span>
                       ) : (
                         <span className="text-slate-300">—</span>
+                      )}
+                      {puedeAnularFacturas && esFacturaActiva(f) && (
+                        <>
+                          <span className="text-slate-300 mx-1.5">·</span>
+                          <button
+                            type="button"
+                            onClick={() => abrirAnular(f)}
+                            className="text-ember-700 text-xs hover:underline"
+                            title="Anular esta factura para poder emitir una nueva"
+                          >Anular</button>
+                        </>
                       )}
                       {esSuperAdmin && (
                         <>
@@ -835,6 +872,45 @@ export default function CobroDetalle() {
           }
         }}
       />
+
+      {/* Anular factura: no la borra (queda como constancia con estado 'Anulada')
+          y deja libre el servicio o la cuota para emitir una nueva. */}
+      <Modal
+        open={!!facturaAAnular}
+        onClose={() => !anulando && setFacturaAAnular(null)}
+        title="Anular factura"
+        footer={<>
+          <button type="button" className="btn-secondary" onClick={() => setFacturaAAnular(null)} disabled={anulando}>Cancelar</button>
+          <button type="button" className="btn-danger" onClick={anularFactura} disabled={anulando}>
+            {anulando ? 'Anulando…' : 'Anular factura'}
+          </button>
+        </>}>
+        <div className="space-y-3 text-sm">
+          <p>
+            Se anulará la factura <span className="font-mono font-semibold">{facturaAAnular?.numero_factura}</span>
+            {facturaAAnular?.id_cuota
+              ? <> de la <strong>cuota N° {facturaAAnular?.cuota?.numero_cuota ?? '?'}</strong></>
+              : <> (cobertura <strong>general</strong>)</>}
+            {facturaAAnular?.estado_factura === ESTADO_FACTURA_ENVIADA && <>, que ya figura como <strong>Enviada</strong> al cliente</>}.
+          </p>
+          <p className="text-slate-600">
+            La factura se conserva como constancia con estado <span className="badge-gray">Anulada</span> y
+            {facturaAAnular?.id_cuota ? ' esa cuota' : ' el servicio'} vuelve a quedar disponible para emitir una nueva factura.
+            La anulación no se puede revertir.
+          </p>
+          <div>
+            <label className="label">Motivo de la anulación *</label>
+            <textarea
+              className="textarea"
+              rows={3}
+              value={motivoAnulacion}
+              onChange={e => setMotivoAnulacion(e.target.value)}
+              placeholder="Ej.: error en el RUC del cliente, monto incorrecto, nota de crédito emitida…"
+            />
+            <p className="text-[11px] text-slate-500 mt-1">Queda registrado en la auditoría junto con el usuario y la fecha.</p>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

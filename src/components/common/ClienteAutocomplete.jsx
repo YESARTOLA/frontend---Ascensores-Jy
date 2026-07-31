@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { usePopupAnclado } from '../../utils/usePopupAnclado.js';
 
 /**
  * Combobox de cliente con búsqueda por texto. Reemplaza `<select>` cuando la
@@ -33,6 +35,7 @@ export default function ClienteAutocomplete({
   const [focusIdx, setFocusIdx] = useState(0);
   const inputRef = useRef(null);
   const contenedorRef = useRef(null);
+  const popupRef = useRef(null);
 
   // Sincronizar query con el cliente seleccionado externamente (value externo manda)
   const clienteSel = useMemo(
@@ -43,11 +46,13 @@ export default function ClienteAutocomplete({
     if (!abierto) setQuery(clienteSel ? labelDe(clienteSel) : '');
   }, [clienteSel, abierto]);
 
-  // Cerrar al hacer click fuera
+  // Cerrar al hacer click fuera (el panel vive en un portal, hay que excluirlo).
   useEffect(() => {
     if (!abierto) return;
     const handler = (e) => {
-      if (contenedorRef.current && !contenedorRef.current.contains(e.target)) {
+      const dentroInput = contenedorRef.current && contenedorRef.current.contains(e.target);
+      const dentroPanel = popupRef.current && popupRef.current.contains(e.target);
+      if (!dentroInput && !dentroPanel) {
         setAbierto(false);
         setQuery(clienteSel ? labelDe(clienteSel) : '');
       }
@@ -71,6 +76,10 @@ export default function ClienteAutocomplete({
     if (allowEmpty) return [{ id: '', __empty: true, nombre: emptyLabel }, ...limitado];
     return limitado;
   }, [clientes, query, allowEmpty, emptyLabel]);
+
+  // El panel se portalea a document.body: dentro de una `.card` (backdrop-blur)
+  // quedaría detrás de la tarjeta siguiente. Se reposiciona al cambiar la lista.
+  const pos = usePopupAnclado(abierto, contenedorRef, popupRef, [opciones.length]);
 
   const seleccionar = (op) => {
     onChange(op.__empty ? '' : String(op.id));
@@ -135,10 +144,12 @@ export default function ClienteAutocomplete({
           >×</button>
         )}
       </div>
-      {abierto && opciones.length > 0 && (
+      {abierto && opciones.length > 0 && createPortal(
         <ul
           role="listbox"
-          className="absolute z-20 mt-1 left-0 right-0 max-h-64 overflow-y-auto rounded-lg bg-white shadow-panel ring-1 ring-carbon-200 py-1 scroll-thin"
+          ref={popupRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+          className="z-[60] max-h-64 overflow-y-auto rounded-lg bg-white shadow-panel ring-1 ring-carbon-200 py-1 scroll-thin"
         >
           {opciones.map((op, idx) => (
             <li
@@ -173,12 +184,17 @@ export default function ClienteAutocomplete({
               )}
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body
       )}
-      {abierto && opciones.length === 0 && (
-        <div className="absolute z-20 mt-1 left-0 right-0 rounded-lg bg-white shadow-panel ring-1 ring-carbon-200 px-3 py-2 text-sm text-carbon-500">
+      {abierto && opciones.length === 0 && createPortal(
+        <div
+          ref={popupRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+          className="z-[60] rounded-lg bg-white shadow-panel ring-1 ring-carbon-200 px-3 py-2 text-sm text-carbon-500">
           Sin coincidencias
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

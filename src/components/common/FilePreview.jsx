@@ -33,6 +33,28 @@ function iconoTipo(tipo) {
   );
 }
 
+/**
+ * Descarga directa de un archivo del backend, sin abrir el preview.
+ * Acepta el objeto del backend ({ruta_almacenamiento, nombre_original}) o
+ * {url, name}. Para archivos grandes no se pasa por un blob: el backend
+ * responde a `?download=1&n=<filename>` con una URL firmada que fuerza la
+ * descarga (Content-Disposition: attachment).
+ */
+export function descargarArchivo(archivo) {
+  if (!archivo) return;
+  const url = archivo.url || (archivo.ruta_almacenamiento ? assetUrl(archivo.ruta_almacenamiento) : null);
+  if (!url) return;
+  const name = archivo.name || archivo.nombre_original || 'archivo';
+  const sep = url.includes('?') ? '&' : '?';
+  const a = document.createElement('a');
+  a.href = `${url}${sep}download=1&n=${encodeURIComponent(name)}`;
+  a.download = name;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function PreviewModal({ file, onClose }) {
   const [imgZoom, setImgZoom] = useState(false);
 
@@ -52,20 +74,7 @@ function PreviewModal({ file, onClose }) {
   const { url, name, mime } = file;
   const tipo = detectarTipo(name, mime);
 
-  const descargar = () => {
-    // Para videos / archivos grandes evitamos cargar todo el contenido al blob
-    // del navegador. El backend soporta `?download=1&n=<filename>` y devuelve
-    // un redirect a una URL firmada con Content-Disposition: attachment.
-    const sep = url.includes('?') ? '&' : '?';
-    const downloadUrl = `${url}${sep}download=1&n=${encodeURIComponent(name || 'archivo')}`;
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = name || 'archivo';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  };
+  const descargar = () => descargarArchivo({ url, name });
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center">

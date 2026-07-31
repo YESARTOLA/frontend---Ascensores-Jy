@@ -221,6 +221,11 @@ export default function ServicioDetalle() {
   const [openDuracion, setOpenDuracion] = useState(false);
   const [duracionForm, setDuracionForm] = useState(1);
   const [guardandoDuracion, setGuardandoDuracion] = useState(false);
+  // Datos de apoyo que carga el coordinador en el card "Datos": contacto en
+  // sitio (nombre + teléfono) y si el edificio tiene cuarto de máquinas.
+  const [openDatos, setOpenDatos] = useState(false);
+  const [datosForm, setDatosForm] = useState({ contacto_nombre: '', contacto_telefono: '', cuarto_maquinas: '' });
+  const [guardandoDatos, setGuardandoDatos] = useState(false);
   const [openProgramar, setOpenProgramar] = useState(false);
   const [programarForm, setProgramarForm] = useState({ fecha_programada: '', hora_programada: '' });
   const [guardandoProgramar, setGuardandoProgramar] = useState(false);
@@ -260,7 +265,16 @@ export default function ServicioDetalle() {
   const puedeRevisar = s.estado_servicio === 'En revisión administrativa' && (esSuperAdmin || esAdmin || user.rol_codigo === 'contabilidad');
   const puedePromover = s.estado_servicio === 'Borrador' && (esSuperAdmin || esAdmin || esCoordinador);
   const puedeGestionarEntregas = (esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio);
-  const puedeEditarServicio = (esSuperAdmin || esAdmin) && esServicioEditable(s.estado_servicio);
+  // Los mantenimientos generados por un PLAN no se editan desde el formulario de
+  // Proyectos: ese modal solo ofrece subtipos de Proyectos y guardar reclasificaría
+  // el registro (el backend deriva `tipo_registro` del subtipo). Su precio se
+  // corrige desde el plan (Mantenimientos → detalle → Precio) y la fecha con
+  // "Reprogramar".
+  const esMantenimientoDePlan = !!s.id_mantenimiento_plan;
+  // Reprogramar sí aplica a los mantenimientos del plan (mueve la fecha de esa
+  // ocurrencia); la edición libre del formulario de Proyectos, no.
+  const puedeReprogramar = (esSuperAdmin || esAdmin) && esServicioEditable(s.estado_servicio);
+  const puedeEditarServicio = puedeReprogramar && !esMantenimientoDePlan;
   const esTecnicoResponsable = esTecnico && s.asignaciones?.some(a =>
     a.id_tecnico === user.id_tecnico && (a.responsable_documentacion || s.asignaciones.length === 1));
   const guiasBloqueadasPorEstado = esServicioPostRevision(s.estado_servicio);
@@ -288,6 +302,41 @@ export default function ServicioDetalle() {
     && ['En camino', 'En curso'].includes(s.estado_servicio);
   const puedeEditarDuracion = (esSuperAdmin || esAdmin) && !!s.fecha_programada
     && ESTADOS_DURACION_EDITABLE.includes(s.estado_servicio);
+
+  // El coordinador (además de admin/super_admin) mantiene los datos de apoyo del
+  // servicio mientras no esté cancelado: son información para el técnico, no
+  // tocan precios, fechas ni estados.
+  const puedeEditarDatosContacto = (esSuperAdmin || esAdmin || esCoordinador) && s.estado_servicio !== 'Cancelado';
+  // Técnicos asignados al servicio, con el responsable principal primero.
+  const tecnicosAsignados = [...(s.asignaciones || [])].sort(
+    (a, b) => (b.responsable_principal || 0) - (a.responsable_principal || 0)
+  );
+
+  const iniciarEditarDatos = () => {
+    setDatosForm({
+      contacto_nombre: s.contacto_nombre || '',
+      contacto_telefono: s.contacto_telefono || '',
+      cuarto_maquinas: s.cuarto_maquinas || ''
+    });
+    setOpenDatos(true);
+  };
+
+  const guardarDatos = async (e) => {
+    e?.preventDefault?.();
+    setGuardandoDatos(true);
+    try {
+      await serviciosService.setDatosContacto(id, {
+        contacto_nombre: datosForm.contacto_nombre.trim(),
+        contacto_telefono: datosForm.contacto_telefono.trim(),
+        cuarto_maquinas: datosForm.cuarto_maquinas
+      });
+      toast.success('Datos guardados');
+      setOpenDatos(false);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al guardar los datos');
+    } finally { setGuardandoDatos(false); }
+  };
 
   const iniciarAsignar = () => {
     setAsignaciones(s.asignaciones?.map(a => ({
@@ -747,7 +796,10 @@ export default function ServicioDetalle() {
           <>
             <button type="button" onClick={volver} className="btn-secondary">← Volver</button>
             {puedeEditarServicio && <button type="button" onClick={() => navigate(`/servicios?edit=${s.id}`)} className="btn-secondary">Editar</button>}
-            {puedeEditarServicio && <button type="button" onClick={abrirProgramar} className={s.fecha_programada ? 'btn-secondary' : 'btn-primary'}>{s.fecha_programada ? 'Reprogramar' : 'Programar fecha'}</button>}
+            {puedeReprogramar && <button type="button" onClick={abrirProgramar} className={s.fecha_programada ? 'btn-secondary' : 'btn-primary'}>{s.fecha_programada ? 'Reprogramar' : 'Programar fecha'}</button>}
+            {esMantenimientoDePlan && (esSuperAdmin || esAdmin) && (
+              <Link to="/mantenimientos" className="btn-secondary">Ver plan</Link>
+            )}
             {puedeEditarDuracion && <button type="button" onClick={abrirDuracion} className="btn-secondary">Duración ({s.duracion_dias || 1} día{(s.duracion_dias || 1) > 1 ? 's' : ''})</button>}
             {puedePromover && <button onClick={promover} className="btn-primary">Promover borrador</button>}
             {puedeAsignar && <button onClick={iniciarAsignar} className="btn-secondary">Asignar / Checklist</button>}
@@ -772,17 +824,30 @@ export default function ServicioDetalle() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="card">
-          <div className="card-header"><h3 className="card-title">Datos</h3><span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span></div>
+          <div className="card-header">
+            <h3 className="card-title">Datos</h3>
+            <div className="flex items-center gap-2">
+              {puedeEditarDatosContacto && (
+                <button onClick={iniciarEditarDatos} className="btn-secondary !py-1 !px-2.5 !text-xs inline-flex items-center gap-1"
+                  title="Contacto en sitio y cuarto de máquinas">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                  Editar datos
+                </button>
+              )}
+              <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
+            </div>
+          </div>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
             <Info label="Tipo" value={s.tipo_registro} />
-            <Info label="Origen" value={
+            {/* El técnico no ve nada de la cotización: ni el código, ni el enlace,
+                ni la mención del origen. Solo ve los ítems y las fotos (más abajo). */}
+            {!(esTecnico && s.cotizacion) && <Info label="Origen" value={
               s.cotizacion
-                ? (esTecnico
-                    // El técnico no ve la cotización: se muestra el origen sin enlace ni código.
-                    ? <span className="text-slate-800">Cotización</span>
-                    : <Link to={`/cotizaciones/${s.cotizacion.id}`} className="text-brand-700 hover:underline font-mono">
-                        {s.cotizacion.codigo}
-                      </Link>)
+                ? <Link to={`/cotizaciones/${s.cotizacion.id}`} className="text-brand-700 hover:underline font-mono">
+                    {s.cotizacion.codigo}
+                  </Link>
                 : s.mantenimiento_plan
                   ? <span className="inline-flex items-center gap-1">
                       <span className="text-slate-800">Plan #{s.mantenimiento_plan.id}</span>
@@ -800,7 +865,7 @@ export default function ServicioDetalle() {
                           <span className={`text-[10px] ${s.correctivo.nivel_urgencia === 'alta' ? 'badge-red' : s.correctivo.nivel_urgencia === 'media' ? 'badge-amber' : 'badge-gray'}`}>{s.correctivo.nivel_urgencia}</span>
                         </span>
                       : <span className="capitalize">{s.origen}</span>
-            } />
+            } />}
             <Info label="Fecha programada" value={s.fecha_programada
               ? `${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`.trim()
               : <span className="text-amber-600">Sin programar</span>} />
@@ -829,6 +894,55 @@ export default function ServicioDetalle() {
                 ? <span className="badge-green">{s.es_mantenimiento_gratuito === 1 ? 'Sin costo (mantenimiento gratuito)' : 'Sin costo (cliente con cobertura)'}</span>
                 : <span className="font-mono">{formatMonto(s.precio_interno, s.moneda)}</span>
             } cols={2} />}
+            <Info label="Contacto" value={
+              (s.contacto_nombre || s.contacto_telefono)
+                ? <div className="space-y-0.5">
+                    {s.contacto_nombre && <div>{s.contacto_nombre}</div>}
+                    {s.contacto_telefono && (
+                      <a href={`tel:${s.contacto_telefono}`} className="text-brand-700 hover:underline font-mono text-xs">
+                        {s.contacto_telefono}
+                      </a>
+                    )}
+                    <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="Editar" />
+                  </div>
+                : <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="+ Agregar" />
+            } />
+            <Info label="Cuarto de máquinas" value={
+              s.cuarto_maquinas
+                ? <div className="space-y-0.5">
+                    <div>
+                      <span className={s.cuarto_maquinas === 'Si' ? 'badge-green' : 'badge-gray'}>
+                        {s.cuarto_maquinas === 'Si' ? 'Sí' : 'No'}
+                      </span>
+                    </div>
+                    <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="Editar" />
+                  </div>
+                : <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="+ Agregar" />
+            } />
+            <Info label={tecnicosAsignados.length > 1 ? `Técnicos asignados · ${tecnicosAsignados.length}` : 'Técnico asignado'} value={
+              tecnicosAsignados.length === 0
+                ? <span className="inline-flex items-center gap-2">
+                    <span className="text-amber-600">Sin asignar</span>
+                    {puedeAsignar && (
+                      <button onClick={iniciarAsignar} className="text-xs text-brand-700 hover:underline font-medium">
+                        Asignar técnico
+                      </button>
+                    )}
+                  </span>
+                : <div className="space-y-0.5">
+                    {tecnicosAsignados.map(a => (
+                      <div key={a.id} className="flex items-center gap-2">
+                        <span>{a.tecnico?.nombre}</span>
+                        {a.responsable_principal === 1 && <span className="badge-blue text-[10px]">Principal</span>}
+                      </div>
+                    ))}
+                    {puedeAsignar && (
+                      <button onClick={iniciarAsignar} className="text-xs text-brand-700 hover:underline font-medium">
+                        Cambiar asignación
+                      </button>
+                    )}
+                  </div>
+            } cols={2} />
             <Info label="Descripción" value={s.descripcion || '—'} cols={2} />
             <Info label="Observaciones" value={s.observaciones || '—'} cols={2} />
             <UbicacionCliente edificio={(s.ascensores || []).map(a => a.ascensor?.edificio).find(Boolean)} />
@@ -859,6 +973,39 @@ export default function ServicioDetalle() {
           </div>
         </div>
 
+        {/* Adjuntos de la cotización de origen. El técnico no accede a la
+            cotización, pero sí necesita ver las fotos que se adjuntaron ahí
+            (a él se le muestran solo imágenes, no documentos). */}
+        {(() => {
+          const adjuntos = (s.cotizacion?.archivos || []).filter(a => a.archivo);
+          const esImagen = a => (a.archivo.mime_type || '').startsWith('image/');
+          const visibles = esTecnico ? adjuntos.filter(esImagen) : adjuntos;
+          if (visibles.length === 0) return null;
+          return (
+            <div className="card lg:col-span-3">
+              <div className="card-header">
+                <h3 className="card-title">{esTecnico ? 'Fotos de referencia' : 'Adjuntos de la cotización'} · {visibles.length}</h3>
+              </div>
+              <div className="card-body">
+                <div className="flex flex-wrap gap-3">
+                  {visibles.map(a => esImagen(a)
+                    ? <a key={a.id} href={assetUrl(a.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer"
+                         title={a.archivo.nombre_original} className="shrink-0">
+                        <img src={assetUrl(a.archivo.ruta_almacenamiento)} alt={a.archivo.nombre_original}
+                             className="h-28 w-28 object-cover rounded ring-1 ring-slate-200 hover:ring-brand-300" />
+                      </a>
+                    : <a key={a.id} href={assetUrl(a.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer"
+                         title={a.archivo.nombre_original}
+                         className="text-xs text-brand-700 hover:underline rounded ring-1 ring-slate-200 px-3 py-2 max-w-[14rem] truncate">
+                        {a.archivo.nombre_original}
+                      </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Ítems de la cotización de origen con su foto. El backend ya los envía
             (precios sanitizados para el técnico); aquí el técnico asignado ve la
             foto de referencia por cada ítem del servicio. */}
@@ -871,11 +1018,11 @@ export default function ServicioDetalle() {
           return (
             <div className="card lg:col-span-3">
               <div className="card-header">
-                <h3 className="card-title">Ítems de la cotización · {itemsCot.length}</h3>
+                <h3 className="card-title">{esTecnico ? 'Ítems a atender' : 'Ítems de la cotización'} · {itemsCot.length}</h3>
                 {!esTecnico && cotOrigen?.codigo && <span className="text-xs text-slate-500 font-mono">{cotOrigen.codigo}</span>}
               </div>
               <div className="card-body">
-                <p className="text-xs text-slate-500 mb-3">Detalle de lo cotizado y la foto de referencia de cada ítem.</p>
+                <p className="text-xs text-slate-500 mb-3">{esTecnico ? 'Trabajo a realizar y la foto de referencia de cada ítem.' : 'Detalle de lo cotizado y la foto de referencia de cada ítem.'}</p>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {itemsCot.map(it => (
                     <div key={it.id} className="rounded-lg ring-1 ring-slate-100 p-3 flex gap-3">
@@ -1640,7 +1787,61 @@ export default function ServicioDetalle() {
         </form>
       </Modal>
 
+      {/* Datos de apoyo que carga el coordinador para el técnico: a quién
+          contactar en sitio y si el edificio tiene cuarto de máquinas. */}
+      <Modal open={openDatos} onClose={() => setOpenDatos(false)} title="Datos del servicio"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setOpenDatos(false)} disabled={guardandoDatos}>Cancelar</button>
+          <button className="btn-primary" onClick={guardarDatos} disabled={guardandoDatos}>
+            {guardandoDatos ? 'Guardando…' : 'Guardar'}
+          </button>
+        </>}>
+        <form onSubmit={guardarDatos} className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="label">Nombre de contacto</label>
+              <input className="input" maxLength={150} placeholder="Ej. Juan Pérez (conserje)"
+                value={datosForm.contacto_nombre}
+                onChange={e => setDatosForm(f => ({ ...f, contacto_nombre: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Teléfono de contacto</label>
+              <input className="input" maxLength={30} placeholder="Ej. 999 888 777"
+                value={datosForm.contacto_telefono}
+                onChange={e => setDatosForm(f => ({ ...f, contacto_telefono: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <label className="label">Cuarto de máquinas</label>
+            <select className="select" value={datosForm.cuarto_maquinas}
+              onChange={e => setDatosForm(f => ({ ...f, cuarto_maquinas: e.target.value }))}>
+              <option value="">— Sin definir —</option>
+              <option value="Si">Sí</option>
+              <option value="No">No</option>
+            </select>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            El técnico asignado se gestiona desde <strong>Asignar / Checklist</strong> y se muestra en este mismo card.
+          </p>
+        </form>
+      </Modal>
+
     </>
+  );
+}
+
+/**
+ * Atajo al modal de datos desde el propio campo del card "Datos": "+ Agregar"
+ * cuando está vacío y "Editar" cuando ya tiene valor, para no depender de que
+ * el usuario descubra el botón de la cabecera. Sin permiso de edición, un campo
+ * vacío se ve como el guion habitual y uno lleno no muestra acción.
+ */
+function AccionDato({ onClick, habilitado, texto }) {
+  if (!habilitado) return texto === 'Editar' ? null : '—';
+  return (
+    <button onClick={onClick} className="text-xs text-brand-700 hover:underline font-medium">
+      {texto}
+    </button>
   );
 }
 

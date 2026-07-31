@@ -21,6 +21,7 @@ import PadreTabs from '../components/common/PadreTabs.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import Combobox from '../components/common/Combobox.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO, addDaysYMD, nombreEdificioDeAscensores } from '../utils/formatters.js';
 import { usePersistentState } from '../utils/usePersistentState.js';
 import CuotasEditor, { planCuotasInicial, planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
@@ -110,7 +111,7 @@ export default function Cotizaciones() {
   const [igvTasa, setIgvTasa] = useState(0.18);
   const [validezDefaultDias, setValidezDefaultDias] = useState(15);
   // Filtros persistidos: siguen activos al abrir una cotización y volver.
-  const [filtros, setFiltros] = usePersistentState('cotizaciones:filtros', { q: '', estado_global: '', id_cliente: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
+  const [filtros, setFiltros] = usePersistentState('cotizaciones:filtros', { q: '', estado_global: '', id_cliente: '', id_ascensor: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
   // Estados posibles según el backend (SSoT). Se cargan una vez al montar.
   const [estadosGlobales, setEstadosGlobales] = useState([]);
   // Filtros "virtuales" (p.ej. 'Aprobadas' = todas las aceptadas, incluidas las
@@ -379,6 +380,22 @@ export default function Cotizaciones() {
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
     : [];
 
+  // Opciones del filtro por ascensor: acotadas al cliente filtrado (si lo hay)
+  // para no listar todo el parque cuando ya se eligió cliente. Se alimentan a un
+  // Combobox (buscable) porque el parque es grande para un select plano.
+  const opcionesAscensor = useMemo(() => {
+    const lista = filtros.id_cliente
+      ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(filtros.id_cliente))
+      : ascensores;
+    return lista.map(a => ({
+      value: String(a.id),
+      label: a.codigo,
+      // Se busca también por edificio/ubicación/cliente, no solo por código.
+      sublabel: [a.edificio?.nombre, a.ubicacion, !filtros.id_cliente ? a.edificio?.cliente?.nombre : null]
+        .filter(Boolean).join(' · ')
+    }));
+  }, [ascensores, filtros.id_cliente]);
+
   // Subtipo elegido: en correctivos la foto de cada ítem es obligatoria.
   const subtipoSel = tipos.find(t => String(t.id) === String(form.id_subtipo_servicio));
   const esCorrectivo = subtipoSel?.modulo_asociado === 'correctivo';
@@ -611,10 +628,19 @@ export default function Cotizaciones() {
           <ClienteAutocomplete
             clientes={clientes}
             value={filtros.id_cliente}
-            onChange={id => setFiltros(f => ({ ...f, id_cliente: id }))}
+            // Al cambiar de cliente se limpia el ascensor: el elegido ya no
+            // pertenece necesariamente al nuevo cliente.
+            onChange={id => setFiltros(f => ({ ...f, id_cliente: id, id_ascensor: '' }))}
             placeholder="Cliente (buscar…)"
             allowEmpty
             emptyLabel="Todos los clientes"
+          />
+          <Combobox
+            options={opcionesAscensor}
+            value={filtros.id_ascensor}
+            onChange={id => setFiltros(f => ({ ...f, id_ascensor: id == null ? '' : String(id) }))}
+            placeholder="Ascensor (buscar…)"
+            emptyLabel="Sin ascensores que coincidan"
           />
           <input type="date" className="input" value={filtros.desde} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} />
           <input type="date" className="input" value={filtros.hasta} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} />

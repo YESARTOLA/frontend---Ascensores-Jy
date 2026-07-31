@@ -6,26 +6,58 @@ import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
-import { FileLink } from '../components/common/FilePreview.jsx';
+import { FileLink, descargarArchivo } from '../components/common/FilePreview.jsx';
+import Modal from '../components/common/Modal.jsx';
+import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
-import { ESTADOS_FACTURA, ESTADO_FACTURA_SIN } from '../utils/estadoFactura.js';
+import { ESTADOS_FACTURA, ESTADO_FACTURA_SIN, ESTADO_FACTURA_ENVIADA, esFacturaActiva } from '../utils/estadoFactura.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 
 const FILTROS_INICIALES = {
-  q: '', id_cliente: '', estado_factura: '', cobertura: '', desde: '', hasta: '',
+  q: '', id_cliente: '', estado_factura: '', cobertura: '', tipo_categoria: '', desde: '', hasta: '',
   // Orden por defecto: correlativo (id) ascendente → el 1 arriba.
   sort: 'correlativo', dir: 'asc'
+};
+
+// Tipo de servicio facturado (espejo del filtro de Cobros).
+const TIPOS_SERVICIO = [
+  { value: 'preventivo', label: 'Preventivo (mantenimiento)' },
+  { value: 'correctivo', label: 'Correctivo' },
+  { value: 'proyecto', label: 'Proyecto' }
+];
+
+// RUC / DNI del cliente, tal como se busca y se muestra.
+const docCliente = (cliente) => {
+  if (!cliente?.numero_documento) return '';
+  return `${cliente.tipo_documento || ''} ${cliente.numero_documento}`.trim();
+};
+
+// La factura no guarda moneda: la hereda del cobro y, si no lo hay, del servicio.
+const monedaDe = (f) => f.cobro?.moneda || f.servicio?.moneda || 'PEN';
+
+// Categoría legible del servicio facturado (misma clasificación que el filtro).
+const etiquetaTipoServicio = (f) => {
+  if (!f.servicio) return f.mantenimiento_plan ? 'Preventivo' : '';
+  if (f.servicio.tipo_registro === 'proyecto') return 'Proyecto';
+  const modulo = f.servicio.tipo_servicio?.modulo_asociado;
+  if (modulo === 'correctivo') return 'Correctivo';
+  if (modulo === 'mantenimiento') return 'Preventivo';
+  return f.servicio.tipo_servicio?.nombre || '';
 };
 
 // Columnas del export (espejo de la tabla, sin la columna de archivo).
 const COLUMNAS_EXPORT = [
   { header: '#', get: (_f, i) => i + 1 },
+  { header: 'Emisión', get: f => formatFecha(f.fecha_emision) },
   { header: 'Número', get: f => f.numero_factura },
   { header: 'Cliente', get: f => f.cliente?.nombre },
+  { header: 'RUC / DNI', get: f => docCliente(f.cliente) },
   { header: 'Servicio', get: f => f.servicio?.codigo },
-  { header: 'Emisión', get: f => formatFecha(f.fecha_emision) },
-  { header: 'Monto', align: 'right', get: f => formatMonto(f.monto) },
+  { header: 'Tipo de servicio', get: f => etiquetaTipoServicio(f) },
+  { header: 'Inicio servicio', get: f => (f.fecha_inicio_servicio ? formatFecha(f.fecha_inicio_servicio) : '') },
+  { header: 'Monto', align: 'right', get: f => formatMonto(f.monto, monedaDe(f)) },
   { header: 'Cobertura', get: f => (f.id_cuota ? `Cuota N° ${f.cuota?.numero_cuota ?? '?'}` : 'General') },
   { header: 'Estado', badge: true, get: f => f.estado_factura }
 ];
@@ -57,10 +89,35 @@ export default function Facturas() {
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
   const [clientes, setClientes] = useState([]);
   const [exportando, setExportando] = useState(false);
+  // Anulación: deja la factura como constancia y libera el servicio/cuota para
+  // emitir una nueva (que se emite desde el cobro, donde vive el formulario).
+  const [facturaAAnular, setFacturaAAnular] = useState(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState('');
+  const [anulando, setAnulando] = useState(false);
+  // Detalle de la factura (se abre desde su número) con descarga del comprobante.
+  const [facturaDetalle, setFacturaDetalle] = useState(null);
   const toast = useToast();
+  const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
+  const puedeAnular = esSuperAdmin || esAdmin || esContabilidad;
 
-  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize } =
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(facturasService.paginate, filtros, { initialPageSize: 25 });
+
+  const anularFactura = async () => {
+    if (!facturaAAnular) return;
+    if (!motivoAnulacion.trim()) return toast.error('Indica el motivo de la anulación');
+    setAnulando(true);
+    try {
+      await facturasService.anular(facturaAAnular.id, motivoAnulacion.trim());
+      toast.success(`Factura ${facturaAAnular.numero_factura} anulada. Emite la nueva desde el cobro.`);
+      setFacturaAAnular(null);
+      recargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al anular la factura');
+    } finally {
+      setAnulando(false);
+    }
+  };
 
   useEffect(() => { clientesService.list().then(setClientes).catch(() => setClientes([])); }, []);
 
@@ -72,6 +129,7 @@ export default function Facturas() {
     if (filtros.q) p.push(`Búsqueda: ${filtros.q}`);
     if (filtros.id_cliente) p.push(`Cliente: ${clientes.find(c => String(c.id) === String(filtros.id_cliente))?.nombre || filtros.id_cliente}`);
     if (filtros.estado_factura) p.push(`Estado: ${filtros.estado_factura}`);
+    if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_SERVICIO.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
     if (filtros.cobertura) p.push(`Cobertura: ${filtros.cobertura === 'cuota' ? 'Por cuota' : 'General'}`);
     if (filtros.desde) p.push(`Emisión desde: ${filtros.desde}`);
     if (filtros.hasta) p.push(`Emisión hasta: ${filtros.hasta}`);
@@ -127,12 +185,22 @@ export default function Facturas() {
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input lg:col-span-2"
-            placeholder="Buscar por número, cliente o código de servicio…"
+            placeholder="Buscar por número, RUC/DNI, cliente o código de servicio…"
             value={filtros.q}
             onChange={e => setF('q', e.target.value)} />
-          <select className="select" value={filtros.id_cliente} onChange={e => setF('id_cliente', e.target.value)}>
-            <option value="">Todos los clientes</option>
-            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          {/* Desplegable buscable de clientes registrados (filtra por nombre,
+              RUC/DNI o teléfono) en lugar de un select con toda la cartera. */}
+          <ClienteAutocomplete
+            clientes={clientes}
+            value={filtros.id_cliente}
+            onChange={id => setF('id_cliente', id)}
+            placeholder="Cliente (buscar…)"
+            allowEmpty
+            emptyLabel="Todos los clientes"
+          />
+          <select className="select" value={filtros.tipo_categoria} onChange={e => setF('tipo_categoria', e.target.value)}>
+            <option value="">Todo tipo de servicio</option>
+            {TIPOS_SERVICIO.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
           <select className="select" value={filtros.estado_factura} onChange={e => setF('estado_factura', e.target.value)}>
             <option value="">Todos los estados</option>
@@ -160,28 +228,53 @@ export default function Facturas() {
               <table className="table-base">
                 <thead><tr>
                   <ThSort label="#" {...propsTh('correlativo')} />
+                  <ThSort label="Emisión" {...propsTh('fecha_emision')} />
                   <ThSort label="Número" {...propsTh('numero_factura')} />
                   <ThSort label="Cliente" {...propsTh('cliente')} />
                   <ThSort label="Servicio" {...propsTh('servicio')} />
-                  <ThSort label="Emisión" {...propsTh('fecha_emision')} />
+                  {/* Inicio real del servicio (o su fecha programada si aún no
+                      se inició): no es una columna de la factura, por eso no ordena. */}
+                  <th className="table-th whitespace-nowrap" title="Fecha en que se inició el servicio facturado">Inicio servicio</th>
                   <ThSort label="Monto" {...propsTh('monto', 'right')} />
                   <ThSort label="Cobertura" {...propsTh('cobertura')} />
                   <ThSort label="Estado" {...propsTh('estado_factura')} />
                   <th className="table-th">Archivo</th>
+                  <th className="table-th text-right">Acciones</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.map((f, i) => (
                     <tr key={f.id} className="table-row-hover">
                       <td className="table-td text-xs font-mono text-slate-500">{(page - 1) * pageSize + i + 1}</td>
-                      <td className="table-td font-mono text-xs">{f.numero_factura}</td>
-                      <td className="table-td text-sm">{f.cliente?.nombre}</td>
+                      <td className="table-td text-xs whitespace-nowrap">{formatFecha(f.fecha_emision)}</td>
+                      <td className="table-td">
+                        {/* El número (serie y correlativo) abre el detalle de la
+                            factura, desde donde se descarga el comprobante. */}
+                        <button
+                          type="button"
+                          onClick={() => setFacturaDetalle(f)}
+                          className="font-mono text-xs text-brand-700 hover:underline"
+                          title="Ver detalle de la factura"
+                        >{f.numero_factura}</button>
+                      </td>
+                      <td className="table-td text-sm">
+                        {f.cliente?.nombre}
+                        {docCliente(f.cliente) && <div className="text-[11px] text-slate-500 font-mono">{docCliente(f.cliente)}</div>}
+                      </td>
                       <td className="table-td">
                         {f.servicio
                           ? <Link to={`/servicios/${f.servicio.id}`} className="font-mono text-xs text-brand-700">{f.servicio.codigo}</Link>
                           : <span className="badge-blue text-[10px]">Plan de mant.{f.mantenimiento_plan ? ` #${f.mantenimiento_plan.id}` : ''}</span>}
+                        <div className="text-[11px] text-slate-500">{etiquetaTipoServicio(f)}</div>
                       </td>
-                      <td className="table-td text-xs">{formatFecha(f.fecha_emision)}</td>
-                      <td className="table-td text-right font-mono">{formatMonto(f.monto)}</td>
+                      <td className="table-td text-xs whitespace-nowrap">
+                        {f.fecha_inicio_servicio
+                          ? <span title={f.inicio_servicio_es_real ? 'Inicio real del servicio' : 'Fecha programada (el servicio aún no se inició)'}>
+                              {formatFecha(f.fecha_inicio_servicio)}
+                              {!f.inicio_servicio_es_real && <span className="text-slate-400"> (prog.)</span>}
+                            </span>
+                          : '—'}
+                      </td>
+                      <td className="table-td text-right font-mono whitespace-nowrap">{formatMonto(f.monto, monedaDe(f))}</td>
                       <td className="table-td text-xs">
                         {f.id_cuota
                           ? <span className="badge-blue">Cuota N° {f.cuota?.numero_cuota ?? '?'}</span>
@@ -189,6 +282,22 @@ export default function Facturas() {
                       </td>
                       <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
                       <td className="table-td">{f.archivo ? <FileLink archivo={f.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                      <td className="table-td text-right whitespace-nowrap">
+                        {esFacturaActiva(f)
+                          ? (puedeAnular
+                              ? <button
+                                  type="button"
+                                  onClick={() => { setMotivoAnulacion(''); setFacturaAAnular(f); }}
+                                  className="text-ember-700 text-xs hover:underline"
+                                  title="Anular esta factura para poder emitir una nueva"
+                                >Anular</button>
+                              : <span className="text-slate-300">—</span>)
+                          // Anulada: el servicio/cuota quedó libre; la nueva factura
+                          // se emite desde el cobro, que es donde vive el formulario.
+                          : f.id_cobro
+                            ? <Link to={`/cobros/${f.id_cobro}`} className="text-brand-700 text-xs hover:underline">Emitir nueva</Link>
+                            : <span className="text-slate-300">—</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -199,6 +308,111 @@ export default function Facturas() {
           </>
         )}
       </div>
+
+      {/* Detalle de la factura: se abre desde su número (serie y correlativo) y
+          permite ver o descargar el comprobante adjunto. */}
+      <Modal
+        open={!!facturaDetalle}
+        onClose={() => setFacturaDetalle(null)}
+        title={`Factura ${facturaDetalle?.numero_factura || ''}`}
+        footer={<>
+          <button type="button" className="btn-secondary" onClick={() => setFacturaDetalle(null)}>Cerrar</button>
+          {facturaDetalle?.archivo && (
+            <button type="button" className="btn-primary" onClick={() => descargarArchivo(facturaDetalle.archivo)}>
+              Descargar comprobante
+            </button>
+          )}
+        </>}>
+        {facturaDetalle && (
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <Dato label="Número (serie y correlativo)" value={<span className="font-mono">{facturaDetalle.numero_factura}</span>} />
+            <Dato label="Estado" value={<span className={badgeEstado(facturaDetalle.estado_factura)}>{facturaDetalle.estado_factura}</span>} />
+            <Dato label="Cliente" value={facturaDetalle.cliente?.nombre} cols={2} />
+            <Dato label="RUC / DNI" value={docCliente(facturaDetalle.cliente) || '—'} />
+            <Dato label="Tipo de servicio" value={etiquetaTipoServicio(facturaDetalle) || '—'} />
+            <Dato label="Servicio" value={
+              facturaDetalle.servicio
+                ? <Link to={`/servicios/${facturaDetalle.servicio.id}`} className="font-mono text-brand-700 hover:underline">{facturaDetalle.servicio.codigo}</Link>
+                : <span className="badge-blue text-[10px]">Plan de mant.{facturaDetalle.mantenimiento_plan ? ` #${facturaDetalle.mantenimiento_plan.id}` : ''}</span>
+            } />
+            <Dato label="Cobro" value={
+              facturaDetalle.id_cobro
+                ? <Link to={`/cobros/${facturaDetalle.id_cobro}`} className="text-brand-700 hover:underline">Ver cobro</Link>
+                : '—'
+            } />
+            <Dato label="Emisión" value={formatFecha(facturaDetalle.fecha_emision)} />
+            <Dato
+              label="Inicio del servicio"
+              value={facturaDetalle.fecha_inicio_servicio
+                ? `${formatFecha(facturaDetalle.fecha_inicio_servicio)}${facturaDetalle.inicio_servicio_es_real ? '' : ' (programada)'}`
+                : '—'} />
+            <Dato label="Monto" value={<span className="font-mono">{formatMonto(facturaDetalle.monto, monedaDe(facturaDetalle))}</span>} />
+            <Dato label="Cobertura" value={
+              facturaDetalle.id_cuota
+                ? <span className="badge-blue">Cuota N° {facturaDetalle.cuota?.numero_cuota ?? '?'}</span>
+                : <span className="badge-violet">General</span>
+            } />
+            <Dato label="Comprobante" cols={2} value={
+              facturaDetalle.archivo
+                ? <FileLink archivo={facturaDetalle.archivo} className="text-brand-700 hover:underline">
+                    {facturaDetalle.archivo.nombre_original || 'Ver comprobante'}
+                  </FileLink>
+                : <span className="text-slate-400">Sin comprobante adjunto</span>
+            } />
+          </div>
+        )}
+      </Modal>
+
+      {/* Anular factura: no la borra (queda como constancia con estado 'Anulada')
+          y deja libre el servicio o la cuota para emitir una nueva. */}
+      <Modal
+        open={!!facturaAAnular}
+        onClose={() => !anulando && setFacturaAAnular(null)}
+        title="Anular factura"
+        footer={<>
+          <button type="button" className="btn-secondary" onClick={() => setFacturaAAnular(null)} disabled={anulando}>Cancelar</button>
+          <button type="button" className="btn-danger" onClick={anularFactura} disabled={anulando}>
+            {anulando ? 'Anulando…' : 'Anular factura'}
+          </button>
+        </>}>
+        <div className="space-y-3 text-sm">
+          <p>
+            Se anulará la factura <span className="font-mono font-semibold">{facturaAAnular?.numero_factura}</span> de{' '}
+            <strong>{facturaAAnular?.cliente?.nombre}</strong>
+            {facturaAAnular?.id_cuota
+              ? <> (cuota N° {facturaAAnular?.cuota?.numero_cuota ?? '?'})</>
+              : <> (cobertura general)</>}
+            {facturaAAnular?.estado_factura === ESTADO_FACTURA_ENVIADA && <>, que ya figura como <strong>Enviada</strong> al cliente</>}.
+          </p>
+          <p className="text-slate-600">
+            La factura se conserva como constancia con estado <span className="badge-gray">Anulada</span> y
+            {facturaAAnular?.id_cuota ? ' esa cuota' : ' el servicio'} vuelve a quedar disponible para emitir una nueva
+            {facturaAAnular?.id_cobro ? <> desde el <Link to={`/cobros/${facturaAAnular.id_cobro}`} className="text-brand-700 underline">cobro</Link></> : null}.
+            La anulación no se puede revertir.
+          </p>
+          <div>
+            <label className="label">Motivo de la anulación *</label>
+            <textarea
+              className="textarea"
+              rows={3}
+              value={motivoAnulacion}
+              onChange={e => setMotivoAnulacion(e.target.value)}
+              placeholder="Ej.: error en el RUC del cliente, monto incorrecto, nota de crédito emitida…"
+            />
+            <p className="text-[11px] text-slate-500 mt-1">Queda registrado en la auditoría junto con el usuario y la fecha.</p>
+          </div>
+        </div>
+      </Modal>
     </>
+  );
+}
+
+// Par etiqueta/valor del detalle de factura.
+function Dato({ label, value, cols = 1 }) {
+  return (
+    <div className={cols === 2 ? 'col-span-2' : ''}>
+      <div className="text-[10px] uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="text-slate-800">{value || '—'}</div>
+    </div>
   );
 }

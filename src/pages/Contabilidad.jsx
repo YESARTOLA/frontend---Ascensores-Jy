@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { serviciosService } from '../services';
+import { serviciosService, facturasService, archivosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
+import Modal from '../components/common/Modal.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import OtModal from '../components/common/OtModal.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores, nombreEdificioDeAscensores, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
-import { ESTADOS_FACTURACION } from '../utils/estadoFactura.js';
+import { ESTADOS_FACTURACION, esFacturaActiva } from '../utils/estadoFactura.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 
 const FILTROS_INICIALES = {
@@ -36,6 +38,42 @@ const TIPOS_CATEGORIA = [
 const COBRO_CANCELADO = ['Pagado', 'Cerrado'];
 
 const EN_EJECUCION = 'En ejecución';
+
+// Estados administrativos PREVIOS a la aprobación: mientras el servicio operativo
+// esté en cualquiera de ellos no es elegible para Contabilidad. Espejo de
+// backend/utils/elegibilidadContable.js (ESTADOS_ADMIN_NO_HABILITA).
+const ESTADOS_ADMIN_NO_HABILITA = ['En ejecución', 'Pendiente revisión', 'Observado', 'Rechazado'];
+
+// ¿Se puede emitir la factura GENERAL del servicio desde esta pantalla?
+// Espejo en el front de las validaciones de facturasController.crear, para no
+// ofrecer un botón que el backend va a rechazar. El backend sigue siendo la
+// autoridad: aquí solo se decide si mostrar la acción.
+//
+// Queda fuera (se factura en otro sitio o no se factura):
+//   · mantenimientos de un PLAN → factura única por periodo, desde Cobros;
+//   · servicios marcados "Sin factura" (requiere_factura = 0) y los gratuitos;
+//   · servicios aún no aprobados por la revisión administrativa;
+//   · cobros que ya facturan POR CUOTA (la emisión va en Cobros → Por facturar);
+//   · servicios que ya tienen su factura general emitida.
+function motivoNoFacturable(r) {
+  const s = r.servicio;
+  if (!s) return 'Sin servicio asociado';
+  if (s.id_mantenimiento_plan) return 'Pertenece a un plan: se factura por el total del periodo, desde el cobro del plan';
+  if (s.estado_servicio === 'Cancelado') return 'Servicio cancelado';
+  if (s.sin_cobro === 1) return 'Servicio sin cobro (gratuito)';
+  if (s.requiere_factura === 0) return 'Marcado como "Sin factura"';
+  if (!s.id_cotizacion && ESTADOS_ADMIN_NO_HABILITA.includes(r.estado_administrativo)) {
+    return 'Aún no aprobado por la revisión administrativa';
+  }
+  const facturas = (s.cobro?.facturas || []).filter(esFacturaActiva);
+  if (facturas.some(f => f.id_cuota != null)) return 'Este cobro factura por cuota: emita desde Cobros → Por facturar';
+  if (facturas.some(f => f.id_cuota == null)) return 'Ya tiene factura emitida';
+  return null;
+}
+
+// Total cobrable del servicio: manda el monto del cobro; sin cobro creado, el
+// precio del servicio (mismo criterio que usa el backend para validar).
+const totalCobrable = (r) => Number(r.servicio?.cobro?.monto_total ?? r.servicio?.precio_interno ?? 0);
 
 // Indica si el servicio realizado es gratuito / sin cobro (presentación de
 // precio y estado de cobro distinta, alineada con la tabla).
@@ -86,9 +124,16 @@ export default function Contabilidad() {
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
   const [exportando, setExportando] = useState(false);
   const [otAbierta, setOtAbierta] = useState(null); // { numero, archivo } | null
+  // Emisión de la factura del servicio sin salir de Contabilidad.
+  const [facturando, setFacturando] = useState(null); // fila en el modal | null
+  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), monto: '', id_archivo: null });
+  const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
+  const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
+  // Mismos roles que admite la ruta de facturas en el backend.
+  const puedeFacturar = esSuperAdmin || esAdmin || esContabilidad;
 
-  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize } =
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(serviciosService.realizadosPaginate, filtros, { initialPageSize: 25 });
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
@@ -128,6 +173,66 @@ export default function Contabilidad() {
       toast.error('Error al exportar');
     } finally {
       setExportando(false);
+    }
+  };
+
+  // --- Emisión de factura desde la propia tabla -----------------------------
+
+  const abrirFacturar = (r) => {
+    setFactura({
+      numero_factura: '',
+      fecha_emision: hoyISO(),
+      monto: totalCobrable(r).toFixed(2),
+      id_archivo: null
+    });
+    setFacturando(r);
+  };
+
+  const cerrarFacturar = () => {
+    if (guardandoFactura) return;
+    setFacturando(null);
+  };
+
+  const subirArchivoFactura = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('archivo', file);
+    try {
+      const r = await archivosService.upload(fd, 'facturas');
+      setFactura(f => ({ ...f, id_archivo: r.id }));
+      toast.success('Archivo cargado');
+    } catch {
+      toast.error('Error subiendo el archivo');
+    }
+  };
+
+  const emitirFactura = async () => {
+    if (!facturando || guardandoFactura) return;
+    if (!factura.numero_factura.trim()) return toast.error('Número de factura obligatorio');
+    if (!factura.fecha_emision) return toast.error('Fecha de emisión obligatoria');
+    const monto = Number(factura.monto);
+    if (!Number.isFinite(monto) || monto < 0) return toast.error('Monto inválido');
+    const tope = totalCobrable(facturando);
+    if (tope > 0 && monto - tope > 0.01) {
+      return toast.error(`El monto no puede exceder el total del servicio (${formatMonto(tope, facturando.servicio?.moneda)})`);
+    }
+    setGuardandoFactura(true);
+    try {
+      await facturasService.create({
+        id_servicio: facturando.id_servicio,
+        numero_factura: factura.numero_factura.trim(),
+        fecha_emision: factura.fecha_emision,
+        monto,
+        id_archivo: factura.id_archivo
+      });
+      toast.success(`Factura ${factura.numero_factura.trim()} emitida`);
+      setFacturando(null);
+      recargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al emitir la factura');
+    } finally {
+      setGuardandoFactura(false);
     }
   };
 
@@ -263,6 +368,11 @@ export default function Contabilidad() {
                           {(() => { const sit = situacionPago(r); return <span className={badgeEstado(sit === 'Cancelado' ? 'Pagado' : sit === 'Pendiente' ? 'Pendiente de iniciar' : 'Sin cobro')}>{sit}</span>; })()}
                         </td>
                         <td className="table-td text-right space-x-3 whitespace-nowrap">
+                          {puedeFacturar && (motivoNoFacturable(r)
+                            ? <span className="text-slate-300 text-xs cursor-help" title={motivoNoFacturable(r)}>Facturar</span>
+                            : <button type="button" onClick={() => abrirFacturar(r)}
+                                className="text-emerald-700 text-xs font-medium hover:underline">Facturar</button>
+                          )}
                           {r.servicio?.cobro && <Link to={`/cobros/${r.servicio.cobro.id}`} className="text-brand-700 text-xs">Ir a cobro</Link>}
                           <Link to={`/servicios/${r.id_servicio}`} className="text-slate-600 text-xs">Detalle</Link>
                         </td>
@@ -277,6 +387,55 @@ export default function Contabilidad() {
           </>
         )}
       </div>
+
+      <Modal open={!!facturando} onClose={cerrarFacturar} title="Emitir factura" size="sm"
+        footer={<>
+          <button type="button" className="btn-secondary" onClick={cerrarFacturar} disabled={guardandoFactura}>Cancelar</button>
+          <button type="button" className="btn-primary" onClick={emitirFactura} disabled={guardandoFactura}>
+            {guardandoFactura ? 'Emitiendo…' : 'Emitir factura'}
+          </button>
+        </>}>
+        {facturando && (
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg bg-slate-50 ring-1 ring-slate-200 p-3 text-xs space-y-1">
+              <div><span className="text-slate-400">Cliente:</span> {facturando.servicio?.cliente?.nombre || '—'}</div>
+              <div>
+                <span className="text-slate-400">Servicio:</span>{' '}
+                <span className="font-mono text-slate-800">{facturando.servicio?.codigo}</span>
+                {' · '}{tipoServicioLabel(facturando)}
+              </div>
+              <div><span className="text-slate-400">Edificio:</span> {nombreEdificioDeAscensores(facturando.servicio) || '—'}</div>
+              <div>
+                <span className="text-slate-400">Total del servicio:</span>{' '}
+                <span className="font-mono">{formatMonto(totalCobrable(facturando), facturando.servicio?.moneda)}</span>
+              </div>
+            </div>
+            <div>
+              <label className="label">Número de factura *</label>
+              <input className="input" placeholder="F001-000XXX" value={factura.numero_factura}
+                onChange={e => setFactura(f => ({ ...f, numero_factura: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Fecha de emisión *</label>
+              <input type="date" className="input" value={factura.fecha_emision}
+                onChange={e => setFactura(f => ({ ...f, fecha_emision: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Monto *</label>
+              <input type="number" min="0" step="0.01" className="input text-right font-mono" value={factura.monto}
+                onChange={e => setFactura(f => ({ ...f, monto: e.target.value }))} />
+              <p className="text-xs text-slate-500 mt-1">
+                Precargado con el total del servicio. Puede reducirse (factura parcial), nunca excederlo.
+              </p>
+            </div>
+            <div>
+              <label className="label">Archivo de factura</label>
+              <input type="file" className="input" onChange={subirArchivoFactura} />
+              {factura.id_archivo && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <OtModal
         open={otAbierta !== null}

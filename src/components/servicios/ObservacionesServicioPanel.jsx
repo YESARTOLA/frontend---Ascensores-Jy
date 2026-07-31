@@ -231,7 +231,14 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
                         onChange={() => alternarSeleccion(o.id)}
                         aria-label={`Seleccionar observación ${o.id} para cotizar`} />
                     )}
-                    {o.cotizacion && (
+                    {o.cotizacion && esTecnico && (
+                      // El técnico no accede a la cotización: badge sin código ni enlace.
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 bg-brand-100 text-brand-800 ring-brand-200"
+                        title="Esta observación ya fue cotizada">
+                        Cotizada
+                      </span>
+                    )}
+                    {o.cotizacion && !esTecnico && (
                       <Link to={`/cotizaciones/${o.cotizacion.id}`}
                         className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 bg-brand-100 text-brand-800 ring-brand-200 hover:underline"
                         title="Esta observación ya fue jalada a una cotización">
