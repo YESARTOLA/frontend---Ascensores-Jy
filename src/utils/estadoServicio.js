@@ -86,7 +86,10 @@ export function esServicioPostRevision(estadoServicio) {
 
 // Catálogos de estados de los registros asociados a un servicio. Sirven para
 // poblar selects de filtro y para predicados (p.ej. "está cerrado").
-export const ESTADOS_EMERGENCIA = ['Reportada', 'En atención', 'Atendida', 'Cerrada'];
+// Espejo de backend/utils/estadoServicio.js. El estado de la emergencia no se
+// edita a mano: lo deriva el servicio que la atiende, así que esta lista es
+// también el recorrido posible de ese ciclo.
+export const ESTADOS_EMERGENCIA = ['Reportada', 'En atención', 'Atendida', 'Cerrada', 'Cancelada'];
 export const ESTADOS_CORRECTIVO = ['Reportado', 'En atención', 'Resuelto', 'Cerrado'];
 export const ESTADOS_ATENCION_RAPIDA = ['nueva', 'convertida', 'descartada'];
 

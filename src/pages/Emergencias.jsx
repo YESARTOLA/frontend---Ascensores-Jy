@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { emergenciasService, clientesService, ascensoresService, tecnicosService, serviciosService } from '../services';
+import { emergenciasService, clientesService, ascensoresService, tecnicosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -54,18 +54,6 @@ export default function Emergencias() {
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(emergenciasService.paginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
-
-  // Cambia la marca con/sin factura del servicio en cualquier momento (hasta que
-  // exista una factura emitida; el backend rechaza si ya la hay).
-  const toggleRequiereFactura = async (e) => {
-    if (!e.servicio) return;
-    try {
-      await serviciosService.setRequiereFactura(e.servicio.id, e.servicio.requiere_factura === 0);
-      cargar();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'No se pudo cambiar la marca de facturación');
-    }
-  };
 
   useEffect(() => {
     Promise.all([clientesService.list(), ascensoresService.list(), tecnicosService.list()])
@@ -243,17 +231,13 @@ export default function Emergencias() {
                 <th className="table-th">Fecha programada</th>
                 <th className="table-th">Fecha estimada término</th>
                 <th className="table-th">Estado</th>
-                <th className="table-th">Urgencia</th>
                 <th className="table-th">Servicio</th>
-                <th className="table-th">Ejecución</th>
                 <th className="table-th">Técnico</th>
-                <th className="table-th">Observaciones</th>
                 <th className="table-th">Adjuntos</th>
                 <th className="table-th text-right">Acciones</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {data.map(e => {
-                  const ej = e.ejecucion || {};
                   const editable = puedeEditar
                     && !esEmergenciaCerrada(e.estado_emergencia)
                     && (!e.servicio || esServicioEditable(e.servicio.estado_servicio));
@@ -271,31 +255,12 @@ export default function Emergencias() {
                     <td className="table-td text-xs">{e.servicio?.fecha_programada ? `${formatFecha(e.servicio.fecha_programada)}${e.servicio.hora_programada ? ` ${e.servicio.hora_programada}` : ''}` : '—'}</td>
                     <td className="table-td text-xs">{e.servicio?.fecha_estimada_entrega ? formatFecha(e.servicio.fecha_estimada_entrega) : '—'}</td>
                     <td className="table-td"><span className={badgeEstado(e.estado_emergencia)}>{e.estado_emergencia}</span></td>
-                    <td className="table-td"><span className={e.nivel_urgencia === 'alta' ? 'badge-red' : 'badge-amber'}>{e.nivel_urgencia}</span></td>
                     <td className="table-td">
-                      {e.servicio ? (
-                        <div className="flex items-center gap-2">
-                          <Link to={`/servicios/${e.servicio.id}`} className="font-mono text-xs text-brand-700">{e.servicio.codigo}</Link>
-                          {e.servicio.sin_cobro === 1 && <span className="badge-green text-[10px]">Sin costo</span>}
-                          {puedeEditar ? (
-                            <button type="button" onClick={() => toggleRequiereFactura(e)}
-                              title="Clic para cambiar entre con / sin factura"
-                              className={`text-[10px] cursor-pointer hover:ring-1 hover:ring-brand-300 ${e.servicio.requiere_factura === 0 ? 'badge-gray' : 'badge-blue'}`}>
-                              {e.servicio.requiere_factura === 0 ? 'Sin factura' : 'Con factura'}
-                            </button>
-                          ) : (
-                            e.servicio.requiere_factura === 0
-                              ? <span className="badge-gray text-[10px]">Sin factura</span>
-                              : <span className="badge-blue text-[10px]">Con factura</span>
-                          )}
-                        </div>
-                      ) : '—'}
+                      {e.servicio
+                        ? <Link to={`/servicios/${e.servicio.id}`} className="font-mono text-xs text-brand-700">{e.servicio.codigo}</Link>
+                        : '—'}
                     </td>
-                    <td className="table-td"><span className={badgeEstado(ej.estado_ejecucion)}>{ej.estado_ejecucion || '—'}</span></td>
                     <td className="table-td text-xs">{(e.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ') || '—'}</td>
-                    <td className="table-td text-xs text-slate-600 max-w-[16rem]">
-                      {e.observaciones || <span className="text-slate-400">—</span>}
-                    </td>
                     <td className="table-td text-xs">
                       <button
                         type="button"

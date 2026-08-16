@@ -52,6 +52,7 @@ export function AuthProvider({ children }) {
     esTecnico: rol === 'tecnico',
     esContabilidad: rol === 'contabilidad',
     esVendedora: rol === 'vendedora',
+    esCentralVentas: rol === 'central_ventas',
     puedeVerPrecio: ['super_admin', 'admin', 'contabilidad'].includes(rol),
     // Ámbito (Servicios/Proyectos) del usuario. Roles sin alcance → ambos true.
     accesoServicios: tieneAcceso(user, 'servicios'),

@@ -22,14 +22,37 @@ import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import Combobox from '../components/common/Combobox.jsx';
-import { badgeEstado, formatFecha, formatMonto, hoyISO, addDaysYMD, nombreEdificioDeAscensores } from '../utils/formatters.js';
+import DateRangePicker from '../components/common/DateRangePicker.jsx';
+import { badgeEstado, formatMonto, nombreEdificioDeAscensores, clientesConEdificios } from '../utils/formatters.js';
 import { usePersistentState } from '../utils/usePersistentState.js';
 import CuotasEditor, { planCuotasInicial, planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
-import { ESTADO_GLOBAL_ANULADO } from '../utils/estadoCotizacion.js';
+import { ESTADO_GLOBAL_ANULADO, rangoEsPorFechaAceptacion } from '../utils/estadoCotizacion.js';
 
 // La LISTA de estados del filtro no se declara aquí: se pide al backend
 // (/cotizaciones/catalogos), que es quien los escribe. Duplicarla en un literal
 // fue lo que dejó el filtro ofreciendo valores que la BD no tenía.
+
+// --- Filtro por mes -------------------------------------------------------
+// El mes NO es un parámetro propio del backend: es un atajo que rellena el
+// mismo rango desde/hasta (día 1 → último día). Así la lista se sigue pidiendo
+// con un único criterio de fecha y el calendario de rango refleja lo elegido.
+const mesARango = (mes) => {
+  if (!mes) return { desde: '', hasta: '' };
+  const [y, m] = mes.split('-').map(Number);
+  if (!y || !m) return { desde: '', hasta: '' };
+  const ultimo = new Date(y, m, 0).getDate(); // día 0 del mes siguiente = último del mes
+  const mm = String(m).padStart(2, '0');
+  return { desde: `${y}-${mm}-01`, hasta: `${y}-${mm}-${String(ultimo).padStart(2, '0')}` };
+};
+
+// Mes que representa el rango actual, o '' si el rango no es un mes completo
+// (p.ej. lo ajustaron a mano en el calendario).
+const rangoAMes = (desde, hasta) => {
+  if (!desde || !hasta) return '';
+  const mes = desde.slice(0, 7);
+  const r = mesARango(mes);
+  return r.desde === desde && r.hasta === hasta ? mes : '';
+};
 
 const itemVacio = () => ({
   descripcion: '',
@@ -37,8 +60,8 @@ const itemVacio = () => ({
   unidad: 'Unidad',
   precio_unitario: 0,
   descuento_porcentaje: 0,
-  // Foto del ítem (obligatoria en correctivos). `archivo` es el objeto subido
-  // para previsualizar; `id_archivo` es lo que se envía al backend.
+  // Foto del ítem (opcional al cotizar; obligatoria al aprobar). `archivo` es el
+  // objeto subido para previsualizar; `id_archivo` es lo que se envía al backend.
   id_archivo: null,
   archivo: null
 });
@@ -59,9 +82,10 @@ const formInicial = (preset = {}) => ({
   id_tipo_servicio: '',
   id_subtipo_servicio: preset.id_subtipo_servicio || preset.id_tipo_servicio || '',
   descripcion: '',
-  fecha_validez: '',
   moneda: 'PEN',
   observaciones: '',
+  // Texto libre de la garantía ofrecida. Sale en el PDF como "Garantía: …".
+  garantia: '',
   sin_igv: false,
   // Ids de las cuentas bancarias a adjuntar en el PDF. Por defecto se marcan
   // todas las activas al abrir el modal.
@@ -105,11 +129,13 @@ function calcImporte(it) {
 export default function Cotizaciones() {
   const [clientes, setClientes] = useState([]);
   const [ascensores, setAscensores] = useState([]);
+  // Todos los edificios/obras: solo se usan para que el buscador de cliente
+  // matchee por nombre de edificio (ver `clientesBuscables`).
+  const [edificios, setEdificios] = useState([]);
   const [edificiosCliente, setEdificiosCliente] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [cuentas, setCuentas] = useState([]);
   const [igvTasa, setIgvTasa] = useState(0.18);
-  const [validezDefaultDias, setValidezDefaultDias] = useState(15);
   // Filtros persistidos: siguen activos al abrir una cotización y volver.
   const [filtros, setFiltros] = usePersistentState('cotizaciones:filtros', { q: '', estado_global: '', id_cliente: '', id_ascensor: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
   // Estados posibles según el backend (SSoT). Se cargan una vez al montar.
@@ -118,6 +144,8 @@ export default function Cotizaciones() {
   // que ya pasaron a ejecución). También vienen del backend para no duplicarlos.
   const [filtrosGlobales, setFiltrosGlobales] = useState([]);
   const [open, setOpen] = useState(false);
+  // Sección "Cuentas bancarias en el PDF" del modal: colapsada por defecto.
+  const [cuentasAbiertas, setCuentasAbiertas] = useState(false);
   const [form, setForm] = useState(formInicial);
   // Código de la cotización origen cuando el modal se abre en modo "duplicar".
   const [duplicandoDe, setDuplicandoDe] = useState(null);
@@ -145,7 +173,6 @@ export default function Cotizaciones() {
           id_lead: searchParams.get('id_lead') ? Number(searchParams.get('id_lead')) : null,
           id_tipo_servicio: searchParams.get('id_tipo_servicio') || ''
         }),
-        fecha_validez: addDaysYMD(null, validezDefaultDias),
         cuentas_pdf: cuentas.map(c => c.id)
       });
       setOpen(true);
@@ -155,7 +182,7 @@ export default function Cotizaciones() {
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, puedeCrear, validezDefaultDias]);
+  }, [searchParams, puedeCrear]);
 
   // Abre el modal prellenado desde observaciones técnicas (?observaciones=1,2,3),
   // jaladas desde el panel de observaciones de un servicio. El backend resuelve
@@ -179,7 +206,6 @@ export default function Cotizaciones() {
             id_cliente: String(prefill.id_cliente || ''),
             ids_observaciones: prefill.items.map(it => it.id_observacion)
           }),
-          fecha_validez: addDaysYMD(null, validezDefaultDias),
           cuentas_pdf: cuentas.map(c => c.id),
           // Si el servicio cubre un solo ascensor se preselecciona; con varios se
           // deja vacío para que el admin elija cuál se cotiza.
@@ -201,7 +227,7 @@ export default function Cotizaciones() {
       })
       .catch(err => toast.error(err.response?.data?.error || 'No se pudo preparar la cotización'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, puedeCrear, validezDefaultDias]);
+  }, [searchParams, puedeCrear]);
 
   // Abre el modal prellenado desde una emergencia ya atendida (?emergencia=ID).
   // El backend valida que el servicio de la emergencia esté finalizado y sin cobro
@@ -229,7 +255,6 @@ export default function Cotizaciones() {
           // Subtipo (y su padre) heredados del servicio de la emergencia.
           id_tipo_servicio: prefill.id_tipo_servicio ? String(prefill.id_tipo_servicio) : '',
           id_subtipo_servicio: prefill.id_subtipo_servicio ? String(prefill.id_subtipo_servicio) : '',
-          fecha_validez: addDaysYMD(null, validezDefaultDias),
           moneda: prefill.moneda || 'PEN',
           cuentas_pdf: cuentas.map(c => c.id),
           ascensores: prefill.ascensor
@@ -247,7 +272,7 @@ export default function Cotizaciones() {
       })
       .catch(err => toast.error(err.response?.data?.error || 'No se pudo preparar la cotización de la emergencia'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, puedeCrear, validezDefaultDias]);
+  }, [searchParams, puedeCrear]);
 
   // Abre el modal en modo "duplicar" si llega ?duplicar=ID (p.ej. desde el detalle).
   useEffect(() => {
@@ -259,23 +284,23 @@ export default function Cotizaciones() {
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, puedeCrear, validezDefaultDias]);
+  }, [searchParams, puedeCrear]);
 
   useEffect(() => {
     Promise.all([
       clientesService.list(),
       ascensoresService.list(),
+      edificiosService.list().catch(() => []),
       tiposServicioService.list(),
       configuracionService.get('IGV_RATE').catch(() => ({ valor: 0.18 })),
-      configuracionService.get('COTIZACION_VALIDEZ_DIAS').catch(() => ({ valor: 15 })),
       cuentasBancariasService.list().catch(() => []),
       cotizacionesService.catalogos().catch(() => ({ estados_globales: [], filtros_globales: [] }))
-    ]).then(([cs, as, ts, igv, val, ctas, cat]) => {
+    ]).then(([cs, as, eds, ts, igv, ctas, cat]) => {
       setClientes(cs);
       setAscensores(as);
+      setEdificios(Array.isArray(eds) ? eds : []);
       setTipos(ts);
       setIgvTasa(Number(igv.valor) || 0.18);
-      setValidezDefaultDias(Number(val.valor) || 15);
       setCuentas(Array.isArray(ctas) ? ctas : []);
       setEstadosGlobales(cat?.estados_globales || []);
       setFiltrosGlobales(cat?.filtros_globales || []);
@@ -284,7 +309,7 @@ export default function Cotizaciones() {
 
   const abrirModal = () => {
     setDuplicandoDe(null);
-    setForm({ ...formInicial(), fecha_validez: addDaysYMD(null, validezDefaultDias), cuentas_pdf: cuentas.map(c => c.id) });
+    setForm({ ...formInicial(), cuentas_pdf: cuentas.map(c => c.id) });
     setOpen(true);
   };
 
@@ -306,12 +331,12 @@ export default function Cotizaciones() {
       descripcion: cot.descripcion || '',
       moneda: v.moneda || 'PEN',
       observaciones: v.observaciones || '',
+      garantia: v.garantia || '',
       sin_igv: !!v.sin_igv,
       // Si la original tenía selección de cuentas la copiamos; si era legacy
       // (null) marcamos todas las activas, igual que una cotización nueva.
       cuentas_pdf: Array.isArray(v.cuentas_pdf) ? v.cuentas_pdf : cuentas.map(c => c.id),
-      // Validez nueva (la original suele estar vencida) y sin adjuntos.
-      fecha_validez: addDaysYMD(null, validezDefaultDias),
+      // La copia arranca sin adjuntos.
       archivos: [],
       ascensores: (cot.ascensores || []).length
         ? cot.ascensores.map(a => a.id_ascensor
@@ -376,6 +401,15 @@ export default function Cotizaciones() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipos, form.id_subtipo_servicio]);
 
+  // Clientes con la lista de nombres de sus edificios/obras adjunta, para que el
+  // buscador de cliente encuentre por edificio ("Gardenias") y no solo por razón
+  // social. Se combinan ambas fuentes: los edificios (incluye los que aún no
+  // tienen ascensores) y el parque ya cargado.
+  const clientesBuscables = useMemo(
+    () => clientesConEdificios(clientes, { edificios, ascensores }),
+    [clientes, edificios, ascensores]
+  );
+
   const ascensoresDelCliente = form.id_cliente
     ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente))
     : [];
@@ -396,9 +430,14 @@ export default function Cotizaciones() {
     }));
   }, [ascensores, filtros.id_cliente]);
 
-  // Subtipo elegido: en correctivos la foto de cada ítem es obligatoria.
+  // Con los filtros del embudo ya aceptado ('Aceptado', 'Ejecución',
+  // 'Pendiente', 'Terminado' y el virtual 'Aprobadas') el backend aplica el
+  // rango de fechas sobre la FECHA DE ACEPTACIÓN, no sobre la de creación. Se
+  // refleja en las etiquetas para que el usuario sepa qué está acotando.
+  const rangoPorAceptacion = rangoEsPorFechaAceptacion(filtros.estado_global);
+  const etiquetaRango = rangoPorAceptacion ? 'Rango de aceptación' : 'Rango de creación';
+
   const subtipoSel = tipos.find(t => String(t.id) === String(form.id_subtipo_servicio));
-  const esCorrectivo = subtipoSel?.modulo_asociado === 'correctivo';
   // Los servicios operativos (con módulo: correctivo/emergencia/mantenimiento/…)
   // se cotizan para un solo ascensor. Los Proyectos (sin módulo) admiten varios.
   const esServicioUnAscensor = !!subtipoSel?.modulo_asociado;
@@ -501,7 +540,6 @@ export default function Cotizaciones() {
     if (!form.id_cliente) return toast.error('Selecciona un cliente');
     if (!form.id_tipo_servicio) return toast.error('Selecciona un tipo de servicio (padre)');
     if (!form.id_subtipo_servicio) return toast.error('Selecciona un subtipo de servicio');
-    if (!form.fecha_validez) return toast.error('Fecha de validez obligatoria');
     if (!form.ascensores.length) return toast.error('Agrega al menos un ascensor');
     if (esServicioUnAscensor && form.ascensores.length > 1) {
       return toast.error('Un servicio (correctivo, emergencia o mantenimiento) se cotiza para un solo ascensor.');
@@ -521,10 +559,8 @@ export default function Cotizaciones() {
     if (form.items.length === 0 || form.items.every(it => !it.descripcion.trim())) {
       return toast.error('Agrega al menos un item con descripción');
     }
-    // En correctivos, cada ítem con descripción debe tener foto.
-    if (esCorrectivo && form.items.some(it => it.descripcion.trim() && !it.id_archivo)) {
-      return toast.error('En una cotización de correctivo, cada ítem debe incluir una foto.');
-    }
+    // La foto por ítem NO se exige al cotizar (ni siquiera en correctivos): es
+    // requisito al aprobar la cotización, cuando se convierte en servicio.
 
     let payloadCuotas;
     try {
@@ -554,9 +590,9 @@ export default function Cotizaciones() {
         id_tipo_servicio: Number(form.id_tipo_servicio),
         id_subtipo_servicio: Number(form.id_subtipo_servicio),
         descripcion: form.descripcion || null,
-        fecha_validez: form.fecha_validez,
         moneda: form.moneda,
         observaciones: form.observaciones || null,
+        garantia: form.garantia || null,
         sin_igv: form.sin_igv,
         cuentas_pdf: form.cuentas_pdf,
         items: form.items
@@ -642,8 +678,22 @@ export default function Cotizaciones() {
             placeholder="Ascensor (buscar…)"
             emptyLabel="Sin ascensores que coincidan"
           />
-          <input type="date" className="input" value={filtros.desde} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} />
-          <input type="date" className="input" value={filtros.hasta} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} />
+          <input
+            type="month"
+            className="input"
+            title={rangoPorAceptacion
+              ? 'Filtrar por mes de aceptación (rellena el rango de fechas)'
+              : 'Filtrar por mes (rellena el rango de fechas)'}
+            value={rangoAMes(filtros.desde, filtros.hasta)}
+            onChange={e => setFiltros(f => ({ ...f, ...mesARango(e.target.value) }))}
+          />
+          <DateRangePicker
+            className="col-span-2"
+            desde={filtros.desde}
+            hasta={filtros.hasta}
+            onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, desde, hasta }))}
+            placeholder={etiquetaRango}
+          />
           <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer col-span-2 sm:col-span-1">
             <input
               type="checkbox"
@@ -667,7 +717,6 @@ export default function Cotizaciones() {
                     <th className="table-th">Ascensor(es)</th>
                     <th className="table-th">Tipo</th>
                     <th className="table-th">Versión</th>
-                    <th className="table-th">Validez</th>
                     <th className="table-th text-right">Monto</th>
                     <th className="table-th">Estado versión</th>
                     <th className="table-th">Estado global</th>
@@ -696,7 +745,6 @@ export default function Cotizaciones() {
                         </td>
                         <td className="table-td">{c.subtipo_servicio?.nombre || c.tipo_servicio?.nombre || '—'}</td>
                         <td className="table-td">v{v?.numero_version || c.version_activa}</td>
-                        <td className="table-td">{formatFecha(v?.fecha_validez)}</td>
                         <td className="table-td text-right">{formatMonto(v?.monto_total, v?.moneda)}</td>
                         <td className="table-td"><span className={`badge ${badgeEstado(v?.estado_version)}`}>{v?.estado_version || '—'}</span></td>
                         <td className="table-td"><span className={`badge ${badgeEstado(c.estado_global)}`}>{c.estado_global}</span></td>
@@ -801,7 +849,7 @@ export default function Cotizaciones() {
             <div>
               <label className="label">Cliente *</label>
               <ClienteAutocomplete
-                clientes={clientes}
+                clientes={clientesBuscables}
                 value={form.id_cliente}
                 onChange={id => setForm(f => ({
                   ...f,
@@ -811,7 +859,7 @@ export default function Cotizaciones() {
                   // para no perder lo que el usuario empezó a escribir en "nuevo".
                   ascensores: f.ascensores.map(a => a.modo === 'existente' ? { ...a, id_ascensor: '' } : a)
                 }))}
-                placeholder="Buscar cliente por nombre, RUC o teléfono…"
+                placeholder="Buscar por cliente, edificio/obra, RUC o teléfono…"
                 required
               />
             </div>
@@ -917,11 +965,6 @@ export default function Cotizaciones() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Validez (fecha) *</label>
-              <input type="date" className="input" value={form.fecha_validez}
-                onChange={e => setForm(f => ({ ...f, fecha_validez: e.target.value }))} />
-            </div>
-            <div>
               <label className="label">Moneda</label>
               <select className="select" value={form.moneda} onChange={e => setForm(f => ({ ...f, moneda: e.target.value }))}>
                 <option value="PEN">PEN (S/)</option>
@@ -942,7 +985,7 @@ export default function Cotizaciones() {
               <div className="col-span-2 text-right">P. unitario</div>
               <div className="col-span-1 text-right">% dscto</div>
               <div className="col-span-1 text-right">Importe</div>
-              <div className="col-span-1 text-center">Foto{esCorrectivo && <span className="text-rose-600"> *</span>}</div>
+              <div className="col-span-1 text-center">Foto</div>
               <div className="col-span-1"></div>
             </div>
             <div className="space-y-2">
@@ -967,8 +1010,8 @@ export default function Cotizaciones() {
                         onClick={() => quitarFotoItem(idx)} title="Clic para quitar la foto"
                         className="h-9 w-9 object-cover rounded ring-1 ring-slate-200 cursor-pointer" />
                     ) : (
-                      <label className={`text-[11px] cursor-pointer hover:underline ${esCorrectivo ? 'text-rose-600' : 'text-brand-700'}`}
-                        title="Subir foto del ítem">
+                      <label className="text-[11px] cursor-pointer hover:underline text-brand-700"
+                        title="Subir foto del ítem (opcional al cotizar)">
                         + Foto
                         <input type="file" accept="image/*" className="hidden" onChange={e => subirFotoItem(idx, e)} />
                       </label>
@@ -979,6 +1022,10 @@ export default function Cotizaciones() {
                 </div>
               ))}
             </div>
+            <p className="text-[11px] text-carbon-400 mt-2">
+              La foto de cada ítem es opcional al cotizar. Se exigirá al aprobar la cotización, cuando se convierte en servicio
+              (puede subirse desde el modal de aprobación).
+            </p>
           </div>
 
           <div className="flex items-center justify-end">
@@ -1012,34 +1059,66 @@ export default function Cotizaciones() {
 
           {cuentas.length > 0 && (
             <div>
-              <label className="label">Cuentas bancarias en el PDF</label>
-              <p className="text-[11px] text-slate-500 mb-2">Se imprimirán en el PDF solo las cuentas marcadas. Se gestionan en Configuración › Cuentas bancarias.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {cuentas.map(c => {
-                  const marcada = form.cuentas_pdf.includes(c.id);
-                  return (
-                    <label key={c.id} className={`flex items-start gap-2 rounded-lg ring-1 p-2.5 cursor-pointer text-sm ${marcada ? 'ring-brand-300 bg-brand-50/40' : 'ring-slate-200'}`}>
-                      <input type="checkbox" className="mt-0.5" checked={marcada}
-                        onChange={e => setForm(f => ({
-                          ...f,
-                          cuentas_pdf: e.target.checked
-                            ? [...f.cuentas_pdf, c.id]
-                            : f.cuentas_pdf.filter(id => id !== c.id)
-                        }))} />
-                      <div className="min-w-0">
-                        <div className="font-medium text-slate-800">{c.banco} <span className="text-xs text-slate-500">({c.moneda})</span></div>
-                        <div className="text-xs text-slate-500 truncate">{c.tipo_cuenta} · {c.numero_cuenta}</div>
-                        <div className="text-xs text-slate-400 truncate">{c.titular}</div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
+              {/* Sección colapsable: por defecto van marcadas todas las cuentas
+                  activas, así que en el caso normal no hay nada que tocar aquí
+                  y la lista solo alarga el formulario. */}
+              <button
+                type="button"
+                onClick={() => setCuentasAbiertas(a => !a)}
+                aria-expanded={cuentasAbiertas}
+                className="w-full flex items-center justify-between gap-2 text-left"
+              >
+                <span className="label !mb-0">Cuentas bancarias en el PDF</span>
+                <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                  {form.cuentas_pdf.length} de {cuentas.length} seleccionadas
+                  <span className={`transition-transform ${cuentasAbiertas ? 'rotate-90' : ''}`}>›</span>
+                </span>
+              </button>
+
+              {cuentasAbiertas && (
+                <>
+                  <p className="text-[11px] text-slate-500 mt-1 mb-2">Se imprimirán en el PDF solo las cuentas marcadas. Se gestionan en Configuración › Cuentas bancarias.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {cuentas.map(c => {
+                      const marcada = form.cuentas_pdf.includes(c.id);
+                      return (
+                        <label key={c.id} className={`flex items-start gap-2 rounded-lg ring-1 p-2.5 cursor-pointer text-sm ${marcada ? 'ring-brand-300 bg-brand-50/40' : 'ring-slate-200'}`}>
+                          <input type="checkbox" className="mt-0.5" checked={marcada}
+                            onChange={e => setForm(f => ({
+                              ...f,
+                              cuentas_pdf: e.target.checked
+                                ? [...f.cuentas_pdf, c.id]
+                                : f.cuentas_pdf.filter(id => id !== c.id)
+                            }))} />
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-800">{c.banco} <span className="text-xs text-slate-500">({c.moneda})</span></div>
+                            <div className="text-xs text-slate-500 truncate">{c.tipo_cuenta} · {c.numero_cuenta}</div>
+                            <div className="text-xs text-slate-400 truncate">{c.titular}</div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* El aviso se ve también con la sección colapsada: es la única
+                  pista de que el PDF saldrá sin datos para pago. */}
               {form.cuentas_pdf.length === 0 && (
                 <p className="text-[11px] text-amber-600 mt-1">Ninguna cuenta seleccionada: el PDF no incluirá la sección de datos para pago.</p>
               )}
             </div>
           )}
+
+          <div>
+            <label className="label">Garantía</label>
+            <textarea className="textarea" rows="2" value={form.garantia}
+              placeholder="Ej.: 12 meses por defectos de fabricación, contados desde la puesta en marcha."
+              onChange={e => setForm(f => ({ ...f, garantia: e.target.value }))} />
+            <p className="text-[11px] text-carbon-400 mt-1">
+              Se imprime en el PDF de la cotización como «Garantía: …». Si se deja vacío, no aparece.
+            </p>
+          </div>
 
           <div>
             <label className="label">Observaciones internas</label>

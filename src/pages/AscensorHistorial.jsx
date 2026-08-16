@@ -12,9 +12,11 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
 import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
 import AscensorForm, { ascensorToForm } from '../components/ascensores/AscensorForm.jsx';
+import { useClasificaciones } from '../hooks/useClasificaciones.js';
 
 export default function AscensorHistorial() {
   const { id } = useParams();
+  const clasificaciones = useClasificaciones();
   const location = useLocation();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -65,6 +67,9 @@ export default function AscensorHistorial() {
   if (!data) return <p>Ascensor no encontrado</p>;
 
   const { ascensor, servicios, emergencias, mantenimientos, entregas, facturas, guias, evidencias, historial } = data;
+  const clasificacionActual = ascensor.clasificacion
+    ? clasificaciones.find(c => c.codigo === ascensor.clasificacion)
+    : null;
 
   const exportarPdf = async () => {
     if (exportandoPdf) return;
@@ -113,8 +118,35 @@ export default function AscensorHistorial() {
             <Info label="Capacidad" value={ascensor.capacidad} />
             <Info label="Pisos" value={ascensor.pisos} />
             <Info label="Año" value={ascensor.anio_aproximado} />
+            <Info label="Clasificación" cols={2} value={
+              clasificacionActual
+                ? <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${clasificacionActual.color}`}>
+                    {clasificacionActual.etiqueta}
+                  </span>
+                : '—'
+            } />
             <Info label="Ubicación" value={ascensor.ubicacion} cols={2} />
             <Info label="Próx. mantenimiento" value={formatFecha(ascensor.proximo_mantenimiento)} cols={2} />
+            {/* Datos de sitio que hereda cada servicio nuevo sobre este ascensor. */}
+            <Info label="Cuarto de máquinas" value={
+              ascensor.cuarto_maquinas
+                ? <span className={ascensor.cuarto_maquinas === 'Si' ? 'badge-green' : 'badge-gray'}>
+                    {ascensor.cuarto_maquinas === 'Si' ? 'Sí' : 'No'}
+                  </span>
+                : '—'
+            } />
+            <Info label="Contacto en sitio" value={
+              (ascensor.contacto_nombre || ascensor.contacto_telefono)
+                ? <div className="space-y-0.5">
+                    {ascensor.contacto_nombre && <div>{ascensor.contacto_nombre}</div>}
+                    {ascensor.contacto_telefono && (
+                      <a href={`tel:${ascensor.contacto_telefono}`} className="text-brand-700 hover:underline font-mono text-xs">
+                        {ascensor.contacto_telefono}
+                      </a>
+                    )}
+                  </div>
+                : '—'
+            } />
             <Info label="Observaciones" value={ascensor.observaciones || '—'} cols={2} />
             <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
               <div className="flex items-center justify-between gap-2 mb-2">

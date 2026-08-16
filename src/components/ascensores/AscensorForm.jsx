@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import EdificioAutocomplete from '../common/EdificioAutocomplete.jsx';
 import { edificiosService } from '../../services';
 import { useMonedas } from '../../hooks/useMonedas.js';
+import { useClasificaciones } from '../../hooks/useClasificaciones.js';
 
 /**
  * Formulario de ascensor (alta/edición), reutilizable desde cualquier página
@@ -31,6 +32,11 @@ import { useMonedas } from '../../hooks/useMonedas.js';
 export const ascensorFormInicial = {
   id_edificio: '', codigo: '', ubicacion: '', tipo: '', marca: '', modelo: '',
   capacidad: '', pisos: '', anio_aproximado: '', estado_operativo: 'Operativo',
+  // Mismo catálogo que la clasificación del cliente, pero por ascensor.
+  clasificacion: '',
+  // Datos de sitio: los hereda cada servicio/proyecto que se cree sobre este
+  // ascensor, y son los que el técnico ve al llegar. 'Si' | 'No' | '' (sin definir).
+  cuarto_maquinas: '', contacto_nombre: '', contacto_telefono: '',
   proximo_mantenimiento: '', observaciones: '',
   precios: [] // [{ id_tipo_servicio, precio, moneda }]
 };
@@ -47,6 +53,10 @@ export function ascensorToForm(a) {
     capacidad: a.capacidad || '',
     pisos: a.pisos ?? '',
     anio_aproximado: a.anio_aproximado ?? '',
+    clasificacion: a.clasificacion || '',
+    cuarto_maquinas: a.cuarto_maquinas || '',
+    contacto_nombre: a.contacto_nombre || '',
+    contacto_telefono: a.contacto_telefono || '',
     estado_operativo: a.estado_operativo || 'Operativo',
     proximo_mantenimiento: a.proximo_mantenimiento ? String(a.proximo_mantenimiento).substring(0, 10) : '',
     observaciones: a.observaciones || '',
@@ -65,6 +75,8 @@ export default function AscensorForm({
   formId, value, onChange, onSubmit,
   tipos = [], tiposServicio = [], edificioFijo = false, edificioNombre = ''
 }) {
+  // Catálogo compartido con clientes; se pide una sola vez por sesión.
+  const clasificaciones = useClasificaciones();
   const [edificios, setEdificios] = useState([]);
   // Edificio actualmente asignado al ascensor (se trae por id para poder
   // mostrarlo aunque esté INACTIVO — la lista de búsqueda solo trae activos).
@@ -170,6 +182,14 @@ export default function AscensorForm({
         </select>
       </div>
       <div>
+        <label className="label">Clasificación</label>
+        <select className="select" value={value.clasificacion}
+          onChange={e => onChange(f => ({ ...f, clasificacion: e.target.value }))}>
+          <option value="">— Sin clasificar —</option>
+          {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>)}
+        </select>
+      </div>
+      <div>
         <label className="label">Estado</label>
         <select className="select" value={edificioInactivo ? 'Inactivo' : value.estado_operativo}
           disabled={edificioInactivo}
@@ -184,6 +204,39 @@ export default function AscensorForm({
       <div><label className="label">Año aproximado</label><input type="number" className="input" value={value.anio_aproximado} onChange={e => onChange(f => ({ ...f, anio_aproximado: e.target.value }))} /></div>
       <div><label className="label">Próximo mantenimiento</label><input type="date" className="input" value={value.proximo_mantenimiento} onChange={e => onChange(f => ({ ...f, proximo_mantenimiento: e.target.value }))} /></div>
       <div className="sm:col-span-2"><label className="label">Ubicación específica (piso / zona)</label><input className="input" value={value.ubicacion} onChange={e => onChange(f => ({ ...f, ubicacion: e.target.value }))} /></div>
+
+      {/* Datos de sitio: viajan a cada servicio/proyecto que se cree sobre este
+          ascensor y son los que el técnico ve al llegar. */}
+      <div className="sm:col-span-2 border border-slate-200 rounded-lg p-3 bg-slate-50/40">
+        <label className="label">Datos para el técnico</label>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label className="label">Cuarto de máquinas</label>
+            <select className="select" value={value.cuarto_maquinas}
+              onChange={e => onChange(f => ({ ...f, cuarto_maquinas: e.target.value }))}>
+              <option value="">— Sin definir —</option>
+              <option value="Si">Sí</option>
+              <option value="No">No</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Nombre de contacto</label>
+            <input className="input" maxLength={150} placeholder="Ej. Juan Pérez (conserje)"
+              value={value.contacto_nombre}
+              onChange={e => onChange(f => ({ ...f, contacto_nombre: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Teléfono de contacto</label>
+            <input className="input" maxLength={30} placeholder="Ej. 999 888 777"
+              value={value.contacto_telefono}
+              onChange={e => onChange(f => ({ ...f, contacto_telefono: e.target.value }))} />
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-2">
+          Cada servicio o proyecto que se registre sobre este ascensor nace con estos datos, junto con las observaciones de abajo, para que el técnico asignado los vea en su servicio. Si en un servicio puntual el contacto es otro, se corrige allí sin alterar esta ficha.
+        </p>
+      </div>
+
       <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="3" value={value.observaciones} onChange={e => onChange(f => ({ ...f, observaciones: e.target.value }))} /></div>
       <div className="sm:col-span-2 border border-slate-200 rounded-lg p-3 bg-slate-50/40">
         <div className="flex items-center justify-between mb-2">

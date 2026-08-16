@@ -49,6 +49,24 @@ export const ESTADOS_GLOBALES = [
 // Espejo de backend/utils/estadoCotizacion.js.
 export const FILTRO_GLOBAL_APROBADAS = 'Aprobadas';
 
+// Estados del embudo ya aceptado. Con cualquiera de estos filtros (o con el
+// virtual 'Aprobadas') el rango de fechas del listado NO filtra por fecha de
+// creación sino por FECHA DE ACEPTACIÓN de la cotización: "aceptadas de agosto"
+// son las que se aprobaron en agosto, estén hoy en ejecución o ya terminadas.
+// Espejo de backend/utils/estadoCotizacion.js.
+export const ESTADOS_GLOBALES_POST_ACEPTACION = [
+  ESTADO_GLOBAL_ACEPTADO,
+  ESTADO_GLOBAL_EJECUCION,
+  ESTADO_GLOBAL_PENDIENTE,
+  ESTADO_GLOBAL_TERMINADO
+];
+
+export function rangoEsPorFechaAceptacion(valorFiltroGlobal) {
+  if (!valorFiltroGlobal) return false;
+  return valorFiltroGlobal === FILTRO_GLOBAL_APROBADAS
+    || ESTADOS_GLOBALES_POST_ACEPTACION.includes(valorFiltroGlobal);
+}
+
 // Estados en los que ya existe un servicio en marcha: la cotización se puede
 // reabrir para renegociar las cuotas pendientes. Antes de 'Aceptado' no hay nada
 // que renegociar; en 'Terminado' / 'Anulado' ya es tarde.

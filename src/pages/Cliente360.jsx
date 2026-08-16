@@ -13,6 +13,7 @@ import { coordsDe } from '../utils/mapa.js';
 import EdificioForm, { edificioFormInicial, edificioToForm } from '../components/edificios/EdificioForm.jsx';
 import ImpactoEliminacionEdificio from '../components/edificios/ImpactoEliminacionEdificio.jsx';
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
+import ContratoNuevoModal from '../components/clientes/ContratoNuevoModal.jsx';
 
 const ESTADOS_PENDIENTE = ['Borrador', 'Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida'];
 const ESTADOS_CURSO = ['En camino', 'En curso'];
@@ -41,6 +42,8 @@ export default function Cliente360() {
   // Confirmación de baja lógica del edificio (la reactivación no la requiere).
   const [edAEliminar, setEdAEliminar] = useState(null);
   const [cambiandoEstadoEd, setCambiandoEstadoEd] = useState(false);
+  // Modal de registro de contrato nuevo (renovación).
+  const [openContrato, setOpenContrato] = useState(false);
 
   const cargar = () => clientesService.vista360(id).then(setData);
   useEffect(() => {
@@ -112,7 +115,14 @@ export default function Cliente360() {
           </span>
         }
         subtitle={`${data.tipo_documento} ${data.numero_documento || ''}`}
-        actions={<Link to="/clientes" className="btn-secondary">← Clientes</Link>} />
+        actions={
+          <>
+            {puedeEditar && (
+              <button onClick={() => setOpenContrato(true)} className="btn-ghost">Registrar contrato nuevo</button>
+            )}
+            <Link to="/clientes" className="btn-secondary">← Clientes</Link>
+          </>
+        } />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="card lg:col-span-1">
@@ -127,12 +137,27 @@ export default function Cliente360() {
               .map(area => {
                 const etiqueta = area === 'servicio' ? 'Servicios' : 'Proyectos';
                 const arch = data[`archivo_contrato_${area}`];
+                // Contratos ya reemplazados del área (el documento no se historiza:
+                // el PDF vigente es el único que se conserva).
+                const anteriores = (data.contratos_historial || []).filter(h => h.area === area);
                 return (
                   <Info key={area} cols={2} label={`Contrato · ${etiqueta}`} value={
                     <span className="text-sm">
                       {formatFecha(data[`contrato_${area}_inicio`])} → {formatFecha(data[`contrato_${area}_fin`])}
                       {arch && (
                         <> · <FileLink archivo={arch} className="text-brand-700 hover:underline inline-flex items-center gap-1">📎 {arch.nombre_original}</FileLink></>
+                      )}
+                      {anteriores.length > 0 && (
+                        <span className="block mt-1 text-[11px] text-slate-500 leading-relaxed">
+                          <span className="uppercase tracking-wider text-[10px] text-slate-400">Contratos anteriores</span>
+                          {anteriores.map(h => (
+                            <span key={h.id} className="block">
+                              {formatFecha(h.fecha_inicio)} → {formatFecha(h.fecha_fin)}
+                              <span className="text-slate-400"> · reemplazado {formatFecha(h.fecha_reemplazo)}</span>
+                              {h.observaciones && <span className="text-slate-400"> · {h.observaciones}</span>}
+                            </span>
+                          ))}
+                        </span>
                       )}
                     </span>
                   } />
@@ -271,7 +296,6 @@ export default function Cliente360() {
                       <th className="table-th">Código</th>
                       <th className="table-th">Tipo</th>
                       <th className="table-th">Última versión</th>
-                      <th className="table-th">Validez</th>
                       <th className="table-th text-right">Monto</th>
                       <th className="table-th">Estado versión</th>
                       <th className="table-th">Estado global</th>
@@ -284,7 +308,6 @@ export default function Cliente360() {
                             <td className="table-td"><Link to={`/cotizaciones/${c.id}`} state={{ from: `/clientes/${id}`, fromLabel: data.nombre }} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link></td>
                             <td className="table-td text-xs">{c.tipo_servicio?.nombre || '—'}</td>
                             <td className="table-td">v{v?.numero_version || c.version_activa}</td>
-                            <td className="table-td text-xs">{formatFecha(v?.fecha_validez)}</td>
                             <td className="table-td text-right font-mono text-xs">{formatMonto(v?.monto_total, v?.moneda)}</td>
                             <td className="table-td"><span className={badgeEstado(v?.estado_version)}>{v?.estado_version || '—'}</span></td>
                             <td className="table-td"><span className={badgeEstado(c.estado_global)}>{c.estado_global}</span></td>
@@ -466,6 +489,12 @@ export default function Cliente360() {
         <EdificioForm formId="edificio-form" value={edForm} onChange={setEdForm} onSubmit={guardarEdificio}
           tipos={tiposEdificio} distritos={distritos} />
       </Modal>
+
+      <ContratoNuevoModal
+        cliente={openContrato ? data : null}
+        onClose={() => setOpenContrato(false)}
+        onSaved={() => { setOpenContrato(false); cargar(); }}
+      />
     </>
   );
 }

@@ -221,6 +221,8 @@ export default function ServicioDetalle() {
   const [openDuracion, setOpenDuracion] = useState(false);
   const [duracionForm, setDuracionForm] = useState(1);
   const [guardandoDuracion, setGuardandoDuracion] = useState(false);
+  // Habilitación del cierre fuera de plazo (solo super admin).
+  const [habilitandoCierre, setHabilitandoCierre] = useState(false);
   // Datos de apoyo que carga el coordinador en el card "Datos": contacto en
   // sitio (nombre + teléfono) y si el edificio tiene cuarto de máquinas.
   const [openDatos, setOpenDatos] = useState(false);
@@ -242,16 +244,37 @@ export default function ServicioDetalle() {
   const toast = useToast();
   const { user, esSuperAdmin, esAdmin, esCoordinador, esTecnico, puedeVerPrecio } = useAuth();
 
+  // Devuelve el servicio recién traído para que quien la llame pueda decidir con
+  // el estado REAL (el `s` del closure todavía es el anterior).
   const cargar = async () => {
     setLoading(true);
     try {
-      setS(await serviciosService.get(id));
+      const fresco = await serviciosService.get(id);
+      setS(fresco);
+      return fresco;
     } finally { setLoading(false); }
   };
   useEffect(() => {
     cargar();
     tecnicosService.list().then(setTecnicos);
   }, [id]);
+
+  // Habilita / revoca el cierre de un servicio cuyo plazo venció (solo super admin).
+  const cambiarHabilitacionCierre = async (habilitar) => {
+    if (habilitandoCierre) return;
+    setHabilitandoCierre(true);
+    try {
+      await serviciosService.habilitarCierre(id, habilitar);
+      toast.success(habilitar
+        ? 'Cierre habilitado: el técnico ya puede registrar el cierre de este servicio'
+        : 'Habilitación revocada');
+      await cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al cambiar la habilitación');
+    } finally {
+      setHabilitandoCierre(false);
+    }
+  };
 
   if (loading || !s) return <Loader />;
 
@@ -260,8 +283,15 @@ export default function ServicioDetalle() {
     && !estaServicioFinalizado(s.estado_servicio);
   const puedeIniciar = (esSuperAdmin || esAdmin || (esTecnico && s.asignaciones?.some(a => a.id_tecnico === user.id_tecnico))) &&
     ['Asignado', 'Checklist de salida pendiente', 'Listo para salida', 'En camino'].includes(s.estado_servicio);
+  // Plazo del técnico para registrar el cierre (calculado por el backend a partir
+  // de la fecha programada y del parámetro SERVICIO_CIERRE_PLAZO_DIAS).
+  const plazoCierre = s.plazo_cierre || null;
+  // Vencido el plazo, el técnico no puede cerrar hasta que el super admin habilite
+  // ESE servicio. Admin y super admin cierran siempre.
+  const cierreBloqueadoTecnico = !!plazoCierre && !plazoCierre.puede_cerrar_tecnico;
   const puedeFinalizar = s.estado_servicio === 'En curso' && (esSuperAdmin || esAdmin ||
-    (esTecnico && s.asignaciones?.some(a => a.id_tecnico === user.id_tecnico && (a.responsable_documentacion || s.asignaciones.length === 1))));
+    (esTecnico && !cierreBloqueadoTecnico
+      && s.asignaciones?.some(a => a.id_tecnico === user.id_tecnico && (a.responsable_documentacion || s.asignaciones.length === 1))));
   const puedeRevisar = s.estado_servicio === 'En revisión administrativa' && (esSuperAdmin || esAdmin || user.rol_codigo === 'contabilidad');
   const puedePromover = s.estado_servicio === 'Borrador' && (esSuperAdmin || esAdmin || esCoordinador);
   const puedeGestionarEntregas = (esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio);
@@ -307,6 +337,25 @@ export default function ServicioDetalle() {
   // servicio mientras no esté cancelado: son información para el técnico, no
   // tocan precios, fechas ni estados.
   const puedeEditarDatosContacto = (esSuperAdmin || esAdmin || esCoordinador) && s.estado_servicio !== 'Cancelado';
+
+  // Datos de sitio (contacto y cuarto de máquinas). El servicio los hereda de la
+  // ficha del ascensor al crearse; si este servicio nació antes de que el
+  // ascensor los tuviera —o antes de que existieran—, se muestra el de la ficha
+  // marcado como tal, para que el técnico nunca se quede sin el dato.
+  const ascensoresServicio = (s.ascensores || []).map(sa => sa.ascensor).filter(Boolean);
+  const datoSitio = (campo) => {
+    if (s[campo]) return { valor: s[campo], desdeAscensor: false };
+    const fuente = ascensoresServicio.find(a => a[campo]);
+    return fuente ? { valor: fuente[campo], desdeAscensor: true } : { valor: null, desdeAscensor: false };
+  };
+  const sitioContactoNombre = datoSitio('contacto_nombre');
+  const sitioContactoTelefono = datoSitio('contacto_telefono');
+  const sitioCuartoMaquinas = datoSitio('cuarto_maquinas');
+  // Observaciones registradas en la ficha del ascensor: acompañan al técnico en
+  // el servicio (son las que dejó quien registró el ascensor).
+  const observacionesAscensores = ascensoresServicio
+    .filter(a => a.observaciones)
+    .map(a => ({ id: a.id, codigo: a.codigo, observaciones: a.observaciones }));
   // Técnicos asignados al servicio, con el responsable principal primero.
   const tecnicosAsignados = [...(s.asignaciones || [])].sort(
     (a, b) => (b.responsable_principal || 0) - (a.responsable_principal || 0)
@@ -457,7 +506,13 @@ export default function ServicioDetalle() {
     setGenerandoInforme(true);
     try {
       await serviciosService.generarInformeFinalizacion(id);
-      await cargar();
+      const fresco = await cargar();
+      // Otro usuario (o el propio técnico desde su equipo) pudo finalizarlo
+      // mientras esta pantalla estaba abierta: no se abre el modal de cierre.
+      if (estaServicioFinalizado(fresco?.estado_servicio)) {
+        toast.error(`El servicio ya fue finalizado (${fresco.estado_servicio})`);
+        return;
+      }
       setOpenFinalizar(true);
     } catch (err) {
       toast.error(err.response?.data?.error || 'No se pudo generar el informe de finalización');
@@ -485,6 +540,13 @@ export default function ServicioDetalle() {
       cargar();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error');
+      // 409 = el servicio ya lo finalizó otro usuario (o esta misma pantalla
+      // quedó desactualizada). Se cierra el modal y se recarga para que el
+      // estado real se refleje y el botón "Finalizar" desaparezca.
+      if (err.response?.status === 409) {
+        setOpenFinalizar(false);
+        cargar();
+      }
     } finally {
       setGuardandoFinalizar(false);
     }
@@ -822,6 +884,41 @@ export default function ServicioDetalle() {
           </>
         } />
 
+      {/* Plazo de cierre vencido: el técnico queda bloqueado hasta que el super
+          administrador habilite el cierre de este servicio. La alerta de
+          cotización urgente se agenda igual en la fecha PROGRAMADA, no en la de
+          cierre, para que nunca caiga en domingo. */}
+      {plazoCierre?.vencido && s.estado_servicio === 'En curso' && (
+        <div className={`card mb-5 border-l-4 ${plazoCierre.habilitado ? 'border-l-emerald-500' : 'border-l-amber-500'}`}>
+          <div className="card-body flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm">
+              <div className="font-medium text-carbon-800">
+                {plazoCierre.habilitado
+                  ? 'Cierre fuera de plazo habilitado'
+                  : `Plazo de cierre vencido hace ${plazoCierre.dias_vencido} día(s)`}
+              </div>
+              <div className="text-xs text-carbon-500 mt-0.5">
+                El técnico tenía hasta el {formatFecha(plazoCierre.fecha_limite)} ({plazoCierre.plazo_dias} día(s) desde la fecha programada).
+                {plazoCierre.habilitado
+                  ? ' El super administrador habilitó el cierre: el permiso se consume al finalizar el servicio.'
+                  : ' Solo el super administrador puede habilitar el cierre de este servicio.'}
+              </div>
+            </div>
+            {esSuperAdmin && (
+              <button
+                type="button"
+                onClick={() => cambiarHabilitacionCierre(!plazoCierre.habilitado)}
+                disabled={habilitandoCierre}
+                className={`${plazoCierre.habilitado ? 'btn-secondary' : 'btn-primary'} disabled:opacity-50`}>
+                {habilitandoCierre
+                  ? 'Guardando…'
+                  : plazoCierre.habilitado ? 'Revocar habilitación' : 'Habilitar cierre'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="card">
           <div className="card-header">
@@ -895,26 +992,32 @@ export default function ServicioDetalle() {
                 : <span className="font-mono">{formatMonto(s.precio_interno, s.moneda)}</span>
             } cols={2} />}
             <Info label="Contacto" value={
-              (s.contacto_nombre || s.contacto_telefono)
+              (sitioContactoNombre.valor || sitioContactoTelefono.valor)
                 ? <div className="space-y-0.5">
-                    {s.contacto_nombre && <div>{s.contacto_nombre}</div>}
-                    {s.contacto_telefono && (
-                      <a href={`tel:${s.contacto_telefono}`} className="text-brand-700 hover:underline font-mono text-xs">
-                        {s.contacto_telefono}
+                    {sitioContactoNombre.valor && <div>{sitioContactoNombre.valor}</div>}
+                    {sitioContactoTelefono.valor && (
+                      <a href={`tel:${sitioContactoTelefono.valor}`} className="text-brand-700 hover:underline font-mono text-xs">
+                        {sitioContactoTelefono.valor}
                       </a>
+                    )}
+                    {(sitioContactoNombre.desdeAscensor || sitioContactoTelefono.desdeAscensor) && (
+                      <div className="text-[10px] text-slate-400">De la ficha del ascensor</div>
                     )}
                     <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="Editar" />
                   </div>
                 : <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="+ Agregar" />
             } />
             <Info label="Cuarto de máquinas" value={
-              s.cuarto_maquinas
+              sitioCuartoMaquinas.valor
                 ? <div className="space-y-0.5">
                     <div>
-                      <span className={s.cuarto_maquinas === 'Si' ? 'badge-green' : 'badge-gray'}>
-                        {s.cuarto_maquinas === 'Si' ? 'Sí' : 'No'}
+                      <span className={sitioCuartoMaquinas.valor === 'Si' ? 'badge-green' : 'badge-gray'}>
+                        {sitioCuartoMaquinas.valor === 'Si' ? 'Sí' : 'No'}
                       </span>
                     </div>
+                    {sitioCuartoMaquinas.desdeAscensor && (
+                      <div className="text-[10px] text-slate-400">De la ficha del ascensor</div>
+                    )}
                     <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="Editar" />
                   </div>
                 : <AccionDato onClick={iniciarEditarDatos} habilitado={puedeEditarDatosContacto} texto="+ Agregar" />
@@ -945,6 +1048,22 @@ export default function ServicioDetalle() {
             } cols={2} />
             <Info label="Descripción" value={s.descripcion || '—'} cols={2} />
             <Info label="Observaciones" value={s.observaciones || '—'} cols={2} />
+            {/* Observaciones registradas en la ficha del ascensor: el técnico las
+                necesita en sitio tanto como las del servicio. */}
+            {observacionesAscensores.length > 0 && (
+              <Info label="Observaciones del ascensor" cols={2} value={
+                <div className="space-y-1">
+                  {observacionesAscensores.map(a => (
+                    <div key={a.id}>
+                      {observacionesAscensores.length > 1 && (
+                        <span className="font-mono text-xs text-slate-500 mr-1">{a.codigo}:</span>
+                      )}
+                      {a.observaciones}
+                    </div>
+                  ))}
+                </div>
+              } />
+            )}
             <UbicacionCliente edificio={(s.ascensores || []).map(a => a.ascensor?.edificio).find(Boolean)} />
           </div>
         </div>

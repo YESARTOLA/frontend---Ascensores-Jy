@@ -135,13 +135,23 @@ function Header() {
 }
 
 function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
-  // La Vendedora solo opera Leads y consulta el Calendario (solo lectura): su
-  // menú se reduce a esas dos entradas.
-  if (rol === 'vendedora') {
+  // La Central de ventas solo captura y asigna leads: su menú es esa única
+  // entrada (el guard de rutas de App.jsx lo refuerza por URL).
+  if (rol === 'central_ventas') {
     return (
       <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
         <Section label="Comercial" />
         <Link to="/leads" icon={ICONS.briefcase} label="Leads" onClose={onClose} />
+      </nav>
+    );
+  }
+  // La Vendedora solo trabaja los leads que tiene asignados y consulta el
+  // Calendario (solo lectura): su menú se reduce a esas dos entradas.
+  if (rol === 'vendedora') {
+    return (
+      <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
+        <Section label="Comercial" />
+        <Link to="/leads" icon={ICONS.briefcase} label="Mis leads" onClose={onClose} />
         <Link to="/calendario" icon={ICONS.calendar} label="Calendario" onClose={onClose} />
       </nav>
     );

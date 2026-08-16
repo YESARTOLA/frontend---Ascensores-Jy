@@ -134,6 +134,7 @@ function QuickAccessDev({ onPick, disabled }) {
     { rol: 'Coordinador',    correo: 'coordinador@ascensoresjy.com',  pass: 'Demo2026!',  ico: '📋', tono: 'brand' },
     { rol: 'Contabilidad',   correo: 'contabilidad@ascensoresjy.com', pass: 'Demo2026!',  ico: '💸', tono: 'brand' },
     { rol: 'Vendedora',      correo: 'vendedora@ascensoresjy.com',    pass: 'Demo2026!',  ico: '📈', tono: 'brand' },
+    { rol: 'Central ventas', correo: 'central@ascensoresjy.com',      pass: 'Demo2026!',  ico: '☎️', tono: 'brand' },
     { rol: 'Técnico',        correo: 'carlos@ascensoresjy.com',       pass: 'Demo2026!',  ico: '👷', tono: 'brand' },
   ];
   return (

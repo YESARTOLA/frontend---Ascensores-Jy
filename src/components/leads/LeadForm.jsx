@@ -11,7 +11,11 @@ export const leadFormInicial = {
   // id_padre_servicio: solo UI (cascada padre → subtipo). No se persiste: el lead
   // guarda el subtipo (id_tipo_servicio_solicitado) y el padre se deriva de él.
   id_padre_servicio: '',
-  id_tipo_servicio_solicitado: '', cliente_existente: false, id_cliente: '', id_vendedor: '', observaciones: ''
+  id_tipo_servicio_solicitado: '', cliente_existente: false, id_cliente: '', id_vendedor: '',
+  // Solo UI: nombre de la persona asignada, para poder mostrarla cuando no está
+  // en el catálogo de vendedoras (asignaciones históricas o usuario de baja).
+  id_vendedor_nombre: '',
+  observaciones: ''
 };
 
 // Mapea un lead existente (con relaciones) a la forma del formulario.
@@ -33,11 +37,15 @@ export function leadAFormulario(l) {
     cliente_existente: l.cliente_existente === 1,
     id_cliente: l.id_cliente || '',
     id_vendedor: l.id_vendedor || '',
+    id_vendedor_nombre: l.vendedor?.nombres || '',
     observaciones: l.observaciones || ''
   };
 }
 
-export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, tiposAscensor, tiposServicio, usuarios, clientes }) {
+// `vendedoras` = catálogo de usuarios con rol Vendedora (quién puede quedar
+// asignado al lead). `vendedorBloqueado` lo usa la propia Vendedora al editar
+// sus leads: ve a quién está asignado pero no puede reasignarlo.
+export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, tiposAscensor, tiposServicio, vendedoras = [], clientes, vendedorBloqueado = false }) {
   const set = (parche) => onChange({ ...value, ...parche });
 
   const departamentos = useMemo(() => [...new Set(ubigeo.map(u => u.departamento))], [ubigeo]);
@@ -49,6 +57,10 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
     () => ubigeo.filter(u => u.departamento === value.departamento && u.provincia === value.provincia),
     [ubigeo, value.departamento, value.provincia]
   );
+  // Vendedora ya asignada que no está en el catálogo (usuario dado de baja, o
+  // una asignación antigua a un usuario de otro rol).
+  const vendedorFueraDelCatalogo = !!value.id_vendedor
+    && !vendedoras.some(u => String(u.id) === String(value.id_vendedor));
   // Cascada de tipo de servicio: padre (Servicios/Proyectos/…) → subtipo.
   const padresServicio = useMemo(() => tiposServicio.filter(t => t.es_padre), [tiposServicio]);
   const subtiposDelPadre = useMemo(
@@ -82,7 +94,27 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
       <div className="sm:col-span-2"><label className="label">Nombre del proyecto</label><input className="input" value={value.nombre_proyecto} onChange={e => set({ nombre_proyecto: e.target.value })} /></div>
       <div><label className="label">Tipo de servicio *</label><select className="select" required value={value.id_padre_servicio} onChange={e => set({ id_padre_servicio: e.target.value, id_tipo_servicio_solicitado: '' })}><option value="">—</option>{padresServicio.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
       <div><label className="label">Subtipo solicitado *</label><select className="select" required disabled={!value.id_padre_servicio} value={value.id_tipo_servicio_solicitado} onChange={e => set({ id_tipo_servicio_solicitado: e.target.value })}><option value="">—</option>{subtiposDelPadre.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
-      <div><label className="label">Vendedor</label><select className="select" value={value.id_vendedor} onChange={e => set({ id_vendedor: e.target.value })}><option value="">—</option>{usuarios.map(u => <option key={u.id} value={u.id}>{u.nombres}</option>)}</select></div>
+      <div>
+        <label className="label">Vendedora asignada</label>
+        <select className="select" value={value.id_vendedor} disabled={vendedorBloqueado}
+          onChange={e => set({ id_vendedor: e.target.value })}>
+          <option value="">— Sin asignar —</option>
+          {vendedoras.map(u => <option key={u.id} value={u.id}>{u.nombres}</option>)}
+          {/* El catálogo solo trae vendedoras activas: si el lead ya estaba
+              asignado a otra persona (asignación histórica o usuario de baja),
+              se conserva la opción para no borrarla al editar. */}
+          {vendedorFueraDelCatalogo && (
+            <option value={value.id_vendedor}>
+              {value.id_vendedor_nombre || `Usuario #${value.id_vendedor}`} (asignación actual)
+            </option>
+          )}
+        </select>
+        <p className="text-[11px] text-slate-500 mt-0.5">
+          {vendedorBloqueado
+            ? 'La asignación la gestiona la Central de ventas.'
+            : 'Solo la vendedora asignada verá este lead y podrá convertirlo. Sin asignar, queda visible únicamente para la Central de ventas y administración.'}
+        </p>
+      </div>
       <div><label className="label">¿Cliente existente?</label><select className="select" value={value.cliente_existente ? '1' : '0'} onChange={e => set({ cliente_existente: e.target.value === '1' })}><option value="0">No</option><option value="1">Sí</option></select></div>
       {value.cliente_existente && <div><label className="label">Cliente asociado</label><select className="select" value={value.id_cliente} onChange={e => set({ id_cliente: e.target.value })}><option value="">—</option>{clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>}
       {/* Empresa del prospecto: si el lead se vincula a un cliente existente,

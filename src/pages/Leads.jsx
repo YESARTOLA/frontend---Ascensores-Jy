@@ -16,6 +16,7 @@ import ClienteForm, { clienteFormInicial } from '../components/clientes/ClienteF
 import EdificioForm, { edificioFormInicial } from '../components/edificios/EdificioForm.jsx';
 import AscensorForm, { ascensorFormInicial } from '../components/ascensores/AscensorForm.jsx';
 import LeadForm, { leadFormInicial, leadAFormulario } from '../components/leads/LeadForm.jsx';
+import DocumentosLeadModal from '../components/leads/DocumentosLeadModal.jsx';
 
 const inicialConvertir = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN', id_tecnico: '', titulo: '', descripcion: '' };
 
@@ -25,7 +26,10 @@ export default function Leads() {
   const [tipos, setTipos] = useState([]);
   const [tiposAscensor, setTiposAscensor] = useState([]);
   const [ubigeo, setUbigeo] = useState([]);
-  const [usuarios, setUsuarios] = useState([]);
+  // Catálogo de usuarios con rol Vendedora: son las únicas personas asignables
+  // a un lead (la asignación decide quién lo ve y quién puede convertirlo).
+  const [catalogoVendedoras, setCatalogoVendedoras] = useState([]);
+  // Vendedoras que ya figuran en algún lead: pueblan el filtro de la lista.
   const [vendedores, setVendedores] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   // Filtros de la lista (server-side): buscador libre + vendedor + ubicación.
@@ -41,6 +45,11 @@ export default function Leads() {
   // Detalle del lead: observaciones, cotizaciones adjuntas y motivo de descarte.
   const [openDetalle, setOpenDetalle] = useState(null);
   const [detalleCots, setDetalleCots] = useState(null); // null = cargando
+  // Documentos libres del lead: los sube la Central de ventas y la Vendedora
+  // asignada los consulta. El detalle los lista en solo lectura; el modal es la
+  // vista de gestión (subir/eliminar).
+  const [detalleDocs, setDetalleDocs] = useState(null); // null = cargando
+  const [openDocs, setOpenDocs] = useState(null);
   // Adjuntar cotización en PDF (versionada). Se abre al pasar a "Cotizado" o
   // desde el detalle para registrar una nueva versión.
   const [openCotizacion, setOpenCotizacion] = useState(null);
@@ -63,12 +72,16 @@ export default function Leads() {
   const [catalogosConv, setCatalogosConv] = useState(null);
   const toast = useToast();
   const navigate = useNavigate();
-  const { esSuperAdmin, esAdmin, esCoordinador, esVendedora, puedeVerPrecio } = useAuth();
-  // Gestión del lead (editar datos, cambiar estado, adjuntar cotizaciones): la
-  // Vendedora NO la tiene — solo da de alta y convierte (el backend lo refuerza).
-  const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
-  // Alta de nuevos leads y conversión: incluye a la Vendedora.
-  const puedeAltaLead = puedeCrear || esVendedora;
+  const { esSuperAdmin, esAdmin, esCoordinador, esVendedora, esCentralVentas, puedeVerPrecio } = useAuth();
+  // Ciclo comercial del lead (cambiar estado, descartar, adjuntar cotizaciones):
+  // administración y la Central de ventas. La Vendedora NO lo gestiona.
+  const puedeGestionar = esSuperAdmin || esAdmin || esCoordinador || esCentralVentas;
+  // Alta de leads: la Central de ventas es el punto de captura (con el
+  // superadministrador). La Vendedora solo trabaja los que le asignan.
+  const puedeAltaLead = esSuperAdmin || esCentralVentas;
+  // Edición de datos: los anteriores + la Vendedora sobre SUS leads (la lista
+  // que recibe ya viene acotada por el backend a los suyos).
+  const puedeEditar = puedeGestionar || esVendedora;
   const puedeConvertir = esSuperAdmin || esAdmin || esVendedora;
   const puedeCotizar = esSuperAdmin || esAdmin;
 
@@ -76,17 +89,19 @@ export default function Leads() {
     usePaginatedList(leadsService.paginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
   useEffect(() => {
-    // Cada catálogo se aplica de forma independiente: si uno falla (p. ej.
-    // /usuarios es solo para super_admin y devuelve 403 a admin/coordinador),
-    // los demás dropdowns siguen funcionando en vez de quedar todos vacíos.
+    // Cada catálogo se aplica de forma independiente: si uno falla, los demás
+    // dropdowns siguen funcionando en vez de quedar todos vacíos.
+    // Las personas asignables al lead se piden a /usuarios/catalogo acotado al
+    // rol vendedora: /usuarios es solo para super_admin y devolvía 403 al resto,
+    // dejando el selector sin opciones.
     const aplicar = (setter) => (r) => { if (r.status === 'fulfilled') setter(r.value); };
     Promise.allSettled([
       clientesService.list(), ascensoresService.list(), tiposServicioService.list(),
-      tiposAscensorService.list(), ubigeoService.list(), usuariosService.list(), leadsService.vendedores(),
-      tecnicosService.list()
+      tiposAscensorService.list(), ubigeoService.list(), usuariosService.catalogo({ rol: 'vendedora' }),
+      leadsService.vendedores(), tecnicosService.list()
     ]).then(([c, a, t, ta, ub, u, v, te]) => {
       aplicar(setClientes)(c); aplicar(setAscensores)(a); aplicar(setTipos)(t);
-      aplicar(setTiposAscensor)(ta); aplicar(setUbigeo)(ub); aplicar(setUsuarios)(u);
+      aplicar(setTiposAscensor)(ta); aplicar(setUbigeo)(ub); aplicar(setCatalogoVendedoras)(u);
       aplicar(setVendedores)(v); aplicar(setTecnicos)(te);
     });
   }, []);
@@ -275,7 +290,16 @@ export default function Leads() {
   const abrirDetalle = (l) => {
     setOpenDetalle(l);
     setDetalleCots(null);
+    setDetalleDocs(null);
     leadsService.cotizaciones(l.id).then(setDetalleCots).catch(() => setDetalleCots([]));
+    leadsService.documentos(l.id).then(r => setDetalleDocs(r?.data ?? [])).catch(() => setDetalleDocs([]));
+  };
+
+  // La gestión de documentos vive en su propio modal: se cierra el detalle para
+  // no apilar dos modales.
+  const abrirDocumentos = (l) => {
+    setOpenDetalle(null);
+    setOpenDocs(l);
   };
 
   const abrirAdjuntarCotizacion = (l) => {
@@ -326,7 +350,11 @@ export default function Leads() {
 
   return (
     <>
-      <PageHeader title="Leads" subtitle={`${total} lead(s)`} actions={puedeAltaLead && <button onClick={() => setOpen(true)} className="btn-primary">+ Nuevo lead</button>} />
+      <PageHeader
+        title={esVendedora ? 'Mis leads' : 'Leads'}
+        subtitle={esVendedora ? `${total} lead(s) asignado(s)` : `${total} lead(s)`}
+        actions={puedeAltaLead && <button onClick={() => setOpen(true)} className="btn-primary">+ Nuevo lead</button>}
+      />
 
       <PadreTabs
         padres={tipos.filter(t => t.es_padre)}
@@ -343,11 +371,14 @@ export default function Leads() {
             value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))}
           />
-          <select className="select" value={filtros.id_vendedor}
-            onChange={e => setFiltros(f => ({ ...f, id_vendedor: e.target.value }))}>
-            <option value="">Todos los vendedores</option>
-            {vendedores.map(v => <option key={v.id} value={v.id}>{v.nombres}</option>)}
-          </select>
+          {/* La Vendedora solo ve sus propios leads: el filtro no le aplica. */}
+          {!esVendedora && (
+            <select className="select" value={filtros.id_vendedor}
+              onChange={e => setFiltros(f => ({ ...f, id_vendedor: e.target.value }))}>
+              <option value="">Todas las vendedoras</option>
+              {vendedores.map(v => <option key={v.id} value={v.id}>{v.nombres}</option>)}
+            </select>
+          )}
           <select className="select" value={filtros.provincia}
             onChange={e => setFiltros(f => ({ ...f, provincia: e.target.value, codigo_ubigeo: '' }))}>
             <option value="">Todas las provincias</option>
@@ -389,7 +420,7 @@ export default function Leads() {
                     <td className="table-td text-xs">{l.cliente?.nombre || '—'}</td>
                     <td className="table-td text-xs">{l.vendedor?.nombres || '—'}</td>
                     <td className="table-td">
-                      {puedeCrear ? (
+                      {puedeGestionar ? (
                         <select
                           className="select text-xs !py-1"
                           value={l.estado_lead}
@@ -416,7 +447,11 @@ export default function Leads() {
                     <td className="table-td text-right">
                       <div className="flex flex-wrap gap-2 justify-end text-xs">
                         <button onClick={() => abrirDetalle(l)} className="text-sky-700 hover:underline">Detalle</button>
-                        {puedeCrear && (puedeEditarLead(l) ? (
+                        <button onClick={() => abrirDocumentos(l)} className="text-indigo-700 hover:underline"
+                          title="Documentos del lead (PDF, imágenes, videos…)">
+                          Documentos{l._count?.documentos ? ` (${l._count.documentos})` : ''}
+                        </button>
+                        {puedeEditar && (puedeEditarLead(l) ? (
                           <button onClick={() => abrirEditar(l)} className="text-slate-700 hover:underline">Editar</button>
                         ) : (
                           <span className="text-slate-400" title={`Este lead ya alcanzó el máximo de ${l.ediciones_max} ediciones`}>
@@ -453,7 +488,8 @@ export default function Leads() {
       <Modal open={open} onClose={() => setOpen(false)} title="Nuevo lead"
         footer={<><button className="btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn-primary" type="submit" form="lead-form">Guardar</button></>}>
         <LeadForm formId="lead-form" value={form} onChange={setForm} onSubmit={guardar}
-          ubigeo={ubigeo} tiposAscensor={tiposAscensor} tiposServicio={tipos} usuarios={usuarios} clientes={clientes} />
+          ubigeo={ubigeo} tiposAscensor={tiposAscensor} tiposServicio={tipos}
+          vendedoras={catalogoVendedoras} clientes={clientes} />
       </Modal>
 
       <Modal open={!!openEdit} onClose={() => setOpenEdit(null)} title={`Editar lead: ${openEdit?.nombre_contacto}`}
@@ -466,7 +502,8 @@ export default function Leads() {
                 : `Ediciones: ${openEdit.ediciones}/${openEdit.ediciones_max} — al guardar cambios se consume 1`}
             </p>
             <LeadForm formId="lead-edit-form" value={editForm} onChange={setEditForm} onSubmit={guardarEdicion}
-              ubigeo={ubigeo} tiposAscensor={tiposAscensor} tiposServicio={tipos} usuarios={usuarios} clientes={clientes} />
+              ubigeo={ubigeo} tiposAscensor={tiposAscensor} tiposServicio={tipos}
+              vendedoras={catalogoVendedoras} clientes={clientes} vendedorBloqueado={esVendedora} />
           </>
         )}
       </Modal>
@@ -549,12 +586,41 @@ export default function Leads() {
               <p className="text-sm text-slate-700 whitespace-pre-wrap">{openDetalle.observaciones || 'Sin observaciones registradas.'}</p>
             </div>
 
+            {/* Documentos libres del lead (los sube la Central de ventas) */}
+            <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold text-slate-700">Documentos del lead</div>
+                <button type="button" onClick={() => abrirDocumentos(openDetalle)}
+                  className="btn-ghost text-xs !py-1.5 !px-3">
+                  {puedeGestionar ? 'Gestionar documentos' : 'Ver todos'}
+                </button>
+              </div>
+              {detalleDocs === null ? <Loader /> : detalleDocs.length === 0 ? (
+                <p className="text-xs text-slate-500">Aún no se cargó ningún documento.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {detalleDocs.map(d => (
+                    <li key={d.id} className="flex items-center gap-3 bg-white rounded-md ring-1 ring-slate-200 px-3 py-2">
+                      <FileLink archivo={d.archivo} className="text-brand-700 hover:underline text-sm truncate min-w-0 flex-1 text-left"
+                        title={d.archivo?.nombre_original}>
+                        📎 {d.archivo?.nombre_original || 'Documento'}
+                      </FileLink>
+                      <div className="text-right shrink-0">
+                        <div className="text-xs text-slate-500">{formatFechaHora(d.date_time_registration)}</div>
+                        {d.usuario_registrador?.nombres && <div className="text-[11px] text-slate-400">{d.usuario_registrador.nombres}</div>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
             {/* Cotizaciones adjuntas (versiones) */}
             {(openDetalle.estado_lead === ESTADO_LEAD_COTIZADO || (detalleCots?.length ?? 0) > 0) && (
               <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-xs font-semibold text-slate-700">Cotizaciones adjuntas</div>
-                  {puedeCrear && openDetalle.estado_lead !== ESTADO_LEAD_DESCARTADO && (
+                  {puedeGestionar && openDetalle.estado_lead !== ESTADO_LEAD_DESCARTADO && (
                     <button type="button" onClick={() => abrirAdjuntarCotizacion(openDetalle)}
                       className="btn-ghost text-xs !py-1.5 !px-3">
                       + Nueva versión
@@ -585,6 +651,14 @@ export default function Leads() {
           </div>
         )}
       </Modal>
+
+      <DocumentosLeadModal
+        open={!!openDocs}
+        onClose={() => setOpenDocs(null)}
+        lead={openDocs}
+        puedeGestionar={puedeGestionar}
+        onCambio={cargar}
+      />
 
       <Modal open={!!openCotizacion} onClose={() => setOpenCotizacion(null)} title={`Adjuntar cotización: ${openCotizacion?.nombre_contacto}`}
         footer={<>

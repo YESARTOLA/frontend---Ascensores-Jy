@@ -119,19 +119,6 @@ export function dateTimeLocalLimaToISO(s) {
 }
 
 /**
- * Suma `n` días a una fecha "YYYY-MM-DD" trabajando en UTC para evitar drift
- * por TZ del navegador. Si `ymd` no se provee, parte de hoy en Lima.
- * Lima no observa DST, así que sumar días en UTC equivale a sumar días en Lima.
- */
-export function addDaysYMD(ymd, n) {
-  const base = ymd ? (partesFechaSimple(ymd) || partesFechaSimple(String(ymd).substring(0, 10))) : null;
-  const [y, m, d] = base ? base.map(Number) : hoyISO().split('-').map(Number);
-  const t = Date.UTC(y, m - 1, d) + Number(n) * 86400000;
-  const f = new Date(t);
-  return `${f.getUTCFullYear()}-${String(f.getUTCMonth() + 1).padStart(2, '0')}-${String(f.getUTCDate()).padStart(2, '0')}`;
-}
-
-/**
  * Suma `n` meses a una fecha "YYYY-MM-DD" preservando el día (Lima).
  * Si el mes destino no tiene ese día (ej. 31 ene → feb), cae al último día del mes.
  * No usa Date para evitar drift por TZ del navegador.
@@ -261,20 +248,25 @@ export function nombreCliente(cliente) {
 
 /**
  * Enriquece cada cliente con `edificios`: la lista de nombres de sus edificios /
- * obras, derivada de los ascensores ya cargados (cada ascensor trae su edificio
- * y el cliente dueño). Sirve para que el buscador de cliente (ClienteAutocomplete)
- * también pueda matchear por nombre de edificio sin pedir datos extra al backend.
+ * obras. Sirve para que el buscador de cliente (ClienteAutocomplete) también
+ * pueda matchear por nombre de edificio.
+ *
+ * Acepta dos fuentes, y usa las que reciba:
+ *   - `edificios`: lista de edificios (cada uno con `cliente`). Es la fuente
+ *     completa: incluye los que todavía no tienen ascensores registrados.
+ *   - `ascensores`: cada ascensor trae su edificio y el cliente dueño. Sirve
+ *     cuando la pantalla ya cargó el parque y no quiere pedir edificios aparte.
  */
-export function clientesConEdificios(clientes, ascensores) {
+export function clientesConEdificios(clientes, { edificios, ascensores } = {}) {
   if (!Array.isArray(clientes)) return [];
   const porCliente = new Map();
-  for (const a of (ascensores || [])) {
-    const idCliente = a?.edificio?.cliente?.id;
-    const nombre = a?.edificio?.nombre;
-    if (!idCliente || !nombre) continue;
+  const agregar = (idCliente, nombre) => {
+    if (!idCliente || !nombre) return;
     if (!porCliente.has(idCliente)) porCliente.set(idCliente, new Set());
     porCliente.get(idCliente).add(nombre);
-  }
+  };
+  for (const e of (edificios || [])) agregar(e?.cliente?.id ?? e?.id_cliente, e?.nombre);
+  for (const a of (ascensores || [])) agregar(a?.edificio?.cliente?.id, a?.edificio?.nombre);
   if (porCliente.size === 0) return clientes;
   return clientes.map(c => {
     const set = porCliente.get(c.id);

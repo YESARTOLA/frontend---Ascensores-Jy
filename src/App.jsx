@@ -17,17 +17,24 @@ function RequireAlcance({ ambito, children }) {
   return children;
 }
 
-// La Vendedora solo opera Leads y consulta el Calendario (solo lectura, para
-// validar disponibilidad de técnicos). Este guard la confina a esas rutas:
-// cualquier otra (incluido el Dashboard y las rutas sin RequireRole) la redirige,
-// garantizando el aislamiento también por URL, no solo por menú.
-const RUTAS_VENDEDORA = ['/leads', '/calendario'];
-function VendedoraGate({ children }) {
-  const { esVendedora } = useAuth();
+// Roles confinados a un puñado de rutas:
+//   - Vendedora: sus Leads y el Calendario (solo lectura, para validar la
+//     disponibilidad de los técnicos al programar).
+//   - Central de ventas: únicamente Leads (captura y asignación).
+// Cualquier otra ruta (incluido el Dashboard y las rutas sin RequireRole) los
+// redirige a la primera de su lista, garantizando el aislamiento también por
+// URL, no solo por menú. El backend lo refuerza con RBAC por rol.
+const RUTAS_POR_ROL_ACOTADO = {
+  vendedora: ['/leads', '/calendario'],
+  central_ventas: ['/leads']
+};
+function RolAcotadoGate({ children }) {
+  const { rol } = useAuth();
   const { pathname } = useLocation();
-  const permitida = RUTAS_VENDEDORA.some(p => pathname === p || pathname.startsWith(p + '/'));
-  if (esVendedora && !permitida) return <Navigate to="/leads" replace />;
-  return children;
+  const rutas = RUTAS_POR_ROL_ACOTADO[rol];
+  if (!rutas) return children;
+  const permitida = rutas.some(p => pathname === p || pathname.startsWith(p + '/'));
+  return permitida ? children : <Navigate to={rutas[0]} replace />;
 }
 import AppLayout from './components/layout/AppLayout.jsx';
 import RequireAuth from './routes/RequireAuth.jsx';
@@ -99,7 +106,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-      <Route element={<RequireAuth><VendedoraGate><AppLayout /></VendedoraGate></RequireAuth>}>
+      <Route element={<RequireAuth><RolAcotadoGate><AppLayout /></RolAcotadoGate></RequireAuth>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/clientes" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Clientes /></RequireRole>} />
         <Route path="/clientes/:id" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Cliente360 /></RequireRole>} />
@@ -123,7 +130,7 @@ export default function App() {
         <Route path="/emergencias" element={<RequireAlcance ambito="servicios"><Emergencias /></RequireAlcance>} />
         <Route path="/correctivos" element={<RequireAlcance ambito="servicios"><Correctivos /></RequireAlcance>} />
         <Route path="/mantenimientos" element={<RequireAlcance ambito="servicios"><Mantenimientos /></RequireAlcance>} />
-        <Route path="/leads" element={<RequireRole allow={['super_admin','admin','vendedora','coordinador']}><Leads /></RequireRole>} />
+        <Route path="/leads" element={<RequireRole allow={['super_admin','admin','vendedora','coordinador','central_ventas']}><Leads /></RequireRole>} />
         <Route path="/atenciones-rapidas" element={<RequireAlcance ambito="servicios"><AtencionesRapidas /></RequireAlcance>} />
         <Route path="/calendario" element={<Calendario />} />
         <Route path="/recordatorios" element={<Recordatorios />} />

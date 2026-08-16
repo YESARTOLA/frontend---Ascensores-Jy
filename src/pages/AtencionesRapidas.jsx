@@ -44,10 +44,20 @@ export default function AtencionesRapidas() {
     usePaginatedList(atencionesRapidasService.paginate, filtros, { initialPageSize: 25 });
 
   useEffect(() => {
-    Promise.all([clientesService.list(), ascensoresService.list(), tiposServicioService.list(), usuariosService.list()])
-      .then(([c, a, t, u]) => { setClientes(c); setAscensores(a); setTipos(t); setUsuarios(Array.isArray(u) ? u : []); })
-      .catch(() => {});
+    // Cada catálogo se aplica por separado: si uno falla, los demás selectores
+    // siguen poblados en vez de quedar todos vacíos. Los usuarios se piden al
+    // catálogo (/usuarios/catalogo) y no a /usuarios, que es solo super_admin y
+    // dejaba el selector de Responsable sin opciones para admin y coordinador.
+    const aplicar = (setter) => (r) => { if (r.status === 'fulfilled') setter(Array.isArray(r.value) ? r.value : []); };
+    Promise.allSettled([
+      clientesService.list(), ascensoresService.list(), tiposServicioService.list(), usuariosService.catalogo()
+    ]).then(([c, a, t, u]) => {
+      aplicar(setClientes)(c); aplicar(setAscensores)(a); aplicar(setTipos)(t); aplicar(setUsuarios)(u);
+    });
   }, []);
+  // Responsable ya asignado que no está en el catálogo (usuario dado de baja).
+  const responsableFueraDelCatalogo = !!form.id_responsable_usuario
+    && !usuarios.some(u => String(u.id) === String(form.id_responsable_usuario));
   const ascensoresF = (convForm.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(convForm.id_cliente)) : ascensores).filter(esAscensorServiciable);
   const labelCampoCliente = 'Cliente';
   // Jerarquía padre → subtipo para la conversión (el subtipo define el módulo destino).
@@ -210,6 +220,11 @@ export default function AtencionesRapidas() {
               onChange={e => setForm(f => ({ ...f, id_responsable_usuario: e.target.value }))}>
               <option value="">— Sin asignar —</option>
               {usuarios.map(u => <option key={u.id} value={u.id}>{u.nombres}{u.rol?.nombre ? ` · ${u.rol.nombre}` : ''}</option>)}
+              {/* El catálogo solo trae usuarios activos: si la atención ya tenía
+                  asignado uno dado de baja, se conserva para no borrarlo al editar. */}
+              {responsableFueraDelCatalogo && (
+                <option value={form.id_responsable_usuario}>Usuario #{form.id_responsable_usuario} (inactivo)</option>
+              )}
             </select>
           </div>
           <div><label className="label">Urgencia</label><select className="select" value={form.nivel_urgencia} onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}>{NIVELES_URGENCIA.map(n => <option key={n} value={n}>{n}</option>)}</select></div>

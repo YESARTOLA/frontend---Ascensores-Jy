@@ -29,7 +29,10 @@ export const clientesService = {
   clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data),
   // Detecta un cliente activo por RUC/DNI (devuelve el cliente o null) para
   // vincularlo en la conversión de leads en vez de crear un duplicado.
-  porDocumento: (numero) => api.get(`/clientes/por-documento/${encodeURIComponent(numero)}`).then(r => r.data?.data ?? r.data)
+  porDocumento: (numero) => api.get(`/clientes/por-documento/${encodeURIComponent(numero)}`).then(r => r.data?.data ?? r.data),
+  // Registra un contrato NUEVO en un área: archiva la vigencia anterior en el
+  // historial y deja la nueva como vigente (el PDF nuevo reemplaza al anterior).
+  registrarContrato: (id, d) => api.post(`/clientes/${id}/contrato`, d).then(r => r.data?.data ?? r.data)
 };
 
 // Edificios u obras de un cliente (ubicación física que agrupa ascensores).
@@ -52,6 +55,9 @@ export const ascensoresService = {
   ...crud('/ascensores'),
   paginate: (params) => api.get('/ascensores', { params }).then(r => r.data),
   historial: (id) => api.get(`/ascensores/${id}/historial`).then(r => r.data?.data ?? r.data),
+  // Exporta el listado respetando los filtros de pantalla (mismos `params`).
+  exportar: (params, formato = 'excel') =>
+    api.get('/ascensores/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   // Guarda el precio de UN subtipo sin tocar el resto del catálogo del ascensor
   // (a diferencia de `update`, que reemplaza el arreglo `precios` completo).
   // Devuelve { id_ascensor, precios } con el catálogo vigente ya actualizado.
@@ -107,6 +113,9 @@ export const serviciosService = {
   asignar: (id, payload) => api.post(`/servicios/${id}/asignar`, payload).then(r => r.data),
   iniciar: (id, accion) => api.post(`/servicios/${id}/iniciar`, { accion }).then(r => r.data),
   finalizar: (id, payload) => api.post(`/servicios/${id}/finalizar`, payload).then(r => r.data),
+  // Habilita (o revoca) el cierre de un servicio cuyo plazo venció. Solo super admin.
+  habilitarCierre: (id, habilitar = true) =>
+    api.patch(`/servicios/${id}/habilitar-cierre`, { habilitar }).then(r => r.data),
   cancelar: (id, motivo) => api.post(`/servicios/${id}/cancelar`, { motivo }).then(r => r.data),
   remove: (id) => api.delete(`/servicios/${id}`).then(r => r.data),
   promover: (id) => api.post(`/servicios/${id}/promover`).then(r => r.data),
@@ -232,7 +241,13 @@ export const leadsService = {
   vendedores: () => api.get('/leads/vendedores').then(r => r.data?.data ?? r.data),
   convertir: (id, payload) => api.post(`/leads/${id}/convertir`, payload).then(r => r.data?.data ?? r.data),
   cotizaciones: (id) => api.get(`/leads/${id}/cotizaciones`).then(r => r.data?.data ?? r.data),
-  subirCotizacion: (id, id_archivo) => api.post(`/leads/${id}/cotizaciones`, { id_archivo }).then(r => r.data?.data ?? r.data)
+  subirCotizacion: (id, id_archivo) => api.post(`/leads/${id}/cotizaciones`, { id_archivo }).then(r => r.data?.data ?? r.data),
+  // Documentos libres del lead (PDF, imágenes, videos, Office…). El listado
+  // devuelve `{ data, meta: { max, puede_gestionar } }` sin desenvolver: el
+  // modal necesita el meta para saber si el rol puede subir o eliminar.
+  documentos: (id) => api.get(`/leads/${id}/documentos`).then(r => r.data),
+  agregarDocumentos: (id, documentos) => api.post(`/leads/${id}/documentos`, { documentos }).then(r => r.data?.data ?? r.data),
+  eliminarDocumento: (id, idVinculo) => api.delete(`/leads/${id}/documentos/${idVinculo}`).then(r => r.data)
 };
 
 export const atencionesRapidasService = {
@@ -299,6 +314,11 @@ export const recordatoriosService = {
 export const usuariosService = {
   list: (params) => api.get('/usuarios', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/usuarios', { params }).then(r => r.data),
+  // Catálogo mínimo (id, nombres, rol) de usuarios activos para los selectores
+  // de personas. `list` sirve la gestión de usuarios y es solo super_admin: con
+  // él, los selects de Responsable/Vendedor quedaban vacíos para admin y
+  // coordinador. Acepta { rol: 'vendedora,admin' } para acotar por rol.
+  catalogo: (params) => api.get('/usuarios/catalogo', { params }).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/usuarios', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/usuarios/${id}`, d).then(r => r.data?.data ?? r.data),
   setEstado: (id, estado) => api.patch(`/usuarios/${id}/estado`, { estado }).then(r => r.data),

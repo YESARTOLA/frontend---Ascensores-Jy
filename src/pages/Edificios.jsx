@@ -200,10 +200,10 @@ export default function Edificios() {
             <div className="hidden md:block overflow-x-auto scroll-thin">
               <table className="table-base">
                 <thead><tr>
-                  <th className="table-th">Nombre</th><th className="table-th">Tipo</th>
-                  <th className="table-th">Cliente</th><th className="table-th">Distrito</th>
+                  <th className="table-th">Nombre</th><th className="table-th">Cliente</th>
+                  <th className="table-th">Distrito</th><th className="table-th">Tipo</th>
                   <th className="table-th">Ascensores</th>
-                  <th className="table-th">Actividad</th>
+                  <th className="table-th">Área</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
@@ -214,17 +214,19 @@ export default function Edificios() {
                           <span className="font-medium text-slate-800">{ed.nombre}</span>
                           {ed.estado === 0 && <BadgeInactivo />}
                         </div>
-                        {ed.direccion && <div className="text-xs text-slate-500">{ed.direccion}</div>}
-                      </td>
-                      <td className="table-td">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full ring-1 ${colorTipo(ed.tipo)}`}>{ed.tipo}</span>
                       </td>
                       <td className="table-td">
                         {ed.cliente?.id
                           ? <Link to={`/clientes/${ed.cliente.id}`} className="text-brand-700 hover:underline">{nombreCliente(ed.cliente)}</Link>
                           : <span className="text-slate-400">—</span>}
                       </td>
-                      <td className="table-td text-xs">{ed.distrito || '—'}</td>
+                      <td className="table-td text-xs">
+                        <div>{ed.distrito || '—'}</div>
+                        {ed.direccion && <div className="text-slate-500">{ed.direccion}</div>}
+                      </td>
+                      <td className="table-td">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ring-1 ${colorTipo(ed.tipo)}`}>{ed.tipo}</span>
+                      </td>
                       <td className="table-td text-xs">
                         <span className="font-medium text-slate-700">{ed._count?.ascensores ?? 0}</span>
                         {ed.tipos_ascensores?.length > 0 && <div className="text-slate-500">{ed.tipos_ascensores.join(', ')}</div>}

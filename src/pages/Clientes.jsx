@@ -11,6 +11,7 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { formatFecha, hoyISO, formatTelefono } from '../utils/formatters.js';
 import ClienteForm, { clienteFormInicial, clienteToForm } from '../components/clientes/ClienteForm.jsx';
+import ContratoNuevoModal from '../components/clientes/ContratoNuevoModal.jsx';
 
 const estadosContrato = (diasAviso) => [
   { value: '', label: 'Todos los contratos' },
@@ -24,6 +25,16 @@ const CON_CONTRATO = [
   { value: '', label: 'Contrato adjunto: todos' },
   { value: '1', label: 'Con contrato adjunto' },
   { value: '0', label: 'Sin contrato adjunto' }
+];
+
+// Área cuyos datos de contrato y documentación registra el cliente (la misma
+// pregunta del formulario de alta). Es inclusivo: "Área de Servicios" también
+// devuelve a los clientes que registran las dos áreas.
+const AREA_CONTRATO = [
+  { value: '', label: 'Todas las áreas' },
+  { value: 'servicio', label: 'Área de Servicios' },
+  { value: 'proyecto', label: 'Área de Proyectos' },
+  { value: 'ambos', label: 'Ambas áreas' }
 ];
 
 // Teléfono mostrado en el listado: el del contacto principal, con el teléfono
@@ -47,8 +58,40 @@ function estadoContratoBadge(inicio, fin, diasAviso) {
 
 const AREAS_CONTRATO_LABEL = { servicio: 'Servicios', proyecto: 'Proyectos' };
 
+// Señala de forma discreta por qué entró el cliente en los resultados cuando la
+// coincidencia no fue por sus propios datos sino por un edificio/obra o por un
+// ascensor suyo (el backend los devuelve en `*_coincidentes` al buscar).
+function Coincidencias({ cliente }) {
+  const edificios = cliente.edificios_coincidentes || [];
+  const ascensores = cliente.ascensores_coincidentes || [];
+  if (edificios.length === 0 && ascensores.length === 0) return null;
+
+  const chip = (texto, key) => (
+    <span key={key} className="font-semibold text-amber-700 bg-amber-50 rounded px-1 py-0.5">{texto}</span>
+  );
+  const linea = (etiqueta, items, render) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="text-[11px] text-slate-400 mt-0.5 leading-tight">
+        <span className="italic">{etiqueta}:</span>{' '}
+        {items.slice(0, 2).map((it, i) => (
+          <Fragment key={it.id}>{i > 0 && ', '}{chip(render(it), it.id)}</Fragment>
+        ))}
+        {items.length > 2 && <span className="italic"> +{items.length - 2} más</span>}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      {linea('Coincide', edificios, e => e.nombre)}
+      {linea('Ascensor', ascensores, a => [a.codigo, a.edificio].filter(Boolean).join(' · '))}
+    </>
+  );
+}
+
 export default function Clientes() {
-  const [filtros, setFiltros] = useState({ q: '', distrito: '', tipo_ascensor: '', clasificacion: '', estado_contrato: '', con_contrato: '' });
+  const [filtros, setFiltros] = useState({ q: '', distrito: '', tipo_ascensor: '', clasificacion: '', estado_contrato: '', con_contrato: '', area_contrato: '' });
   const [clasificaciones, setClasificaciones] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(clienteFormInicial);
@@ -57,6 +100,8 @@ export default function Clientes() {
   const [exportando, setExportando] = useState(false);
   // Cliente seleccionado para inactivar/reactivar todos sus edificios (solo SA).
   const [clienteEdificios, setClienteEdificios] = useState(null);
+  // Cliente al que se le registra un contrato nuevo (renovación).
+  const [clienteContrato, setClienteContrato] = useState(null);
   const [cambiandoEdificios, setCambiandoEdificios] = useState(false);
   const [diasAviso, setDiasAviso] = useState(30);
   const [distritos, setDistritos] = useState([]);
@@ -218,7 +263,7 @@ export default function Clientes() {
         <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
           <input
             className="input lg:col-span-2"
-            placeholder="Buscar por nombre, edificio, RUC, teléfono…"
+            placeholder="Buscar por nombre, RUC, teléfono, edificio/obra o ascensor…"
             value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))}
           />
@@ -241,7 +286,16 @@ export default function Clientes() {
             <option value="">Todas las clasificaciones</option>
             {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>)}
           </select>
-          <select className="select sm:col-span-2 lg:col-span-4" value={filtros.con_contrato}
+          {/* Solo tiene sentido para quien ve las dos áreas: un usuario acotado
+              ya recibe únicamente los clientes de la suya. */}
+          {accesoServicios && accesoProyectos && (
+            <select className="select lg:col-span-2" value={filtros.area_contrato}
+              onChange={e => setFiltros(f => ({ ...f, area_contrato: e.target.value }))}>
+              {AREA_CONTRATO.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          )}
+          <select className={`select sm:col-span-2 ${accesoServicios && accesoProyectos ? 'lg:col-span-2' : 'lg:col-span-4'}`}
+            value={filtros.con_contrato}
             onChange={e => setFiltros(f => ({ ...f, con_contrato: e.target.value }))}>
             {CON_CONTRATO.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
@@ -259,8 +313,6 @@ export default function Clientes() {
               <table className="table-base">
                 <thead><tr>
                   <th className="table-th">Cliente</th>
-                  <th className="table-th">Documento</th>
-                  <th className="table-th">Teléfono</th>
                   <th className="table-th">Edificios</th>
                   {areasContrato.map(area => {
                     const et = areasContrato.length > 1 ? ` (${AREAS_CONTRATO_LABEL[area]})` : '';
@@ -291,24 +343,9 @@ export default function Clientes() {
                           </div>
                           {c.contacto_principal_nombre && <div className="text-xs text-slate-500">{c.contacto_principal_nombre}</div>}
                         </td>
-                        <td className="table-td"><span className="text-xs">{c.tipo_documento}</span> <span className="font-mono">{c.numero_documento || '—'}</span></td>
-                        <td className="table-td font-mono text-xs">{telefonoContacto(c) || <span className="text-slate-400">—</span>}</td>
                         <td className="table-td">
                           <div>{c._count?.edificios ?? 0}</div>
-                          {c.edificios_coincidentes?.length > 0 && (
-                            <div className="text-[11px] text-slate-400 mt-0.5 leading-tight">
-                              <span className="italic">Coincide:</span>{' '}
-                              {c.edificios_coincidentes.slice(0, 2).map((e, i) => (
-                                <span key={e.id}>
-                                  {i > 0 && ', '}
-                                  <span className="font-semibold text-amber-700 bg-amber-50 rounded px-1 py-0.5">{e.nombre}</span>
-                                </span>
-                              ))}
-                              {c.edificios_coincidentes.length > 2 && (
-                                <span className="italic"> +{c.edificios_coincidentes.length - 2} más</span>
-                              )}
-                            </div>
-                          )}
+                          <Coincidencias cliente={c} />
                         </td>
                         {areasContrato.map(area => {
                           const inicio = c[`contrato_${area}_inicio`];
@@ -344,6 +381,9 @@ export default function Clientes() {
                         <td className="table-td text-right space-x-2 whitespace-nowrap">
                           <Link to={`/clientes/${c.id}`} className="text-brand-700 hover:underline text-xs font-medium">Ver 360</Link>
                           {puedeEditar && <button onClick={() => abrirEdit(c)} className="text-slate-600 hover:underline text-xs">Editar</button>}
+                          {puedeEditar && (
+                            <button onClick={() => setClienteContrato(c)} className="text-slate-600 hover:underline text-xs">Contrato nuevo</button>
+                          )}
                           {esSuperAdmin && (c._count?.edificios ?? 0) > 0 && (
                             <button onClick={() => setClienteEdificios(c)} className="text-slate-600 hover:underline text-xs">Edificios</button>
                           )}
@@ -364,6 +404,7 @@ export default function Clientes() {
                       <div className="font-medium text-slate-800 truncate">{c.nombre}</div>
                       <div className="text-xs text-slate-500">{c.tipo_documento} {c.numero_documento || ''}</div>
                       <div className="text-xs text-slate-500 mt-0.5 font-mono">{telefonoContacto(c)}</div>
+                      <Coincidencias cliente={c} />
                       <div className="mt-1.5">{renderContratoCell(c)}</div>
                       {c.clasificacion && clasificacionByCodigo[c.clasificacion] && (
                         <div className="mt-1">
@@ -375,6 +416,7 @@ export default function Clientes() {
                       <div className="mt-2 flex gap-3">
                         <Link to={`/clientes/${c.id}`} className="text-xs text-brand-700 font-medium">Ver 360 →</Link>
                         {puedeEditar && <button onClick={() => abrirEdit(c)} className="text-xs text-slate-600">Editar</button>}
+                        {puedeEditar && <button onClick={() => setClienteContrato(c)} className="text-xs text-slate-600">Contrato nuevo</button>}
                         {esSuperAdmin && (c._count?.edificios ?? 0) > 0 && (
                           <button onClick={() => setClienteEdificios(c)} className="text-xs text-slate-600">Edificios</button>
                         )}
@@ -405,6 +447,12 @@ export default function Clientes() {
           clasificaciones={clasificaciones}
         />
       </Modal>
+
+      <ContratoNuevoModal
+        cliente={clienteContrato}
+        onClose={() => setClienteContrato(null)}
+        onSaved={() => { setClienteContrato(null); cargar(); }}
+      />
 
       <Modal open={!!clienteEdificios} onClose={() => setClienteEdificios(null)} title="Edificios del cliente" size="sm"
         footer={

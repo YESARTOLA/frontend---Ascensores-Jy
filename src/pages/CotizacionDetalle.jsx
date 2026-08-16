@@ -113,8 +113,8 @@ export default function CotizacionDetalle() {
   // Edición de items mientras la versión está en Cotizado
   const [editandoItems, setEditandoItems] = useState(false);
   const [itemsForm, setItemsForm] = useState([]);
-  const [fechaValidezForm, setFechaValidezForm] = useState('');
   const [observForm, setObservForm] = useState('');
+  const [garantiaForm, setGarantiaForm] = useState('');
   const [cuotasForm, setCuotasForm] = useState(planCuotasDesdeServidor(null));
   const [saving, setSaving] = useState(false);
 
@@ -261,8 +261,8 @@ export default function CotizacionDetalle() {
       id_archivo: it.id_archivo || null,
       archivo: it.archivo || null
     })));
-    setFechaValidezForm(String(versionActiva.fecha_validez).slice(0, 10));
     setObservForm(versionActiva.observaciones || '');
+    setGarantiaForm(versionActiva.garantia || '');
     setCuotasForm(planCuotasDesdeServidor(versionActiva));
     setCuentasForm(cuentasPreseleccionadas(versionActiva, cuentas));
     setEditandoItems(true);
@@ -289,8 +289,8 @@ export default function CotizacionDetalle() {
           descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
           id_archivo: it.id_archivo || null
         })),
-        fecha_validez: fechaValidezForm,
         observaciones: observForm,
+        garantia: garantiaForm,
         tiene_cuotas: payloadCuotas.tiene_cuotas,
         plan_cuotas: payloadCuotas.plan_cuotas,
         saldo_variable: payloadCuotas.saldo_variable,
@@ -575,7 +575,7 @@ export default function CotizacionDetalle() {
               <span className={`badge ${badgeEstado(versionActiva.estado_version)}`}>v{versionActiva.numero_version} — {versionActiva.estado_version}</span>
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm pt-2 border-t border-carbon-100">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm pt-2 border-t border-carbon-100">
             <div>
               <div className="text-xs text-carbon-500">Cliente</div>
               <div className="font-medium">{cot.cliente?.nombre || '—'}</div>
@@ -595,10 +595,6 @@ export default function CotizacionDetalle() {
                   ))}
                 </div>
               ) : <div className="text-carbon-400">—</div>}
-            </div>
-            <div>
-              <div className="text-xs text-carbon-500">Validez</div>
-              <div className="font-medium">{formatFecha(versionActiva.fecha_validez)}</div>
             </div>
             <div>
               <div className="text-xs text-carbon-500">Total</div>
@@ -629,8 +625,7 @@ export default function CotizacionDetalle() {
                   <span className="font-medium">v{v.numero_version}</span>
                   <span className={`badge text-xs ${badgeEstado(v.estado_version)}`}>{v.estado_version}</span>
                 </div>
-                <div className="flex justify-between text-xs text-carbon-500 mt-0.5">
-                  <span>Validez {formatFecha(v.fecha_validez)}</span>
+                <div className="flex justify-end text-xs text-carbon-500 mt-0.5">
                   <span>{formatMonto(v.monto_total, v.moneda)}</span>
                 </div>
                 {v.motivo_cambio && <div className="text-xs text-carbon-400 italic mt-1 line-clamp-2">"{v.motivo_cambio}"</div>}
@@ -664,10 +659,10 @@ export default function CotizacionDetalle() {
               <ItemsEditor
                 items={itemsForm}
                 setItems={setItemsForm}
-                fechaValidez={fechaValidezForm}
-                setFechaValidez={setFechaValidezForm}
                 observ={observForm}
                 setObserv={setObservForm}
+                garantia={garantiaForm}
+                setGarantia={setGarantiaForm}
                 cuotas={cuotasForm}
                 setCuotas={setCuotasForm}
                 cuentas={cuentas}
@@ -695,8 +690,7 @@ export default function CotizacionDetalle() {
                     <span className="font-bold">v{v.numero_version}</span>
                     <span className={`badge ${badgeEstado(v.estado_version)}`}>{v.estado_version}</span>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-carbon-600">
-                    <div>Validez: {formatFecha(v.fecha_validez)}</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-carbon-600">
                     <div>Enviada: {v.fecha_envio ? formatFecha(v.fecha_envio) : '—'}</div>
                     <div>Aprobada: {v.fecha_aprobacion ? formatFechaHora(v.fecha_aprobacion) : '—'}</div>
                     <div>Total: {formatMonto(v.monto_total, v.moneda)}</div>
@@ -1249,6 +1243,13 @@ function ItemsView({ version, igvTasa }) {
         </div>
       )}
 
+      {version.garantia && (
+        <div className="mt-4 p-3 bg-ivory-50 rounded text-sm">
+          <div className="text-xs text-carbon-500 uppercase mb-1">Garantía</div>
+          <div className="whitespace-pre-line">{version.garantia}</div>
+        </div>
+      )}
+
       {version.observaciones && (
         <div className="mt-4 p-3 bg-ivory-50 rounded text-sm">
           <div className="text-xs text-carbon-500 uppercase mb-1">Observaciones</div>
@@ -1259,7 +1260,7 @@ function ItemsView({ version, igvTasa }) {
   );
 }
 
-function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, setObserv, cuotas, setCuotas, cuentas, cuentasSel, setCuentasSel, igvTasa, totales, moneda, onCancel, onSave, saving }) {
+function ItemsEditor({ items, setItems, observ, setObserv, garantia, setGarantia, cuotas, setCuotas, cuentas, cuentasSel, setCuentasSel, igvTasa, totales, moneda, onCancel, onSave, saving }) {
   const toast = useToast();
   const cambiar = (idx, key, val) => setItems(arr => arr.map((it, i) => i === idx ? { ...it, [key]: val } : it));
   const agregar = () => setItems(arr => [...arr, itemVacio()]);
@@ -1281,12 +1282,6 @@ function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, s
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Fecha de validez</label>
-          <input type="date" className="input" value={fechaValidez} onChange={e => setFechaValidez(e.target.value)} />
-        </div>
-      </div>
       <div className="flex items-center justify-between">
         <label className="label !mb-0">Items</label>
         <button type="button" onClick={agregar} className="btn-ghost text-xs !py-1.5 !px-3">+ Agregar item</button>
@@ -1349,6 +1344,16 @@ function ItemsEditor({ items, setItems, fechaValidez, setFechaValidez, observ, s
         total={totales.total}
         moneda={moneda}
       />
+
+      <div>
+        <label className="label">Garantía</label>
+        <textarea className="textarea" rows="2" value={garantia}
+          placeholder="Ej.: 12 meses por defectos de fabricación, contados desde la puesta en marcha."
+          onChange={e => setGarantia(e.target.value)} />
+        <p className="text-[11px] text-carbon-400 mt-1">
+          Se imprime en el PDF como «Garantía: …». Si se deja vacío, no aparece.
+        </p>
+      </div>
 
       <div>
         <label className="label">Observaciones</label>
