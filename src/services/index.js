@@ -101,17 +101,18 @@ export const serviciosService = {
   get: (id) => api.get(`/servicios/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/servicios', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/servicios/${id}`, d).then(r => r.data?.data ?? r.data),
-  // Cambiar la duración (días) de un servicio ya programado, incluso En curso.
-  // El backend puede responder 409 { requiere_confirmacion } si se recortan días
-  // con evidencia; reenviar con { confirmar: true }.
-  cambiarDuracion: (id, payload) => api.patch(`/servicios/${id}/duracion`, payload).then(r => r.data),
+  // Reprogramar los días de trabajo de un servicio ya programado, incluso En
+  // curso. Payload: { dias: [{desde,hasta}|'YYYY-MM-DD'], hora_programada } —
+  // rangos y/o fechas sueltas — o el atajo { duracion_dias } (días corridos).
+  // El backend puede responder 409 { requiere_confirmacion } si la nueva
+  // programación deja fuera días con evidencia; reenviar con { confirmar: true }.
+  cambiarProgramacion: (id, payload) => api.patch(`/servicios/${id}/programacion`, payload).then(r => r.data),
   setEstado: (id, estado_servicio) => api.patch(`/servicios/${id}/estado`, { estado_servicio }).then(r => r.data?.data ?? r.data),
   setRequiereFactura: (id, requiere_factura) => api.patch(`/servicios/${id}/requiere-factura`, { requiere_factura }).then(r => r.data?.data ?? r.data),
   // Datos de apoyo del card "Datos" que carga el coordinador: contacto en sitio
   // (nombre + teléfono) y si el edificio tiene cuarto de máquinas ('Si' | 'No').
   setDatosContacto: (id, payload) => api.patch(`/servicios/${id}/datos-contacto`, payload).then(r => r.data?.data ?? r.data),
   asignar: (id, payload) => api.post(`/servicios/${id}/asignar`, payload).then(r => r.data),
-  iniciar: (id, accion) => api.post(`/servicios/${id}/iniciar`, { accion }).then(r => r.data),
   finalizar: (id, payload) => api.post(`/servicios/${id}/finalizar`, payload).then(r => r.data),
   // Habilita (o revoca) el cierre de un servicio cuyo plazo venció. Solo super admin.
   habilitarCierre: (id, habilitar = true) =>
@@ -125,26 +126,28 @@ export const serviciosService = {
   observaciones: (idServicio) => api.get(`/servicios/${idServicio}/observaciones`).then(r => r.data?.data ?? r.data),
   crearObservacion: (idServicio, payload) => api.post(`/servicios/${idServicio}/observaciones`, payload).then(r => r.data?.data ?? r.data),
   atenderObservacion: (id) => api.patch(`/servicios/observaciones/${id}/atender`).then(r => r.data?.data ?? r.data),
+  actualizarObservacion: (id, payload) => api.patch(`/servicios/observaciones/${id}`, payload).then(r => r.data?.data ?? r.data),
+  // Corrige el informe de cierre del técnico (observaciones y descargo).
+  actualizarInformeTecnico: (idServicio, payload) => api.patch(`/servicios/${idServicio}/informe-tecnico`, payload).then(r => r.data?.data ?? r.data),
   eliminarObservacion: (id) => api.delete(`/servicios/observaciones/${id}`).then(r => r.data),
   // Checklist de finalización (progresivo: se llena durante "En curso")
   obtenerFinalizacion: (idServicio) => api.get(`/servicios/${idServicio}/finalizacion`).then(r => r.data?.data ?? r.data),
   guardarRespuestaChecklist: (idServicio, idItem, payload) => api.patch(`/servicios/${idServicio}/finalizacion/items/${idItem}`, payload).then(r => r.data?.data ?? r.data),
   agregarFotoChecklist: (idServicio, idItem, payload) => api.post(`/servicios/${idServicio}/finalizacion/items/${idItem}/fotos`, payload).then(r => r.data?.data ?? r.data),
   eliminarFotoChecklist: (idServicio, idFoto) => api.delete(`/servicios/${idServicio}/finalizacion/fotos/${idFoto}`).then(r => r.data),
+  // Previsualización del informe: los mismos datos que se van a imprimir, para
+  // revisarlos y corregir los textos antes de emitir el PDF.
+  previsualizarInforme: (idServicio) => api.get(`/servicios/${idServicio}/finalizacion/informe`).then(r => r.data?.data ?? r.data),
   // Genera el informe PDF a partir del checklist ya completado (al cerrar).
-  generarInformeFinalizacion: (idServicio) => api.post(`/servicios/${idServicio}/finalizacion`).then(r => r.data?.data ?? r.data),
+  generarInformeFinalizacion: (idServicio, payload) => api.post(`/servicios/${idServicio}/finalizacion`, payload || {}).then(r => r.data?.data ?? r.data),
+  // Orden de trabajo: se registra durante la ejecución (sección propia, junto a
+  // la guía) y de ahí la leen el cierre, Contabilidad y Gestión de cobros.
+  guardarOt: (idServicio, payload) => api.put(`/servicios/${idServicio}/ot`, payload).then(r => r.data?.data ?? r.data),
+  eliminarOt: (idServicio) => api.delete(`/servicios/${idServicio}/ot`).then(r => r.data),
   // Guías de salida (gestión por coordinador/admin/super_admin/técnico responsable).
   crearGuia: (idServicio, payload) => api.post(`/servicios/${idServicio}/guias`, payload).then(r => r.data?.data ?? r.data),
   actualizarGuia: (idServicio, idGuia, payload) => api.put(`/servicios/${idServicio}/guias/${idGuia}`, payload).then(r => r.data?.data ?? r.data),
   eliminarGuia: (idServicio, idGuia) => api.delete(`/servicios/${idServicio}/guias/${idGuia}`).then(r => r.data)
-};
-
-export const checklistService = {
-  porServicio: (idServicio) => api.get(`/checklists/por-servicio/${idServicio}`).then(r => r.data?.data ?? r.data),
-  addItem: (idChecklist, data) => api.post(`/checklists/${idChecklist}/items`, data).then(r => r.data?.data ?? r.data),
-  updateItem: (id, data) => api.put(`/checklists/items/${id}`, data).then(r => r.data?.data ?? r.data),
-  deleteItem: (id) => api.delete(`/checklists/items/${id}`).then(r => r.data),
-  completar: (idChecklist) => api.post(`/checklists/${idChecklist}/completar`).then(r => r.data)
 };
 
 export const cobrosService = {
@@ -218,17 +221,20 @@ export const mantenimientosService = {
   // Preview del borrado en cascada: alimenta el modal de confirmación.
   impactoEliminacion: (id) => api.get(`/mantenimientos/${id}/impacto-eliminacion`).then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/mantenimientos/${id}`).then(r => r.data),
-  // Precio del plan: { ascensores: [{id_ascensor, monto}] } y/o { precio_total }
-  // (este último se reparte proporcional al desglose vigente).
-  actualizarPrecios: (id, body) => api.put(`/mantenimientos/${id}/precios`, body).then(r => r.data?.data ?? r.data),
-  // Precio de UNA ocurrencia del plan (mantenimiento de un ascensor en una fecha).
-  actualizarPrecioServicio: (idServicio, body) =>
-    api.put(`/mantenimientos/servicios/${idServicio}/precio`, body).then(r => r.data?.data ?? r.data),
-  // Facturación por PERIODO del plan (una factura + un pago por el total de todos
-  // los ascensores de cada ocurrencia).
+  // Precio del plan: UN monto global mensual. Es el único importe facturable.
+  // { monto_mensual, moneda? }
+  actualizarMontoMensual: (id, body) =>
+    api.put(`/mantenimientos/${id}/monto-mensual`, body).then(r => r.data?.data ?? r.data),
+  // Cronograma del plan: todas las fechas de cada ascensor con su frecuencia.
+  programacion: (id) => api.get(`/mantenimientos/${id}/programacion`).then(r => r.data?.data ?? r.data),
+  // Omite o reactiva fechas: { ids: [...], activo: 0|1, motivo? }.
+  // Omitir NO cambia el monto mensual del plan.
+  cambiarActivoProgramacion: (id, body) =>
+    api.put(`/mantenimientos/${id}/programacion`, body).then(r => r.data?.data ?? r.data),
+  // Facturación por MES del plan: una factura y un pago por mes, por el monto
+  // mensual pactado, con el detalle de todas las visitas de ese mes.
   periodos: (id) => api.get(`/mantenimientos/${id}/periodos`).then(r => r.data?.data ?? r.data),
-  aprobarPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/aprobar`, body || {}).then(r => r.data?.data ?? r.data),
-  ajustarPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/ajustar`, body || {}).then(r => r.data?.data ?? r.data)
+  aprobarPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/aprobar`, body || {}).then(r => r.data?.data ?? r.data)
 };
 
 export const leadsService = {
@@ -239,6 +245,13 @@ export const leadsService = {
   historial: (id) => api.get(`/leads/${id}/historial`).then(r => r.data?.data ?? r.data),
   cambiarEstado: (id, estado_lead, motivo_descarte) => api.patch(`/leads/${id}/estado`, { estado_lead, motivo_descarte }).then(r => r.data?.data ?? r.data),
   vendedores: () => api.get('/leads/vendedores').then(r => r.data?.data ?? r.data),
+  // Personas a las que se puede asignar un lead (rol que puede trabajarlo y
+  // convertirlo). Vive en /leads y no en /usuarios porque la Central de ventas
+  // está confinada a este módulo.
+  asignables: () => api.get('/leads/asignables').then(r => r.data?.data ?? r.data),
+  // Prospectos ya registrados (lead o cliente) que comparten teléfono, nombre
+  // o documento. Solo informa: el alta y la edición lo revalidan en el backend.
+  duplicados: (params) => api.get('/leads/duplicados', { params }).then(r => r.data?.data ?? r.data),
   convertir: (id, payload) => api.post(`/leads/${id}/convertir`, payload).then(r => r.data?.data ?? r.data),
   cotizaciones: (id) => api.get(`/leads/${id}/cotizaciones`).then(r => r.data?.data ?? r.data),
   subirCotizacion: (id, id_archivo) => api.post(`/leads/${id}/cotizaciones`, { id_archivo }).then(r => r.data?.data ?? r.data),
@@ -270,7 +283,7 @@ export const reportesService = {
   operativos: (params) => api.get('/reportes/operativos', { params }).then(r => r.data?.data ?? r.data),
   cobros: (params) => api.get('/reportes/cobros', { params }).then(r => r.data?.data ?? r.data),
   tecnicos: () => api.get('/reportes/tecnicos').then(r => r.data?.data ?? r.data),
-  leads: () => api.get('/reportes/leads').then(r => r.data?.data ?? r.data),
+  leads: (params) => api.get('/reportes/leads', { params }).then(r => r.data?.data ?? r.data),
   ascensores: () => api.get('/reportes/ascensores').then(r => r.data?.data ?? r.data),
   mantenimientosVencidos: (params) => api.get('/reportes/mantenimientos-vencidos', { params }).then(r => r.data?.data ?? r.data),
   mantenimientosCumplidos: (params) => api.get('/reportes/mantenimientos-cumplidos', { params }).then(r => r.data?.data ?? r.data),

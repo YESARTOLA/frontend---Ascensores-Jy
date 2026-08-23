@@ -9,14 +9,11 @@ import { useToast } from '../components/common/Toast.jsx';
 import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import { generarFichaAscensorPDF } from '../utils/pdfReport.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
-import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
 import AscensorForm, { ascensorToForm } from '../components/ascensores/AscensorForm.jsx';
-import { useClasificaciones } from '../hooks/useClasificaciones.js';
+import FichaTecnicaAscensor from '../components/ascensores/FichaTecnicaAscensor.jsx';
 
 export default function AscensorHistorial() {
   const { id } = useParams();
-  const clasificaciones = useClasificaciones();
   const location = useLocation();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -67,9 +64,6 @@ export default function AscensorHistorial() {
   if (!data) return <p>Ascensor no encontrado</p>;
 
   const { ascensor, servicios, emergencias, mantenimientos, entregas, facturas, guias, evidencias, historial } = data;
-  const clasificacionActual = ascensor.clasificacion
-    ? clasificaciones.find(c => c.codigo === ascensor.clasificacion)
-    : null;
 
   const exportarPdf = async () => {
     if (exportandoPdf) return;
@@ -107,76 +101,7 @@ export default function AscensorHistorial() {
         } />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="card">
-          <div className="card-header"><h3 className="card-title">Ficha técnica</h3></div>
-          <div className="card-body grid grid-cols-2 gap-3 text-sm">
-            <Info label="Código" value={<span className="font-mono">{ascensor.codigo}</span>} />
-            <Info label="Estado" value={<span className={badgeEstado(ascensor.estado_operativo)}>{ascensor.estado_operativo}</span>} />
-            <Info label="Tipo" value={ascensor.tipo} />
-            <Info label="Marca" value={ascensor.marca} />
-            <Info label="Modelo" value={ascensor.modelo} />
-            <Info label="Capacidad" value={ascensor.capacidad} />
-            <Info label="Pisos" value={ascensor.pisos} />
-            <Info label="Año" value={ascensor.anio_aproximado} />
-            <Info label="Clasificación" cols={2} value={
-              clasificacionActual
-                ? <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${clasificacionActual.color}`}>
-                    {clasificacionActual.etiqueta}
-                  </span>
-                : '—'
-            } />
-            <Info label="Ubicación" value={ascensor.ubicacion} cols={2} />
-            <Info label="Próx. mantenimiento" value={formatFecha(ascensor.proximo_mantenimiento)} cols={2} />
-            {/* Datos de sitio que hereda cada servicio nuevo sobre este ascensor. */}
-            <Info label="Cuarto de máquinas" value={
-              ascensor.cuarto_maquinas
-                ? <span className={ascensor.cuarto_maquinas === 'Si' ? 'badge-green' : 'badge-gray'}>
-                    {ascensor.cuarto_maquinas === 'Si' ? 'Sí' : 'No'}
-                  </span>
-                : '—'
-            } />
-            <Info label="Contacto en sitio" value={
-              (ascensor.contacto_nombre || ascensor.contacto_telefono)
-                ? <div className="space-y-0.5">
-                    {ascensor.contacto_nombre && <div>{ascensor.contacto_nombre}</div>}
-                    {ascensor.contacto_telefono && (
-                      <a href={`tel:${ascensor.contacto_telefono}`} className="text-brand-700 hover:underline font-mono text-xs">
-                        {ascensor.contacto_telefono}
-                      </a>
-                    )}
-                  </div>
-                : '—'
-            } />
-            <Info label="Observaciones" value={ascensor.observaciones || '—'} cols={2} />
-            <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">Ubicación del edificio</div>
-                {coordsDe(ascensor.edificio) && (
-                  <a
-                    href={linkGoogleMaps(coordsDe(ascensor.edificio))}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-brand-700 hover:underline font-medium"
-                  >
-                    📍 Abrir en Google Maps ↗
-                  </a>
-                )}
-              </div>
-              {(ascensor.edificio?.direccion || ascensor.edificio?.distrito) && (
-                <div className="text-sm text-slate-800 mb-2">
-                  {[ascensor.edificio?.direccion, ascensor.edificio?.distrito].filter(Boolean).join(' · ')}
-                </div>
-              )}
-              {coordsDe(ascensor.edificio) ? (
-                <MapaUbicacion valor={ascensor.edificio} alto="200px" mostrarLinkMaps={false} />
-              ) : (
-                <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                  Ubicación no registrada para este edificio.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <FichaTecnicaAscensor ascensor={ascensor} />
 
         <div className="card lg:col-span-2">
           <div className="card-header"><h3 className="card-title">Servicios ({servicios.length})</h3></div>
@@ -247,6 +172,7 @@ export default function AscensorHistorial() {
           </ul>
         </Bloque>
 
+        {puedeVerPrecio && (
         <Bloque titulo={`Facturas (${facturas.length})`} vacio="Sin facturas" count={facturas.length}>
           <ul className="space-y-2 max-h-64 overflow-y-auto scroll-thin">
             {facturas.map(f => (
@@ -264,6 +190,7 @@ export default function AscensorHistorial() {
             ))}
           </ul>
         </Bloque>
+        )}
 
         <Bloque titulo={`Guías (${guias.length})`} vacio="Sin guías" count={guias.length}>
           <ul className="space-y-2 max-h-64 overflow-y-auto scroll-thin">

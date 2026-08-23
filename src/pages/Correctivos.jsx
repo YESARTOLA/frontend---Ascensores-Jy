@@ -12,6 +12,10 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, hoyISO, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
+import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
+import {
+  tramoDeUnDia, tramosDeServicio, fechasDesdeTramos, payloadDias, errorDeTramos, etiquetaProgramacion
+} from '../utils/programacion.js';
 
 // Duración de trabajo entre inicio y término reales, en formato compacto (ej. "1h 25m").
 function formatDuracion(inicio, fin) {
@@ -32,8 +36,6 @@ import { esServicioEditable, ESTADOS_CORRECTIVO, esCorrectivoCerrado } from '../
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
-const TIPOS_ITEM = ['Herramienta', 'Material', 'Equipo', 'Repuesto', 'Otro'];
-const UNIDADES = ['Unidad', 'Metro', 'Caja', 'Bolsa', 'Litro', 'Juego', 'Otro'];
 const NIVELES = ['alta', 'media', 'baja'];
 const ESTADOS_FILTRO_CORRECTIVO = ['', ...ESTADOS_CORRECTIVO];
 const FORM_ID = 'form-correctivo';
@@ -41,7 +43,9 @@ const FORM_ID = 'form-correctivo';
 const inicial = {
   id_cliente: '', id_ascensor: '', falla: '',
   nivel_urgencia: 'media',
-  fecha_programada: '', hora_programada: '', fecha_estimada_entrega: '',
+  // Días de trabajo: lista de tramos { desde, hasta }. Un día suelto es un tramo
+  // con desde === hasta; un rango, uno con hasta posterior. Se pueden combinar.
+  tramos: [], hora_programada: '', fecha_estimada_entrega: '',
   precio_interno: '', sin_cobro: false,
   // Los correctivos se facturan por defecto (editable antes de guardar).
   requiere_factura: true, observaciones: ''
@@ -62,7 +66,6 @@ export default function Correctivos() {
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(inicial);
   const [asignaciones, setAsignaciones] = useState([]);
-  const [items, setItems] = useState([]);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const toast = useToast();
@@ -101,19 +104,23 @@ export default function Correctivos() {
     : ascensores
   ).filter(esAscensorServiciable);
 
-  const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
+  const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false }]);
   const quitarTec = (idx) => setAsignaciones(a => a.filter((_, i) => i !== idx));
   const cambiarTec = (idx, key, val) => setAsignaciones(a => actualizarFilaAsignacion(a, idx, key, val));
 
-  const agregarItem = () => setItems(i => [...i, { tipo_item: 'Herramienta', nombre: '', cantidad: 1, unidad: 'Unidad', observaciones: '' }]);
-  const cambiarItem = (idx, key, val) => setItems(i => i.map((x, j) => j === idx ? { ...x, [key]: val } : x));
-  const quitarItem = (idx) => setItems(i => i.filter((_, j) => j !== idx));
 
   const abrirNuevo = () => {
     setEditando(null);
-    setForm({ ...inicial, fecha_programada: hoyISO() });
+    // Quien no gestiona precios (Coordinador) solo registra correctivos
+    // gratuitos: el alta arranca ya marcada y sin factura, coherente con lo que
+    // impone el backend.
+    setForm({
+      ...inicial,
+      tramos: [tramoDeUnDia(hoyISO())],
+      sin_cobro: !puedeVerPrecio,
+      requiere_factura: puedeVerPrecio ? inicial.requiere_factura : false
+    });
     setAsignaciones([]);
-    setItems([]);
     setOpen(true);
   };
 
@@ -132,7 +139,7 @@ export default function Correctivos() {
       id_ascensor: String(c.id_ascensor || ''),
       falla: c.falla || '',
       nivel_urgencia: c.nivel_urgencia || 'media',
-      fecha_programada: c.servicio?.fecha_programada ? String(c.servicio.fecha_programada).slice(0, 10) : '',
+      tramos: tramosDeServicio(c.servicio),
       hora_programada: c.servicio?.hora_programada || '',
       fecha_estimada_entrega: c.servicio?.fecha_estimada_entrega ? String(c.servicio.fecha_estimada_entrega).slice(0, 10) : '',
       precio_interno: c.servicio?.precio_interno != null ? String(c.servicio.precio_interno) : '',
@@ -141,7 +148,6 @@ export default function Correctivos() {
       observaciones: c.observaciones || ''
     });
     setAsignaciones([]);
-    setItems([]);
     setOpen(true);
   };
 
@@ -168,7 +174,6 @@ export default function Correctivos() {
     setEditando(null);
     setForm(inicial);
     setAsignaciones([]);
-    setItems([]);
   };
 
   const guardar = async (e) => {
@@ -178,6 +183,10 @@ export default function Correctivos() {
       const consistencia = validarConsistenciaAsignaciones(asignaciones);
       if (!consistencia.ok) return toast.error(consistencia.error);
     }
+    const errorProgramacion = errorDeTramos(form.tramos);
+    if (errorProgramacion) return toast.error(errorProgramacion);
+    // La fecha programada del servicio es siempre el PRIMER día de trabajo.
+    const primerDia = fechasDesdeTramos(form.tramos)[0];
     savingRef.current = true;
     setSaving(true);
     try {
@@ -187,22 +196,26 @@ export default function Correctivos() {
           id_ascensor: form.id_ascensor,
           falla: form.falla,
           nivel_urgencia: form.nivel_urgencia,
-          fecha_programada: form.fecha_programada,
+          dias: payloadDias(form.tramos),
+          fecha_programada: primerDia,
           hora_programada: form.hora_programada,
           fecha_estimada_entrega: form.fecha_estimada_entrega,
           observaciones: form.observaciones,
           sin_cobro: form.sin_cobro,
-          requiere_factura: form.requiere_factura,
+          requiere_factura: form.sin_cobro ? false : form.requiere_factura,
           precio_interno: form.sin_cobro ? 0 : form.precio_interno
         };
         await correctivosService.update(editando, payload);
         toast.success('Correctivo actualizado');
       } else {
+        const { tramos, ...resto } = form;
         const payload = {
-          ...form,
+          ...resto,
+          dias: payloadDias(tramos),
+          fecha_programada: primerDia,
           precio_interno: form.sin_cobro ? 0 : form.precio_interno,
+          requiere_factura: form.sin_cobro ? false : form.requiere_factura,
           tecnicos: asignaciones,
-          items_checklist: items
         };
         await correctivosService.create(payload);
         toast.success('Correctivo registrado');
@@ -279,7 +292,7 @@ export default function Correctivos() {
                       <div className="font-mono text-slate-500">{c.ascensor?.codigo}</div>
                     </td>
                     <td className="table-td text-sm">{c.falla}</td>
-                    <td className="table-td text-xs">{c.servicio?.fecha_programada ? `${formatFecha(c.servicio.fecha_programada)}${c.servicio.hora_programada ? ` ${c.servicio.hora_programada}` : ''}` : '—'}</td>
+                    <td className="table-td text-xs" title={etiquetaProgramacion(c.servicio).detalle}>{etiquetaProgramacion(c.servicio).texto}</td>
                     <td className="table-td text-xs">{c.servicio?.fecha_estimada_entrega ? formatFecha(c.servicio.fecha_estimada_entrega) : '—'}</td>
                     <td className="table-td"><span className={`badge ${badgeEstado(c.estado_correctivo)}`}>{c.estado_correctivo}</span></td>
                     <td className="table-td"><span className={`badge ${badgeUrgencia(c.nivel_urgencia)}`}>{c.nivel_urgencia}</span></td>
@@ -287,13 +300,19 @@ export default function Correctivos() {
                       {c.servicio ? (
                         <div className="flex items-center gap-2">
                           <Link to={`/servicios/${c.servicio.id}`} className="font-mono text-xs text-brand-700">{c.servicio.codigo}</Link>
-                          {c.servicio.sin_cobro === 1 && <span className="badge-green text-[10px]">Sin costo</span>}
-                          {puedeEditar ? (
+                          {/* Distintivo del correctivo gratuito: lo ven todos los
+                              roles, no solo los financieros. */}
+                          {c.servicio.sin_cobro === 1 && <span className="badge-amber text-[10px]" title="Correctivo sin costo para el cliente">Gratuito</span>}
+                          {/* Un correctivo gratuito no se puede facturar: el
+                              toggle se apaga (el backend también lo rechaza). */}
+                          {puedeEditar && c.servicio.sin_cobro !== 1 ? (
                             <button type="button" onClick={() => toggleRequiereFactura(c)}
                               title="Clic para cambiar entre con / sin factura"
                               className={`text-[10px] cursor-pointer hover:ring-1 hover:ring-brand-300 ${c.servicio.requiere_factura === 0 ? 'badge-gray' : 'badge-blue'}`}>
                               {c.servicio.requiere_factura === 0 ? 'Sin factura' : 'Con factura'}
                             </button>
+                          ) : c.servicio.sin_cobro === 1 ? (
+                            <span className="badge-gray text-[10px]" title="No se factura: el correctivo es gratuito">Sin factura</span>
                           ) : (
                             c.servicio.requiere_factura === 0
                               ? <span className="badge-gray text-[10px]">Sin factura</span>
@@ -357,7 +376,7 @@ export default function Correctivos() {
           <form id={FORM_ID} onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {editando && (
               <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs p-3">
-                Editar aquí sincroniza también el servicio vinculado (cliente, ascensor, precio, prioridad y descripción). Técnicos y checklist se gestionan desde el servicio.
+                Editar aquí sincroniza también el servicio vinculado (cliente, ascensor, precio, prioridad y descripción). Los técnicos se gestionan desde el servicio.
               </div>
             )}
             <div>
@@ -391,32 +410,55 @@ export default function Correctivos() {
                 {NIVELES.map(n => <option key={n}>{n}</option>)}
               </select>
             </div>
-            <div>
-              <label className="label">Fecha programada *</label>
-              <input type="date" className="input" required value={form.fecha_programada}
-                onChange={e => setForm(f => ({ ...f, fecha_programada: e.target.value, fecha_estimada_entrega: f.fecha_estimada_entrega && f.fecha_estimada_entrega < e.target.value ? '' : f.fecha_estimada_entrega }))} />
+            <div className="sm:col-span-2">
+              <ProgramacionDias
+                tramos={form.tramos}
+                onChange={tramos => setForm(f => ({
+                  ...f,
+                  tramos,
+                  // El término estimado nunca puede quedar antes del primer día.
+                  fecha_estimada_entrega: f.fecha_estimada_entrega && f.fecha_estimada_entrega < (fechasDesdeTramos(tramos)[0] || '')
+                    ? '' : f.fecha_estimada_entrega
+                }))} />
             </div>
             <div>
               <label className="label">Hora programada</label>
               <input type="time" className="input" value={form.hora_programada}
                 onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} />
+              <p className="text-xs text-slate-500 mt-1">Se aplica a todos los días programados.</p>
             </div>
-            <div className="sm:col-span-2">
+            <div>
               <label className="label">Fecha estimada de término</label>
-              <input type="date" className="input" value={form.fecha_estimada_entrega} min={form.fecha_programada || undefined}
+              <input type="date" className="input" value={form.fecha_estimada_entrega} min={fechasDesdeTramos(form.tramos)[0] || undefined}
                 onChange={e => setForm(f => ({ ...f, fecha_estimada_entrega: e.target.value }))} />
-              <p className="text-xs text-slate-500 mt-1">Opcional. Si el servicio ocupará varios días, indica el término estimado; si se deja vacío, se agenda solo el día programado.</p>
+              <p className="text-xs text-slate-500 mt-1">Opcional: fecha comprometida de entrega del trabajo. No cambia los días programados.</p>
             </div>
-            {puedeVerPrecio && (
-              <div>
-                <label className="label">Cobertura</label>
-                <label className="flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ring-slate-200 bg-slate-50 cursor-pointer">
-                  <input type="checkbox" checked={form.sin_cobro}
-                    onChange={e => setForm(f => ({ ...f, sin_cobro: e.target.checked, precio_interno: e.target.checked ? '' : f.precio_interno }))} />
-                  <span className="text-sm text-slate-700">Sin costo (cliente con cobertura)</span>
-                </label>
-              </div>
-            )}
+            {/* Gratuito / sin costo. Para quien NO gestiona precios (Coordinador)
+                queda marcado y bloqueado: solo puede registrar correctivos
+                gratuitos, porque no maneja importes y no puede comprometer un
+                cobro. El backend impone la misma regla, no basta con la UI. */}
+            <div>
+              <label className="label">Cobertura</label>
+              <label className={`flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ${puedeVerPrecio ? 'cursor-pointer' : 'cursor-not-allowed'} ${form.sin_cobro ? 'ring-ember-300 bg-ember-50' : 'ring-slate-200 bg-slate-50'}`}>
+                <input type="checkbox" checked={form.sin_cobro} disabled={!puedeVerPrecio}
+                  onChange={e => setForm(f => ({
+                    ...f,
+                    sin_cobro: e.target.checked,
+                    precio_interno: e.target.checked ? '' : f.precio_interno,
+                    // Gratuito ⇒ sin factura: no se factura lo que no se cobra.
+                    requiere_factura: e.target.checked ? false : f.requiere_factura
+                  }))} />
+                <span className="text-sm text-slate-700">
+                  {puedeVerPrecio ? 'Gratuito / sin costo (cliente con cobertura)' : 'Gratuito: no se le cobra al cliente'}
+                </span>
+              </label>
+              {!puedeVerPrecio && (
+                <p className="text-[11px] text-ember-700 mt-0.5">
+                  Su rol registra correctivos siempre gratuitos. Se avisará a administración,
+                  que podrá convertirlo en cobrable desde el servicio.
+                </p>
+              )}
+            </div>
             {puedeVerPrecio && !form.sin_cobro && (
               <div>
                 <label className="label">Precio interno (S/) *</label>
@@ -424,12 +466,16 @@ export default function Correctivos() {
                   onChange={e => setForm(f => ({ ...f, precio_interno: e.target.value }))} />
               </div>
             )}
+            {/* Un correctivo gratuito no se factura: la opción se apaga y se
+                bloquea en vez de ofrecer una combinación incoherente. */}
             <div>
               <label className="label">Facturación</label>
-              <label className="flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ring-slate-200 bg-slate-50 cursor-pointer">
-                <input type="checkbox" checked={form.requiere_factura}
+              <label className={`flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ring-slate-200 ${form.sin_cobro ? 'bg-slate-100 cursor-not-allowed' : 'bg-slate-50 cursor-pointer'}`}>
+                <input type="checkbox" checked={!form.sin_cobro && form.requiere_factura} disabled={form.sin_cobro}
                   onChange={e => setForm(f => ({ ...f, requiere_factura: e.target.checked }))} />
-                <span className="text-sm text-slate-700">Requiere factura</span>
+                <span className={`text-sm ${form.sin_cobro ? 'text-slate-400' : 'text-slate-700'}`}>
+                  {form.sin_cobro ? 'Sin factura (es gratuito)' : 'Requiere factura'}
+                </span>
               </label>
             </div>
             <div className="sm:col-span-2">
@@ -454,7 +500,6 @@ export default function Correctivos() {
                         <th className="table-th">Técnico</th><th className="table-th">Rol</th>
                         <th className="table-th text-center">Principal</th>
                         <th className="table-th text-center">Documental</th>
-                        <th className="table-th text-center">Checklist</th>
                         <th className="table-th"></th>
                       </tr></thead>
                       <tbody className="divide-y divide-slate-100">
@@ -475,7 +520,6 @@ export default function Correctivos() {
                             </td>
                             <td className="table-td text-center"><input type="checkbox" checked={a.responsable_principal} onChange={e => cambiarTec(idx, 'responsable_principal', e.target.checked)} /></td>
                             <td className="table-td text-center"><input type="checkbox" checked={a.responsable_documentacion} onChange={e => cambiarTec(idx, 'responsable_documentacion', e.target.checked)} /></td>
-                            <td className="table-td text-center"><input type="checkbox" checked={a.responsable_checklist} onChange={e => cambiarTec(idx, 'responsable_checklist', e.target.checked)} /></td>
                             <td className="table-td text-right"><button type="button" onClick={() => quitarTec(idx)} className="text-rose-600 text-xs">Quitar</button></td>
                           </tr>
                         ))}
@@ -485,38 +529,6 @@ export default function Correctivos() {
                 )}
               </div>
 
-              {asignaciones.length > 0 && (
-                <div className="border-t border-slate-100 pt-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-slate-800">Checklist de salida (opcional)</h4>
-                    <button type="button" onClick={agregarItem} className="btn-secondary text-xs">+ Agregar ítem</button>
-                  </div>
-                  {items.length === 0 && <p className="text-xs text-slate-500">Sin ítems. Podrá editarse después.</p>}
-                  {items.length > 0 && (
-                    <div className="overflow-x-auto scroll-thin">
-                      <table className="table-base">
-                        <thead><tr>
-                          <th className="table-th">Tipo</th><th className="table-th">Ítem</th>
-                          <th className="table-th">Cantidad</th><th className="table-th">Unidad</th>
-                          <th className="table-th">Observación</th><th className="table-th"></th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {items.map((it, idx) => (
-                            <tr key={idx}>
-                              <td className="table-td"><select className="select" value={it.tipo_item} onChange={e => cambiarItem(idx, 'tipo_item', e.target.value)}>{TIPOS_ITEM.map(t => <option key={t}>{t}</option>)}</select></td>
-                              <td className="table-td"><input className="input" value={it.nombre} onChange={e => cambiarItem(idx, 'nombre', e.target.value)} placeholder="Nombre" /></td>
-                              <td className="table-td"><input type="number" step="0.01" className="input" value={it.cantidad} onChange={e => cambiarItem(idx, 'cantidad', e.target.value)} /></td>
-                              <td className="table-td"><select className="select" value={it.unidad} onChange={e => cambiarItem(idx, 'unidad', e.target.value)}>{UNIDADES.map(u => <option key={u}>{u}</option>)}</select></td>
-                              <td className="table-td"><input className="input" value={it.observaciones} onChange={e => cambiarItem(idx, 'observaciones', e.target.value)} /></td>
-                              <td className="table-td text-right"><button type="button" onClick={() => quitarItem(idx)} className="text-rose-600 text-xs">Quitar</button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
             </>
           )}
         </div>
@@ -529,7 +541,7 @@ export default function Correctivos() {
         palabraClave={aEliminar?.servicio?.codigo || 'ELIMINAR'}
         descripcion={
           aEliminar?.servicio
-            ? `Se dará de baja el correctivo y su servicio vinculado ${aEliminar.servicio.codigo}, incluyendo asignaciones, checklist, evidencias, cobro, eventos de calendario y recordatorios. Esta acción revierte todo el flujo.`
+            ? `Se dará de baja el correctivo y su servicio vinculado ${aEliminar.servicio.codigo}, incluyendo asignaciones, evidencias, cobro, eventos de calendario y recordatorios. Esta acción revierte todo el flujo.`
             : 'Se dará de baja el correctivo y todo lo que generó en cascada.'
         }
         onConfirmar={async () => {

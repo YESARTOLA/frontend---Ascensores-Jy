@@ -6,6 +6,7 @@ import { useToast } from '../common/Toast.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import { formatFechaHora } from '../../utils/formatters.js';
 import { esServicioPostRevision } from '../../utils/estadoServicio.js';
+import { DESTINATARIOS_ALERTA, etiquetasDestinatarios } from '../../utils/destinatariosAlerta.js';
 
 /**
  * Bloque embebible en la vista detalle de un servicio.
@@ -33,20 +34,30 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
   const [cargando, setCargando] = useState(true);
   const [texto, setTexto] = useState('');
   const [archivo, setArchivo] = useState(null);
-  const [generaAlerta, setGeneraAlerta] = useState(false);
+  // Destinatarios elegidos para la alerta. Vacío = no se alerta a nadie.
+  const [destinatarios, setDestinatarios] = useState([]);
+  const generaAlerta = destinatarios.length > 0;
   const [subiendo, setSubiendo] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const guardandoRef = useRef(false);
   const [atendiendoId, setAtendiendoId] = useState(null);
+  // Edición en línea de una observación ya registrada.
+  const [editandoId, setEditandoId] = useState(null);
+  const [textoEdicion, setTextoEdicion] = useState('');
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+  const [eliminandoId, setEliminandoId] = useState(null);
   // Observaciones marcadas para jalar a una cotización nueva.
   const [seleccionadas, setSeleccionadas] = useState([]);
   const navigate = useNavigate();
 
   const esAdminUI = esSuperAdmin || esAdmin;
+  // Coordinación revisa y corrige lo que el técnico dejó anotado, con el mismo
+  // corte que el backend: hasta la revisión administrativa.
   const tecnicoAsignado = esTecnico && Array.isArray(tecnicosAsignados)
     && tecnicosAsignados.some(a => a.estado === 1 && a.id_tecnico === user?.id_tecnico);
   const bloqueadoPorEstado = esServicioPostRevision(estadoServicio);
-  const puedeRegistrar = (esAdminUI || tecnicoAsignado) && !bloqueadoPorEstado;
+  const gestionaRegistros = (esSuperAdmin || esAdmin || esCoordinador) && !bloqueadoPorEstado;
+  const puedeRegistrar = ((esSuperAdmin || esAdmin || esCoordinador) || tecnicoAsignado) && !bloqueadoPorEstado;
   const puedeAtender = esSuperAdmin || esAdmin || esCoordinador;
 
   const cargar = () => {
@@ -90,20 +101,54 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
       await serviciosService.crearObservacion(idServicio, {
         texto: texto.trim(),
         id_archivo: archivo?.id || null,
-        genera_alerta: generaAlerta
+        genera_alerta: generaAlerta,
+        destinatarios_alerta: destinatarios
       });
       toast.success(generaAlerta
-        ? 'Observación registrada — alertas enviadas (detalle a administración/cotización/oficina técnica; aviso a contabilidad)'
+        ? `Observación registrada — alerta enviada a ${etiquetasDestinatarios(destinatarios).join(', ')}`
         : 'Observación registrada');
       setTexto('');
       setArchivo(null);
-      setGeneraAlerta(false);
+      setDestinatarios([]);
       cargar();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error al registrar la observación');
     } finally {
       guardandoRef.current = false;
       setGuardando(false);
+    }
+  };
+
+  const abrirEdicion = (obs) => { setEditandoId(obs.id); setTextoEdicion(obs.texto || ''); };
+  const cerrarEdicion = () => { setEditandoId(null); setTextoEdicion(''); };
+
+  const guardarEdicion = async (obs) => {
+    const texto = textoEdicion.trim();
+    if (!texto) return toast.error('El texto es obligatorio');
+    setGuardandoEdicion(true);
+    try {
+      await serviciosService.actualizarObservacion(obs.id, { texto });
+      toast.success('Observación actualizada');
+      cerrarEdicion();
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al actualizar la observación');
+    } finally {
+      setGuardandoEdicion(false);
+    }
+  };
+
+  const eliminarObs = async (obs) => {
+    if (!confirm('¿Eliminar esta observación técnica?')) return;
+    setEliminandoId(obs.id);
+    try {
+      await serviciosService.eliminarObservacion(obs.id);
+      toast.success('Observación eliminada');
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al eliminar la observación');
+    } finally {
+      setEliminandoId(null);
     }
   };
 
@@ -175,22 +220,38 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
                 {guardando ? 'Guardando…' : 'Registrar observación'}
               </button>
             </div>
-            <label className={`flex items-start gap-2 rounded-md p-2.5 ring-1 cursor-pointer transition ${generaAlerta ? 'bg-rose-50 ring-rose-300' : 'bg-white ring-slate-200 hover:ring-rose-200'}`}>
-              <input
-                type="checkbox"
-                checked={generaAlerta}
-                onChange={e => setGeneraAlerta(e.target.checked)}
-                className="mt-0.5"
-              />
-              <div className="text-xs leading-snug">
-                <div className={`font-medium ${generaAlerta ? 'text-rose-800' : 'text-slate-700'}`}>
-                  🔔 Enviar alerta de la observación
-                </div>
-                <div className="text-slate-500 text-[11px]">
-                  Marca esta opción si la observación requiere atención inmediata. Administración, cotización (vendedora) y oficina técnica (coordinador) reciben la alerta <strong>con el detalle</strong> (texto e imagen) para el seguimiento y la cotización; contabilidad recibe <strong>solo el aviso</strong> de que hay un servicio con observación, sin el comentario ni la imagen.
-                </div>
+            {/* Destinatarios de la alerta: sin ninguno marcado, la observación
+                queda registrada sin avisar a nadie. */}
+            <div className={`rounded-md p-2.5 ring-1 transition ${generaAlerta ? 'bg-rose-50 ring-rose-300' : 'bg-white ring-slate-200'}`}>
+              <div className={`text-xs font-medium ${generaAlerta ? 'text-rose-800' : 'text-slate-700'}`}>
+                🔔 Enviar alerta a
               </div>
-            </label>
+              <div className="text-[11px] text-slate-500 leading-snug mt-0.5">
+                Marca a quién avisar si la observación requiere atención. Sin marcar nada, queda registrada sin alertar.
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
+                {DESTINATARIOS_ALERTA.map(d => {
+                  const marcado = destinatarios.includes(d.codigo);
+                  return (
+                    <label key={d.codigo}
+                      className={`flex items-start gap-2 rounded-md px-2 py-1.5 ring-1 cursor-pointer transition text-xs ${marcado ? 'bg-white ring-rose-300' : 'bg-white/60 ring-slate-200 hover:ring-rose-200'}`}>
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={marcado}
+                        onChange={e => setDestinatarios(prev => (
+                          e.target.checked ? [...prev, d.codigo] : prev.filter(c => c !== d.codigo)
+                        ))}
+                      />
+                      <span className="leading-snug">
+                        <span className={`font-medium ${marcado ? 'text-rose-800' : 'text-slate-700'}`}>{d.etiqueta}</span>
+                        <span className="block text-[10px] text-slate-500">{d.ayuda}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
           </form>
         )}
 
@@ -248,25 +309,58 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${o.atendida ? 'bg-emerald-100 text-emerald-800 ring-emerald-200' : 'bg-orange-100 text-orange-800 ring-orange-200'}`}>
                       {o.atendida ? 'Atendida' : 'Pendiente'}
                     </span>
-                    {o.genera_alerta === 1 && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 bg-rose-100 text-rose-800 ring-rose-200" title="Se envió alerta a administración y contabilidad">
-                        🔔 Alerta enviada
-                      </span>
-                    )}
+                    {o.genera_alerta === 1 && (() => {
+                      // Las observaciones anteriores a poder elegir no guardan
+                      // destinatarios: entonces la alerta fue a todos.
+                      const a = etiquetasDestinatarios(o.destinatarios_alerta);
+                      const detalle = a.length ? `Alerta enviada a ${a.join(', ')}` : 'Se envió alerta a todas las áreas';
+                      return (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 bg-rose-100 text-rose-800 ring-rose-200" title={detalle}>
+                          🔔 {a.length ? `Alerta · ${a.join(' · ')}` : 'Alerta enviada'}
+                        </span>
+                      );
+                    })()}
                     <span className="text-xs text-slate-600">
                       {o.registrada_por_usuario?.nombres || 'Sin autor'}
                       {o.registrada_por_usuario?.rol?.nombre ? ` · ${o.registrada_por_usuario.rol.nombre}` : ''}
                     </span>
                     <span className="text-xs text-slate-400">{formatFechaHora(o.date_time_registration)}</span>
                   </div>
-                  {!o.atendida && puedeAtender && (
-                    <button type="button" onClick={() => atender(o)} disabled={atendiendoId === o.id}
-                      className="btn-secondary text-xs !py-1 !px-2 whitespace-nowrap">
-                      {atendiendoId === o.id ? 'Atendiendo…' : 'Marcar atendida'}
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!o.atendida && puedeAtender && (
+                      <button type="button" onClick={() => atender(o)} disabled={atendiendoId === o.id}
+                        className="btn-secondary text-xs !py-1 !px-2 whitespace-nowrap">
+                        {atendiendoId === o.id ? 'Atendiendo…' : 'Marcar atendida'}
+                      </button>
+                    )}
+                    {gestionaRegistros && editandoId !== o.id && (
+                      <>
+                        <button type="button" onClick={() => abrirEdicion(o)}
+                          className="text-xs text-brand-700 hover:underline whitespace-nowrap">Editar</button>
+                        <button type="button" onClick={() => eliminarObs(o)} disabled={eliminandoId === o.id}
+                          className="text-xs text-rose-700 hover:underline whitespace-nowrap">
+                          {eliminandoId === o.id ? 'Eliminando…' : 'Eliminar'}
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <p className="text-sm text-slate-800 whitespace-pre-wrap break-words">{o.texto}</p>
+                {editandoId === o.id ? (
+                  <div className="space-y-2">
+                    <textarea className="textarea w-full text-sm" rows="3" value={textoEdicion}
+                      onChange={e => setTextoEdicion(e.target.value)} disabled={guardandoEdicion} />
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => guardarEdicion(o)} disabled={guardandoEdicion}
+                        className="btn-primary text-xs !py-1 !px-3">
+                        {guardandoEdicion ? 'Guardando…' : 'Guardar'}
+                      </button>
+                      <button type="button" onClick={cerrarEdicion} disabled={guardandoEdicion}
+                        className="btn-secondary text-xs !py-1 !px-3">Cancelar</button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-800 whitespace-pre-wrap break-words">{o.texto}</p>
+                )}
                 {o.archivo && (
                   <div className="mt-2 min-w-0">
                     <FileLink archivo={o.archivo} className="text-xs text-brand-700 hover:underline inline-flex items-center gap-1 max-w-full align-bottom">

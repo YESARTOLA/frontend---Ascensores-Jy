@@ -127,6 +127,10 @@ export default function AscensoresChecklist({
               <div className="text-right flex items-center gap-2 shrink-0">
                 {sinPrecio ? (
                   <span className="text-[11px] text-amber-700">Sin precio para este subtipo</span>
+                ) : cfg.precio == null ? (
+                  // Rol sin visibilidad financiera: se confirma que el ascensor
+                  // está tarifado (por eso es elegible) pero no se muestra cuánto.
+                  <span className="text-[11px] text-emerald-700">Precio configurado</span>
                 ) : (
                   <span className="font-mono text-sm text-slate-800">{formatMonto(cfg.precio, cfg.moneda)}</span>
                 )}

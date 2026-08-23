@@ -117,7 +117,10 @@ export default function App() {
         <Route path="/tipos-servicio" element={<TiposServicio />} />
         <Route path="/tipos-ascensor" element={<TiposAscensor />} />
         <Route path="/cotizaciones" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Cotizaciones /></RequireRole>} />
-        <Route path="/cotizaciones/:id" element={<RequireRole allow={['super_admin','admin','contabilidad']}><CotizacionDetalle /></RequireRole>} />
+        {/* El Coordinador NO entra al listado de cotizaciones, pero sí abre el
+            DETALLE desde el código de cotización que ve en el servicio. El
+            backend se lo entrega sin ningún dato financiero. */}
+        <Route path="/cotizaciones/:id" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><CotizacionDetalle /></RequireRole>} />
         <Route path="/servicios" element={<RequireRole allow={['super_admin','admin','contabilidad','tecnico','coordinador']}><RequireAlcance ambito="proyectos"><Servicios /></RequireAlcance></RequireRole>} />
         <Route path="/servicios/:id" element={<ServicioDetalle />} />
         <Route path="/panel-tecnico" element={<PanelTecnico />} />

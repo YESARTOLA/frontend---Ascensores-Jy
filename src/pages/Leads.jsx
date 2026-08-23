@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { leadsService, clientesService, edificiosService, ascensoresService, tiposServicioService, tiposAscensorService, ubigeoService, usuariosService, tecnicosService, archivosService } from '../services';
+import { leadsService, clientesService, edificiosService, ascensoresService, tiposServicioService, tiposAscensorService, ubigeoService, tecnicosService, archivosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -12,11 +12,13 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { badgeEstado, hoyISO, formatFechaHora, sanearTelefono, formatTelefono, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import { ESTADOS_LEAD, ESTADO_LEAD_COTIZADO, ESTADO_LEAD_INGRESADO, ESTADO_LEAD_DESCARTADO } from '../utils/estadoLead.js';
+import { ESTADOS_BUEN_PAGADOR, badgeBuenPagador } from '../utils/datosLead.js';
 import ClienteForm, { clienteFormInicial } from '../components/clientes/ClienteForm.jsx';
 import EdificioForm, { edificioFormInicial } from '../components/edificios/EdificioForm.jsx';
 import AscensorForm, { ascensorFormInicial } from '../components/ascensores/AscensorForm.jsx';
 import LeadForm, { leadFormInicial, leadAFormulario } from '../components/leads/LeadForm.jsx';
 import DocumentosLeadModal from '../components/leads/DocumentosLeadModal.jsx';
+import AvisoDuplicados from '../components/leads/AvisoDuplicados.jsx';
 
 const inicialConvertir = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN', id_tecnico: '', titulo: '', descripcion: '' };
 
@@ -33,7 +35,7 @@ export default function Leads() {
   const [vendedores, setVendedores] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   // Filtros de la lista (server-side): buscador libre + vendedor + ubicación.
-  const [filtros, setFiltros] = useState({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '', id_padre: '' });
+  const [filtros, setFiltros] = useState({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '', buen_pagador: '', id_padre: '' });
   const [open, setOpen] = useState(false);
   const [openConv, setOpenConv] = useState(null);
   const [openDescartar, setOpenDescartar] = useState(null);
@@ -91,13 +93,15 @@ export default function Leads() {
   useEffect(() => {
     // Cada catálogo se aplica de forma independiente: si uno falla, los demás
     // dropdowns siguen funcionando en vez de quedar todos vacíos.
-    // Las personas asignables al lead se piden a /usuarios/catalogo acotado al
-    // rol vendedora: /usuarios es solo para super_admin y devolvía 403 al resto,
-    // dejando el selector sin opciones.
+    // Las personas asignables al lead las sirve el propio módulo
+    // (/leads/asignables): son los usuarios activos con un rol capaz de
+    // trabajar y convertir el lead. El catálogo genérico /usuarios/catalogo
+    // acotado al rol `vendedora` dejaba el selector vacío cuando el equipo
+    // comercial está dado de alta con roles de administración.
     const aplicar = (setter) => (r) => { if (r.status === 'fulfilled') setter(r.value); };
     Promise.allSettled([
       clientesService.list(), ascensoresService.list(), tiposServicioService.list(),
-      tiposAscensorService.list(), ubigeoService.list(), usuariosService.catalogo({ rol: 'vendedora' }),
+      tiposAscensorService.list(), ubigeoService.list(), leadsService.asignables(),
       leadsService.vendedores(), tecnicosService.list()
     ]).then(([c, a, t, ta, ub, u, v, te]) => {
       aplicar(setClientes)(c); aplicar(setAscensores)(a); aplicar(setTipos)(t);
@@ -160,6 +164,9 @@ export default function Leads() {
     setClienteForm({
       ...clienteFormInicial,
       nombre: l.razon_social || l.nombre_contacto || '',
+      // El lead puede ser empresa (RUC) o persona natural (DNI): el cliente
+      // hereda el mismo tipo para no reclasificarlo a mano.
+      tipo_documento: l.tipo_documento || clienteFormInicial.tipo_documento,
       numero_documento: l.ruc || '',
       contacto_principal_nombre: l.nombre_contacto || '',
       contacto_principal_correo: l.correo || '',
@@ -367,7 +374,7 @@ export default function Leads() {
         <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           <input
             className="input lg:col-span-2"
-            placeholder="Buscar por proyecto, contacto, empresa, RUC, cliente…"
+            placeholder="Buscar por proyecto, contacto, empresa, RUC/DNI, cliente…"
             value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))}
           />
@@ -384,13 +391,18 @@ export default function Leads() {
             <option value="">Todas las provincias</option>
             {provinciasFiltro.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
-          <select className="select lg:col-span-3" value={filtros.codigo_ubigeo} disabled={!filtros.provincia}
+          <select className="select lg:col-span-2" value={filtros.codigo_ubigeo} disabled={!filtros.provincia}
             onChange={e => setFiltros(f => ({ ...f, codigo_ubigeo: e.target.value }))}>
             <option value="">{filtros.provincia ? 'Todos los distritos' : 'Elige una provincia primero'}</option>
             {distritosFiltro.map(d => <option key={d.codigo} value={d.codigo}>{d.distrito}</option>)}
           </select>
+          <select className="select" value={filtros.buen_pagador}
+            onChange={e => setFiltros(f => ({ ...f, buen_pagador: e.target.value }))}>
+            <option value="">Toda referencia de pago</option>
+            {ESTADOS_BUEN_PAGADOR.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
           <button type="button" className="btn-secondary"
-            onClick={() => setFiltros(f => ({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '', id_padre: f.id_padre }))}>
+            onClick={() => setFiltros(f => ({ q: '', id_vendedor: '', provincia: '', codigo_ubigeo: '', buen_pagador: '', id_padre: f.id_padre }))}>
             Limpiar filtros
           </button>
         </div>
@@ -405,6 +417,7 @@ export default function Leads() {
                 <th className="table-th">Ubicación</th><th className="table-th">Canal</th>
                 <th className="table-th">Servicio solicitado</th><th className="table-th">Cliente</th>
                 <th className="table-th">Vendedor</th>
+                <th className="table-th whitespace-nowrap" title="Referencia comercial informativa">Ref. de pago</th>
                 <th className="table-th">Estado</th><th className="table-th">Registrado</th>
                 <th className="table-th">Registrado por</th><th className="table-th">Rol</th>
                 <th className="table-th text-right">Acciones</th>
@@ -419,6 +432,7 @@ export default function Leads() {
                     <td className="table-td text-xs">{l.tipo_servicio?.nombre || '—'}</td>
                     <td className="table-td text-xs">{l.cliente?.nombre || '—'}</td>
                     <td className="table-td text-xs">{l.vendedor?.nombres || '—'}</td>
+                    <td className="table-td"><span className={badgeBuenPagador(l.buen_pagador)}>{l.buen_pagador || 'Sin calificar'}</span></td>
                     <td className="table-td">
                       {puedeGestionar ? (
                         <select
@@ -485,14 +499,36 @@ export default function Leads() {
         )}
       </div>
 
+      {/* El aviso de prospecto duplicado va como banner del modal: queda fijo
+          bajo el título, sin necesidad de scrollear hasta el final del formulario. */}
       <Modal open={open} onClose={() => setOpen(false)} title="Nuevo lead"
+        banner={<AvisoDuplicados
+          telefono={form.telefono}
+          nombre={form.nombre_contacto}
+          razonSocial={form.cliente_existente ? '' : form.razon_social}
+          documento={form.cliente_existente ? '' : form.ruc}
+        />}
         footer={<><button className="btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn-primary" type="submit" form="lead-form">Guardar</button></>}>
         <LeadForm formId="lead-form" value={form} onChange={setForm} onSubmit={guardar}
           ubigeo={ubigeo} tiposAscensor={tiposAscensor} tiposServicio={tipos}
           vendedoras={catalogoVendedoras} clientes={clientes} />
       </Modal>
 
+      {/* Al editar, el aviso solo comprueba los datos que esta edición cambia
+          (mismo criterio que el backend): un lead que ya coincidía con otro
+          registro debe poder seguir corrigiéndose en el resto de campos. */}
       <Modal open={!!openEdit} onClose={() => setOpenEdit(null)} title={`Editar lead: ${openEdit?.nombre_contacto}`}
+        banner={openEdit && <AvisoDuplicados
+          telefono={editForm.telefono}
+          nombre={editForm.nombre_contacto}
+          razonSocial={editForm.cliente_existente ? '' : editForm.razon_social}
+          documento={editForm.cliente_existente ? '' : editForm.ruc}
+          excluirId={openEdit.id}
+          original={{
+            telefono: openEdit.telefono, nombre: openEdit.nombre_contacto,
+            razonSocial: openEdit.razon_social, documento: openEdit.ruc
+          }}
+        />}
         footer={<><button className="btn-secondary" onClick={() => setOpenEdit(null)}>Cancelar</button><button className="btn-primary" type="submit" form="lead-edit-form">Guardar cambios</button></>}>
         {openEdit && (
           <>
@@ -570,6 +606,17 @@ export default function Leads() {
                   <div className="text-slate-800">{openDetalle.ubigeo.distrito}, {openDetalle.ubigeo.provincia}, {openDetalle.ubigeo.departamento}</div>
                 </div>
               )}
+              {openDetalle.ruc && (
+                <div>
+                  <div className="text-xs text-slate-500">{openDetalle.tipo_documento || 'RUC'}</div>
+                  <div className="text-slate-800 font-mono">{openDetalle.ruc}</div>
+                  {openDetalle.razon_social && <div className="text-xs text-slate-500">{openDetalle.razon_social}</div>}
+                </div>
+              )}
+              <div>
+                <div className="text-xs text-slate-500">Referencia de pago</div>
+                <span className={badgeBuenPagador(openDetalle.buen_pagador)}>{openDetalle.buen_pagador || 'Sin calificar'}</span>
+              </div>
             </div>
 
             {/* Motivo de descarte */}

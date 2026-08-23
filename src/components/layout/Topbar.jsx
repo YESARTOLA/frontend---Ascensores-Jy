@@ -5,14 +5,7 @@ import Modal from '../common/Modal.jsx';
 import { useToast } from '../common/Toast.jsx';
 import { authService, recordatoriosService } from '../../services';
 import { formatFechaHora } from '../../utils/formatters.js';
-
-function destinoRecordatorio(r) {
-  if (r.servicio?.id) return `/servicios/${r.servicio.id}`;
-  if (r.cobro?.id) return `/cobros/${r.cobro.id}`;
-  if (r.emergencia) return '/emergencias';
-  if (r.mantenimiento_plan) return '/mantenimientos';
-  return '/recordatorios';
-}
+import { destinoRecordatorio } from '../../utils/destinoRecordatorio.js';
 
 const ROL_LABEL = {
   super_admin: 'Super Admin',

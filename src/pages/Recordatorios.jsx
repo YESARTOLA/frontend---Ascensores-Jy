@@ -13,6 +13,8 @@ import { formatFechaHora, nowDateTimeLocalLima, isoToDateTimeLocalLima, dateTime
 import { CATALOGO_TIPOS_EVENTO, colorPorTipo } from '../utils/visibilidadCalendario.js';
 import { rangoMes, ymdLima, mesLabelLima, fmtDiaLargo, fechaLima } from '../utils/calendarioFechas.js';
 import { estaServicioFinalizado } from '../utils/estadoServicio.js';
+import { useAuth } from '../features/auth/AuthContext.jsx';
+import { destinoRecordatorio, etiquetaDestinoRecordatorio } from '../utils/destinoRecordatorio.js';
 
 // Tipos que SOLO informan que un servicio/proyecto terminó (sin acción pendiente).
 const TIPOS_AVISO_FINALIZADO = new Set(['servicio_finalizado_aviso']);
@@ -45,7 +47,9 @@ const TIPOS_PROCESO = [
   { value: 'correctivo', label: 'Correctivo' },
   { value: 'emergencia', label: 'Emergencia' },
   { value: 'mantenimiento', label: 'Mantenimiento' },
-  { value: 'cobro', label: 'Cobro' }
+  // Vincular un cobro exige listarlos: solo para roles con visibilidad
+  // financiera (al resto la API de cobros le responde 403).
+  { value: 'cobro', label: 'Cobro', finanzas: true }
 ];
 
 // Fuente de datos por tipo de proceso (cada servicio devuelve un array).
@@ -127,12 +131,12 @@ function badgePrioridad(p) {
   return x ? <span className={`px-1.5 py-0.5 rounded text-[10px] border ${x.cls}`}>{x.label}</span> : null;
 }
 
+// Destino y etiqueta salen del mismo sitio que la campana y el dashboard
+// (utils/destinoRecordatorio.js), para que las tres vistas lleven al mismo lado.
 function vinculoEntidad(r) {
-  if (r.servicio) return { to: `/servicios/${r.servicio.id}`, label: `Servicio ${r.servicio.codigo || ''}` };
-  if (r.cobro) return { to: `/cobros/${r.cobro.id}`, label: `Cobro #${r.cobro.id}` };
-  if (r.emergencia) return { to: `/emergencias`, label: `Emergencia` };
-  if (r.mantenimiento_plan) return { to: `/mantenimientos`, label: `Plan mantenimiento` };
-  return null;
+  const label = etiquetaDestinoRecordatorio(r);
+  if (!label) return null;
+  return { to: destinoRecordatorio(r), label };
 }
 
 function agruparPorFecha(items) {
@@ -154,6 +158,8 @@ function agruparPorFecha(items) {
 }
 
 export default function Recordatorios() {
+  const { puedeVerPrecio } = useAuth();
+  const tiposProceso = useMemo(() => TIPOS_PROCESO.filter(t => !t.finanzas || puedeVerPrecio), [puedeVerPrecio]);
   const [filtros, setFiltros] = useState({ tipo: '', estado_recordatorio: 'pendiente', prioridad: '', id_cliente: '', q: '' });
   const [clientes, setClientes] = useState([]);
   const [modalForm, setModalForm] = useState(null); // null | { form, editId? }
@@ -301,6 +307,13 @@ export default function Recordatorios() {
     } finally { setSaving(false); }
   };
 
+  // Abrir el registro vinculado cuenta como leer la notificación: se marca al
+  // vuelo (optimista) para que el contador de la campana baje sin recargar.
+  const marcarLeidoAlAbrir = (r) => {
+    if (r.fecha_lectura) return;
+    recordatoriosService.leer(r.id).catch(() => {});
+  };
+
   const atender = async (r) => {
     try {
       await recordatoriosService.atender(r.id);
@@ -351,7 +364,14 @@ export default function Recordatorios() {
           {r.descripcion && <div className="text-xs text-slate-600 mt-0.5">{r.descripcion}</div>}
           <div className="text-xs text-slate-500 mt-1 flex items-center gap-3 flex-wrap">
             <span>{formatFechaHora(r.fecha_recordatorio)}</span>
-            {link && <Link to={link.to} className="text-brand-700 hover:underline">{link.label}</Link>}
+            {link && (
+              <Link to={link.to} onClick={() => marcarLeidoAlAbrir(r)} className="text-brand-700 hover:underline">
+                {link.label}
+              </Link>
+            )}
+            {!r.fecha_lectura && (
+              <span className="text-[10px] font-semibold text-brand-700 uppercase tracking-wider">Sin leer</span>
+            )}
           </div>
           {r.notas_seguimiento && (
             <div className="text-xs text-slate-600 mt-2 p-2 bg-slate-50 rounded">{r.notas_seguimiento}</div>
@@ -504,7 +524,7 @@ export default function Recordatorios() {
                 <select className="select" value={modalForm.form.proceso_tipo}
                   onChange={e => setModalForm(m => ({ ...m, form: { ...m.form, proceso_tipo: e.target.value, proceso_id: '' } }))}>
                   <option value="">— Sin vincular —</option>
-                  {TIPOS_PROCESO.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  {tiposProceso.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
                 <select className="select" value={modalForm.form.proceso_id}
                   disabled={!modalForm.form.proceso_tipo || procesoLoading}

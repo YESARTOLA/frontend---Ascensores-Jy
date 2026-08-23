@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { cobrosService, archivosService, facturasService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
@@ -9,6 +9,7 @@ import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, addMonthsYMD, toYMDLima } from '../utils/formatters.js';
+import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../utils/catalogosComprobante.js';
 import {
   ESTADO_FACTURA_ENVIADA,
   esFacturaActiva,
@@ -40,7 +41,7 @@ export default function CobroDetalle() {
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   // cuotas[i].id presente = blindada (pagada/facturada). Sin id = nueva editable.
   const [cuotas, setCuotas] = useState({ numero_cuotas: 1, fecha_proximo_abono: hoyISO(), cuotas: [] });
-  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), monto: '', id_archivo: null, modo: 'general', id_cuota: '' });
+  const [factura, setFactura] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), monto: '', id_archivo: null, modo: 'general', id_cuota: '' });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
@@ -237,6 +238,10 @@ export default function CobroDetalle() {
     catch { toast.error('Error subiendo archivo'); }
   };
   const facturasActivas = (data.facturas || []).filter(esFacturaActiva);
+  // Cobro de un PLAN de mantenimiento: cada cuota es un MES del plan y se
+  // paga una sola vez, por el monto mensual pactado. Su desglose de
+  // mantenimientos llega en `detalle_mensual` de cada cuota.
+  const esPlanMensual = !!data.id_mantenimiento_plan;
   // Un correctivo marcado "Con factura" (requiere_factura=1) no admite abonos
   // hasta que exista una factura del servicio (general o por cuota).
   const tieneFacturaServicio = facturasActivas.length > 0
@@ -263,6 +268,8 @@ export default function CobroDetalle() {
     }
     setFactura({
       numero_factura: '',
+      // Sugerencia por el documento del cliente (RUC → Factura, DNI → Boleta).
+      tipo_comprobante: tipoComprobanteSugerido(data.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
       monto: modoInicial === 'general'
         ? Number(data.monto_total).toFixed(2)
@@ -325,7 +332,7 @@ export default function CobroDetalle() {
 
   const crearFactura = async () => {
     if (guardandoFactura) return;
-    if (!factura.numero_factura) return toast.error('Número de factura obligatorio');
+    if (!factura.numero_factura) return toast.error('Número de comprobante obligatorio');
     if (factura.monto === '' || Number(factura.monto) < 0) return toast.error('Monto inválido');
     if (factura.modo === 'por_cuota' && !factura.id_cuota) return toast.error('Seleccione la cuota a facturar');
     if (factura.modo === 'por_cuota' && Number(factura.monto) > restanteServicio + 0.01) {
@@ -336,6 +343,7 @@ export default function CobroDetalle() {
       const payload = {
         id_servicio: data.servicio.id,
         numero_factura: factura.numero_factura,
+        tipo_comprobante: factura.tipo_comprobante,
         fecha_emision: factura.fecha_emision,
         monto: factura.monto,
         id_archivo: factura.id_archivo,
@@ -365,7 +373,14 @@ export default function CobroDetalle() {
         actions={
           <>
             <Link to={location.state?.from || '/cobros'} className="btn-secondary">{location.state?.fromLabel ? `← ${location.state.fromLabel}` : '← Cobros'}</Link>
-            {data.estado_cobro !== 'Cerrado' && <button onClick={() => setOpenCuotas(true)} className="btn-secondary">Plan de cuotas</button>}
+            {data.estado_cobro !== 'Cerrado' && !esPlanMensual && (
+              <button onClick={() => setOpenCuotas(true)} className="btn-secondary">Plan de cuotas</button>
+            )}
+            {esPlanMensual && (
+              <Link to={`/mantenimientos`} className="btn-secondary" title="Las cuotas de un plan son sus meses: se aprueban desde el plan">
+                Ver plan
+              </Link>
+            )}
             {Number(data.saldo_pendiente) > 0 && (
               <button onClick={() => setOpenAbono(true)} disabled={bloquearAbonoPorFactura}
                 title={bloquearAbonoPorFactura ? 'Este correctivo requiere factura: agrega una factura al cobro antes de registrar abonos.' : undefined}
@@ -476,7 +491,14 @@ export default function CobroDetalle() {
 
         {data.cuotas?.length > 0 && (
           <div className="card lg:col-span-3">
-            <div className="card-header"><h3 className="card-title">Cuotas</h3></div>
+            <div className="card-header flex items-center justify-between gap-3">
+              <h3 className="card-title">{esPlanMensual ? 'Meses del plan' : 'Cuotas'}</h3>
+              {esPlanMensual && (
+                <span className="text-[11px] text-slate-500">
+                  Un solo pago por mes, por el monto mensual pactado. El detalle lista los mantenimientos cubiertos.
+                </span>
+              )}
+            </div>
             <table className="table-base">
               <thead><tr>
                 <th className="table-th">N°</th><th className="table-th">Vencimiento</th>
@@ -504,9 +526,15 @@ export default function CobroDetalle() {
                       && Number(c.numero_cuota) === 1
                       && c.estado_cuota === 'Pendiente';
                     const estadoLabel = mostrarPendienteAdelanto ? 'Pendiente de adelanto' : c.estado_cuota;
+                    // Detalle del mes que factura esta cuota. Solo lo traen
+                    // los cobros de plan de mantenimiento.
+                    const det = c.detalle_mensual || null;
                     return (
-                    <tr key={c.id}>
-                      <td className="table-td">{c.numero_cuota}</td>
+                    <Fragment key={c.id}>
+                    <tr>
+                      <td className="table-td">
+                        {det ? <span title={det.etiqueta}>{det.etiqueta}</span> : c.numero_cuota}
+                      </td>
                       <td className="table-td text-xs">{formatFecha(c.fecha_vencimiento)}</td>
                       <td className="table-td text-right font-mono">{formatMonto(c.monto, data.moneda)}</td>
                       <td className="table-td text-right font-mono">{formatMonto(c.monto_pagado, data.moneda)}</td>
@@ -544,6 +572,39 @@ export default function CobroDetalle() {
                           : <span className="text-slate-300">—</span>}
                       </td>
                     </tr>
+                    {det && (
+                      <tr className="bg-slate-50/70">
+                        <td className="table-td" colSpan={9}>
+                          <div className="text-xs space-y-1">
+                            <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                              {det.etiqueta} · {formatFecha(det.desde)} → {formatFecha(det.hasta)} · {det.total_visitas} mantenimiento(s)
+                            </div>
+                            {det.detalle.length === 0 ? (
+                              <p className="text-slate-500">Sin mantenimientos programados este mes.</p>
+                            ) : (
+                              <ul className="space-y-0.5">
+                                {det.detalle.map(d => (
+                                  <li key={d.id_ascensor} className="flex items-start justify-between gap-3">
+                                    <span className="font-mono text-slate-800">
+                                      {d.codigo} <span className="font-sans text-slate-500">× {d.visitas}</span>
+                                      {d.edificio && <span className="font-sans text-slate-400"> · {d.edificio}</span>}
+                                    </span>
+                                    <span className="text-slate-600 text-right">
+                                      {d.fechas.map(x => (
+                                        <span key={x.id_programacion} className={x.realizada ? 'text-emerald-700' : ''}>
+                                          {formatFecha(x.fecha)}{x.codigo_servicio ? ` (${x.codigo_servicio})` : ''}{' '}
+                                        </span>
+                                      ))}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                   });
                 })()}
@@ -761,11 +822,11 @@ export default function CobroDetalle() {
       </Modal>
 
       {/* Modal factura */}
-      <Modal open={openFactura} onClose={() => !guardandoFactura && setOpenFactura(false)} title="Registrar factura"
+      <Modal open={openFactura} onClose={() => !guardandoFactura && setOpenFactura(false)} title="Registrar comprobante"
         footer={<><button className="btn-secondary" onClick={() => setOpenFactura(false)} disabled={guardandoFactura}>Cancelar</button><button className="btn-primary" onClick={crearFactura} disabled={guardandoFactura}>{guardandoFactura ? 'Registrando…' : 'Registrar'}</button></>}>
         <div className="space-y-4">
           <div>
-            <label className="label">Tipo de factura</label>
+            <label className="label">Alcance del comprobante</label>
             <div className="grid grid-cols-2 gap-2">
               <label className={`flex items-start gap-2 p-3 rounded-lg ring-1 cursor-pointer text-sm ${factura.modo === 'general' ? 'ring-brand-500 bg-brand-50' : 'ring-slate-200 bg-slate-50'} ${hayFacturaPorCuota ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 <input type="radio" className="mt-1" checked={factura.modo === 'general'} onChange={() => cambiarModoFactura('general')} disabled={hayFacturaPorCuota} />
@@ -804,7 +865,14 @@ export default function CobroDetalle() {
             </div>
           )}
 
-          <div><label className="label">Número de factura *</label><input className="input" value={factura.numero_factura} onChange={e => setFactura(f => ({ ...f, numero_factura: e.target.value }))} placeholder="F001-000XXX" /></div>
+          <div>
+            <label className="label">Tipo de comprobante *</label>
+            <select className="select" value={factura.tipo_comprobante}
+              onChange={e => setFactura(f => ({ ...f, tipo_comprobante: e.target.value }))}>
+              {TIPOS_COMPROBANTE.map(t => <option key={t.codigo} value={t.codigo}>{t.etiqueta}</option>)}
+            </select>
+          </div>
+          <div><label className="label">Número de comprobante *</label><input className="input" value={factura.numero_factura} onChange={e => setFactura(f => ({ ...f, numero_factura: e.target.value }))} placeholder={ejemploNumeroComprobante(factura.tipo_comprobante)} /></div>
           <div><label className="label">Fecha emisión *</label><input type="date" className="input" value={factura.fecha_emision} onChange={e => setFactura(f => ({ ...f, fecha_emision: e.target.value }))} /></div>
           <div>
             <label className="label">Monto *</label>
@@ -819,7 +887,7 @@ export default function CobroDetalle() {
             />
             {factura.modo === 'por_cuota' && <p className="text-xs text-slate-500 mt-1">Fijado por el monto de la cuota seleccionada.</p>}
           </div>
-          <div><label className="label">Archivo de factura</label><input type="file" className="input" onChange={subirArchivoFactura} /></div>
+          <div><label className="label">Archivo del comprobante</label><input type="file" className="input" onChange={subirArchivoFactura} /></div>
         </div>
       </Modal>
 

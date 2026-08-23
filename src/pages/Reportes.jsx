@@ -6,6 +6,7 @@ import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination from '../components/common/Pagination.jsx';
 import RangeCalendar from '../components/common/RangeCalendar.jsx';
+import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensores, resumenAscensores, hoyISO } from '../utils/formatters.js';
@@ -27,6 +28,14 @@ const CATEGORIAS = [
 const ESTADOS_CORRECTIVO = ['Reportado', 'En atención', 'Resuelto', 'Cancelado'];
 const ESTADOS_ATENCION = ['nueva', 'en_proceso', 'convertida', 'descartada'];
 
+// `ocultarPara: [rol…]` retira un reporte de la lista para esos roles. A
+// diferencia de `finanzas`, no es por el tipo de dato sino por decisión de
+// negocio sobre quién consulta qué.
+//
+// `finanzas: true` marca los reportes cuyo CONTENIDO es económico (cobranza,
+// mora, facturación, ingresos): no se pueden mostrar "sin la columna de importe"
+// porque el importe es el reporte. Se ocultan a los roles sin visibilidad
+// financiera —Coordinador incluido—; el backend además cierra sus endpoints.
 const TABS = [
   { key: 'Operativos', codigo: 'operativos', filtros: ['desde', 'hasta', 'id_cliente', 'id_tecnico', 'id_ascensor', 'id_tipo_servicio', 'estado_servicio'] },
   { key: 'Servicios finalizados', codigo: 'servicios_finalizados', filtros: ['desde', 'hasta', 'id_cliente', 'id_tecnico', 'id_tipo_servicio'] },
@@ -36,16 +45,17 @@ const TABS = [
   { key: 'Mant. vencidos', codigo: 'mantenimientos_vencidos', categoria: 'mantenimientos', filtros: [] },
   { key: 'Mant. por cliente', codigo: 'mantenimientos_por_cliente', categoria: 'mantenimientos', filtros: [] },
   { key: 'Mant. sin servicio', codigo: 'mantenimientos_sin_servicio', categoria: 'mantenimientos', filtros: ['desde', 'hasta'] },
-  { key: 'Pendientes de cobro', codigo: 'pendientes_cobro', filtros: ['id_cliente'] },
-  { key: 'Cobros vencidos', codigo: 'cobros_vencidos', filtros: ['id_cliente'] },
-  { key: 'Mora por cliente', codigo: 'mora_cliente', filtros: [] },
-  { key: 'Abonos', codigo: 'abonos', filtros: ['desde', 'hasta'] },
-  { key: 'Ingresos por banco', codigo: 'ingresos_por_banco', filtros: ['desde', 'hasta', 'id_cuenta_bancaria', 'banco', 'moneda'] },
-  { key: 'Facturados', codigo: 'facturados', filtros: [] },
-  { key: 'No facturados', codigo: 'no_facturados', filtros: [] },
-  { key: 'Cobros (general)', codigo: 'cobros', filtros: [] },
+  { key: 'Pendientes de cobro', codigo: 'pendientes_cobro', filtros: ['id_cliente'], finanzas: true },
+  { key: 'Cobros vencidos', codigo: 'cobros_vencidos', filtros: ['id_cliente'], finanzas: true },
+  { key: 'Mora por cliente', codigo: 'mora_cliente', filtros: [], finanzas: true },
+  { key: 'Abonos', codigo: 'abonos', filtros: ['desde', 'hasta'], finanzas: true },
+  { key: 'Ingresos por banco', codigo: 'ingresos_por_banco', filtros: ['desde', 'hasta', 'id_cuenta_bancaria', 'banco', 'moneda'], finanzas: true },
+  { key: 'Facturados', codigo: 'facturados', filtros: [], finanzas: true },
+  { key: 'No facturados', codigo: 'no_facturados', filtros: [], finanzas: true },
+  { key: 'Cobros (general)', codigo: 'cobros', filtros: [], finanzas: true },
   { key: 'Productividad técnicos', codigo: 'tecnicos', filtros: [] },
-  { key: 'Leads', codigo: 'leads', categoria: 'leads', filtros: [] },
+  // El Coordinador gestiona leads en su módulo, pero no accede a su reporte.
+  { key: 'Leads', codigo: 'leads', categoria: 'leads', filtros: ['desde', 'hasta'], ocultarPara: ['coordinador'] },
   { key: 'Atención rápida', codigo: 'atenciones_rapidas', categoria: 'atencion_rapida', filtros: ['desde', 'hasta', 'id_cliente', 'estado_atencion', 'nivel_urgencia'] },
   { key: 'Ascensores', codigo: 'ascensores', filtros: [] },
   { key: 'Hist. téc. ascensor', codigo: 'historial_tecnico_ascensor', filtros: ['id_ascensor'] },
@@ -54,8 +64,7 @@ const TABS = [
 ];
 
 const ESTADOS_SERVICIO = [
-  'Borrador', 'Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida',
-  'En camino', 'En curso', 'Finalizado por técnico', 'Finalizado observado', 'En revisión administrativa',
+  'Borrador', 'Pendiente', 'Asignado', 'En curso', 'Finalizado', 'En revisión administrativa',
   'A gestión de cobro', 'En cobro', 'Cobrado parcial', 'Cobrado total', 'Facturado', 'Cerrado', 'Cancelado'
 ];
 
@@ -79,7 +88,7 @@ function fetcher(codigo, params) {
     case 'no_facturados': return reportesService.facturados({ facturados: 0 });
     case 'cobros': return reportesService.cobros();
     case 'tecnicos': return reportesService.tecnicos();
-    case 'leads': return reportesService.leads();
+    case 'leads': return reportesService.leads(params);
     case 'ascensores': return reportesService.ascensores();
     case 'historial_tecnico_ascensor': return params.id_ascensor ? reportesService.historialTecnicoAscensor(params) : Promise.resolve(null);
     case 'clientes_estado_edificios': return reportesService.clientesEstadoEdificios();
@@ -99,9 +108,23 @@ export default function Reportes() {
   const [ascensores, setAscensores] = useState([]);
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const toast = useToast();
-  const { puedeVerPrecio, esSuperAdmin } = useAuth();
-  // Pestañas visibles según rol (algunas, como el estado de edificios, son SA-only).
-  const tabsVisibles = useMemo(() => TABS.filter(t => !t.soloSA || esSuperAdmin), [esSuperAdmin]);
+  const { puedeVerPrecio, esSuperAdmin, rol } = useAuth();
+  // Pestañas visibles según rol: SA-only, financieras y las vetadas a ciertos
+  // roles se filtran aquí.
+  const tabsVisibles = useMemo(
+    () => TABS.filter(t =>
+      (!t.soloSA || esSuperAdmin)
+      && (!t.finanzas || puedeVerPrecio)
+      && !(t.ocultarPara || []).includes(rol)
+    ),
+    [esSuperAdmin, puedeVerPrecio, rol]
+  );
+  // Una categoría sin reportes visibles no se ofrece: sería un filtro que deja
+  // la pantalla en blanco.
+  const categoriasVisibles = useMemo(
+    () => CATEGORIAS.filter(c => c.codigo === 'todos' || tabsVisibles.some(t => t.categoria === c.codigo)),
+    [tabsVisibles]
+  );
 
   useEffect(() => {
     Promise.all([
@@ -295,7 +318,7 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
 
       <div className="card mb-2">
         <div className="px-2 py-2 flex gap-1 overflow-x-auto scroll-thin">
-          {CATEGORIAS.map(c => (
+          {categoriasVisibles.map(c => (
             <button
               key={c.codigo}
               onClick={() => {
@@ -328,11 +351,20 @@ ${analisis.length ? `<br/><div class="h">Resumen analítico</div><ul>${analisis.
       {tab.filtros.length > 0 && (
         <div className="card mb-4">
           <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {tab.filtros.includes('desde') && (
-              <div><label className="label">Desde</label><input type="date" className="input" value={filtros.desde || ''} onChange={e => setF('desde', e.target.value)} /></div>
-            )}
-            {tab.filtros.includes('hasta') && (
-              <div><label className="label">Hasta</label><input type="date" className="input" value={filtros.hasta || ''} onChange={e => setF('hasta', e.target.value)} /></div>
+            {/* Rango en UN solo calendario (con selección de mes completo), en
+                vez de dos inputs de fecha sueltos: el periodo es un dato único
+                y elegirlo por partes obliga a acertar el último día del mes.
+                Mismo control que usan Contabilidad, Cobros y Facturas. */}
+            {(tab.filtros.includes('desde') || tab.filtros.includes('hasta')) && (
+              <div>
+                <label className="label">Periodo</label>
+                <DateRangePicker
+                  desde={filtros.desde || ''}
+                  hasta={filtros.hasta || ''}
+                  onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, desde: desde || undefined, hasta: hasta || undefined }))}
+                  placeholder="Rango de fechas o mes"
+                />
+              </div>
             )}
             {tab.filtros.includes('id_cliente') && (
               <div>
@@ -1064,23 +1096,120 @@ function TablaTecnicos({ data }) {
   );
 }
 
+/**
+ * Un corte del embudo de leads (por canal, vendedora, provincia…). Cada fila
+ * lleva el volumen, los convertidos y la tasa, con una barra proporcional al
+ * mayor del corte para comparar de un vistazo.
+ *
+ * No usa <table> a propósito: la exportación a Excel/PDF toma la PRIMERA tabla
+ * del reporte, que debe seguir siendo el listado de leads. Estos cortes viajan
+ * al export por el resumen analítico.
+ */
+const MAX_FILAS_DESGLOSE = 8;
+
+function DesgloseLeads({ titulo, filas = [], conConversion = true, ayuda }) {
+  if (filas.length === 0) return null;
+  const maximo = Math.max(...filas.map(f => f.total), 1);
+  // Las filas vienen ordenadas de mayor a menor: se pintan las primeras y la
+  // cola se resume en una línea, para que un corte con muchas categorías (18
+  // provincias) no descuadre la altura de la grilla.
+  const visibles = filas.slice(0, MAX_FILAS_DESGLOSE);
+  const resto = filas.slice(MAX_FILAS_DESGLOSE);
+  const totalResto = resto.reduce((acc, f) => acc + f.total, 0);
+  return (
+    <div className="rounded-lg ring-1 ring-slate-200 p-3">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold" title={ayuda}>{titulo}</div>
+      <div className="mt-2 space-y-1.5">
+        {visibles.map(f => (
+          <div key={f.label}>
+            <div className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="truncate text-slate-700" title={f.label}>{f.label}</span>
+              <span className="shrink-0 tabular-nums text-slate-500">
+                <span className="font-semibold text-slate-800">{f.total}</span>
+                {conConversion && f.convertidos > 0 && (
+                  <span className="text-emerald-700"> · {f.convertidos} conv. ({f.tasa_conversion}%)</span>
+                )}
+              </span>
+            </div>
+            <div className="mt-0.5 h-1.5 rounded bg-slate-100 overflow-hidden">
+              <div className="h-full bg-brand-400" style={{ width: `${(f.total / maximo) * 100}%` }} />
+              {conConversion && f.convertidos > 0 && (
+                <div className="h-full bg-emerald-500 -mt-1.5" style={{ width: `${(f.convertidos / maximo) * 100}%` }} />
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {resto.length > 0 && (
+        <div className="mt-2 text-[11px] text-slate-500" title={resto.map(f => `${f.label}: ${f.total}`).join(' · ')}>
+          y {resto.length} más · {totalResto} lead{totalResto === 1 ? '' : 's'}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BloqueLeads({ data }) {
+  const total = data.total || 0;
   return (
     <>
-      <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-slate-100">
-        <Card label="Total" value={data.total} />
-        <Card label="Convertidos" value={data.convertidos} />
-        <Card label="Descartados" value={data.descartados} />
-        {Object.entries(data.porCanal || {}).slice(0, 1).map(([k, v]) => <Card key={k} label={k} value={v} />)}
+      <div className="p-4 grid grid-cols-2 sm:grid-cols-5 gap-3 border-b border-slate-100">
+        <Card label="Total de leads" value={total} />
+        <Card label="Convertidos" value={data.convertidos || 0} />
+        <Card label="En seguimiento" value={data.en_seguimiento ?? 0} />
+        <Card label="Descartados" value={`${data.descartados || 0} · ${data.tasa_descarte ?? 0}%`} />
+        <Card label="Tasa de conversión" value={`${data.tasa_conversion ?? 0}%`} />
       </div>
+
+      <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 border-b border-slate-100">
+        <DesgloseLeads
+          titulo="Ingreso por canal"
+          ayuda="De dónde entró el lead y cuántos de esos se cerraron."
+          filas={data.por_canal} />
+        <DesgloseLeads
+          titulo="Por vendedora"
+          ayuda="Leads asignados a cada vendedora y cuántos convirtió."
+          filas={data.por_vendedor} />
+        <DesgloseLeads
+          titulo="Estados del lead"
+          conConversion={false}
+          ayuda="Situación actual de los leads del periodo."
+          filas={data.por_estado} />
+        <DesgloseLeads
+          titulo="Por provincia"
+          ayuda="Procedencia geográfica del lead (provincia y departamento)."
+          filas={data.por_provincia} />
+        <DesgloseLeads
+          titulo="Por tipo de ascensor"
+          ayuda="Equipo por el que consulta el lead."
+          filas={data.por_tipo_ascensor} />
+        <DesgloseLeads
+          titulo="Motivos de descarte"
+          conConversion={false}
+          ayuda="Por qué se descartaron los leads del periodo."
+          filas={data.motivos_descarte} />
+      </div>
+
       <table className="table-base">
-        <thead><tr><th className="table-th">Contacto</th><th className="table-th">Canal</th><th className="table-th">Estado</th></tr></thead>
+        <thead><tr>
+          <th className="table-th">Contacto</th>
+          <th className="table-th">Canal</th>
+          <th className="table-th">Vendedora</th>
+          <th className="table-th">Provincia</th>
+          <th className="table-th">Tipo de ascensor</th>
+          <th className="table-th">Estado</th>
+          <th className="table-th">Motivo de descarte</th>
+        </tr></thead>
         <tbody className="divide-y divide-slate-100">
           {data.leads.map((l, idx) => (
             <tr key={l.id ?? `row-${idx}`}>
               <td className="table-td text-xs">{l.nombre_contacto}</td>
-              <td className="table-td text-xs">{l.canal}</td>
+              <td className="table-td text-xs">{l.canal || '—'}</td>
+              <td className="table-td text-xs">{l.vendedor?.nombres || '—'}</td>
+              <td className="table-td text-xs">{l.ubigeo?.provincia || '—'}</td>
+              <td className="table-td text-xs">{l.tipo_ascensor?.nombre || '—'}</td>
               <td className="table-td"><span className={badgeEstado(l.estado_lead)}>{l.estado_lead}</span></td>
+              <td className="table-td text-xs">{l.motivo_descarte || '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -1646,19 +1775,42 @@ function buildAnalitica(codigo, data, puedeVerPrecio) {
     const total = data.total || data.leads?.length || 0;
     const convertidos = data.convertidos || 0;
     const descartados = data.descartados || 0;
-    const porCanal = Object.entries(data.porCanal || {}).map(([label, value]) => ({ label, value: Number(value) || 0 }));
-    const porEstado = groupCount(data.leads || [], l => l.estado_lead || 'Sin estado');
-    const topCanal = [...porCanal].sort((a, b) => b.value - a.value)[0];
-    const enSeguimiento = total - convertidos - descartados;
+    const enSeguimiento = data.en_seguimiento ?? (total - convertidos - descartados);
+    const aSerie = (filas) => (filas || []).map(f => ({ label: f.label, value: f.total }));
+    const primero = (filas) => (filas || [])[0];
+    // El corte más útil de cada dimensión no es el de más volumen sino el que
+    // más cierra: se destaca aparte del principal por cantidad.
+    const mejorConversion = (filas, minimo = 3) => [...(filas || [])]
+      .filter(f => f.total >= minimo && f.convertidos > 0)
+      .sort((a, b) => b.tasa_conversion - a.tasa_conversion)[0];
+
+    const topCanal = primero(data.por_canal);
+    const canalQueCierra = mejorConversion(data.por_canal);
+    const topVendedor = [...(data.por_vendedor || [])]
+      .filter(v => v.label !== 'Sin asignar')
+      .sort((a, b) => b.convertidos - a.convertidos)[0];
+    const topProvincia = primero(data.por_provincia);
+    const topTipo = primero(data.por_tipo_ascensor);
+    const topMotivo = primero(data.motivos_descarte);
+    const sinAsignar = (data.por_vendedor || []).find(v => v.label === 'Sin asignar');
+
     return {
-      pie: { title: 'Leads por estado', data: porEstado },
-      bar: { title: 'Leads por canal', data: topN(porCanal, 6) },
+      pie: { title: 'Leads por estado', data: aSerie(data.por_estado) },
+      bar: { title: 'Leads por canal', data: topN(aSerie(data.por_canal), 6) },
       analisis: [
-        `Total leads: ${total}`,
-        `Convertidos: ${convertidos} (${pct(convertidos, total)}%)`,
-        descartados > 0 ? `Descartados: ${descartados} (${pct(descartados, total)}%)` : null,
-        topCanal ? `Canal principal: ${topCanal.label} (${topCanal.value})` : null,
-        enSeguimiento > 0 ? `En seguimiento: ${enSeguimiento}` : null
+        `Total de leads: ${total}`,
+        `Tasa de conversión: ${data.tasa_conversion ?? pct(convertidos, total)}% (${convertidos} de ${total})`,
+        enSeguimiento > 0 ? `En seguimiento: ${enSeguimiento}` : null,
+        descartados > 0 ? `Descartados: ${descartados} (${data.tasa_descarte ?? pct(descartados, total)}%)` : null,
+        topMotivo ? `Motivo de descarte más frecuente: ${topMotivo.label} (${topMotivo.total})` : null,
+        topCanal ? `Canal con más ingreso: ${topCanal.label} (${topCanal.total}, ${topCanal.tasa_conversion}% de conversión)` : null,
+        canalQueCierra && canalQueCierra.label !== topCanal?.label
+          ? `Canal que mejor convierte: ${canalQueCierra.label} (${canalQueCierra.tasa_conversion}% sobre ${canalQueCierra.total})`
+          : null,
+        topVendedor ? `Vendedora con más conversiones: ${topVendedor.label} (${topVendedor.convertidos} de ${topVendedor.total}, ${topVendedor.tasa_conversion}%)` : null,
+        sinAsignar ? `Leads sin vendedora asignada: ${sinAsignar.total}` : null,
+        topProvincia ? `Provincia con más leads: ${topProvincia.label} (${topProvincia.total})` : null,
+        topTipo ? `Tipo de ascensor más consultado: ${topTipo.label} (${topTipo.total})` : null
       ].filter(Boolean)
     };
   }

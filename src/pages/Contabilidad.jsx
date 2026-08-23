@@ -8,11 +8,13 @@ import Modal from '../components/common/Modal.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import OtModal from '../components/common/OtModal.jsx';
+import CardMetrica from '../components/common/CardMetrica.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores, nombreEdificioDeAscensores, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
 import { ESTADOS_FACTURACION, esFacturaActiva } from '../utils/estadoFactura.js';
+import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 
 const FILTROS_INICIALES = {
@@ -50,7 +52,8 @@ const ESTADOS_ADMIN_NO_HABILITA = ['En ejecución', 'Pendiente revisión', 'Obse
 // autoridad: aquí solo se decide si mostrar la acción.
 //
 // Queda fuera (se factura en otro sitio o no se factura):
-//   · mantenimientos de un PLAN → factura única por periodo, desde Cobros;
+//   · mantenimientos de un PLAN → una sola factura por MES, desde el cobro
+//     del plan (Cobros → Por facturar), por el monto mensual pactado;
 //   · servicios marcados "Sin factura" (requiere_factura = 0) y los gratuitos;
 //   · servicios aún no aprobados por la revisión administrativa;
 //   · cobros que ya facturan POR CUOTA (la emisión va en Cobros → Por facturar);
@@ -58,7 +61,7 @@ const ESTADOS_ADMIN_NO_HABILITA = ['En ejecución', 'Pendiente revisión', 'Obse
 function motivoNoFacturable(r) {
   const s = r.servicio;
   if (!s) return 'Sin servicio asociado';
-  if (s.id_mantenimiento_plan) return 'Pertenece a un plan: se factura por el total del periodo, desde el cobro del plan';
+  if (s.id_mantenimiento_plan) return 'Pertenece a un plan: se factura una vez al mes, desde el cobro del plan';
   if (s.estado_servicio === 'Cancelado') return 'Servicio cancelado';
   if (s.sin_cobro === 1) return 'Servicio sin cobro (gratuito)';
   if (s.requiere_factura === 0) return 'Marcado como "Sin factura"';
@@ -126,15 +129,22 @@ export default function Contabilidad() {
   const [otAbierta, setOtAbierta] = useState(null); // { numero, archivo } | null
   // Emisión de la factura del servicio sin salir de Contabilidad.
   const [facturando, setFacturando] = useState(null); // fila en el modal | null
-  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), monto: '', id_archivo: null });
+  const [factura, setFactura] = useState({
+    numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo,
+    fecha_emision: hoyISO(), monto: '', id_archivo: null
+  });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   // Mismos roles que admite la ruta de facturas en el backend.
   const puedeFacturar = esSuperAdmin || esAdmin || esContabilidad;
 
-  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar, meta } =
     usePaginatedList(serviciosService.realizadosPaginate, filtros, { initialPageSize: 25 });
+  // Resumen de facturación del conjunto filtrado completo (no solo de la página
+  // visible). Lo calcula el backend con el mismo `where` que la tabla y solo lo
+  // envía a los roles con visibilidad financiera.
+  const resumen = meta?.resumen_facturacion;
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
 
@@ -181,6 +191,9 @@ export default function Contabilidad() {
   const abrirFacturar = (r) => {
     setFactura({
       numero_factura: '',
+      // Sugerencia por el documento del cliente (RUC → Factura, DNI → Boleta).
+      // Es solo el valor inicial: el selector queda editable.
+      tipo_comprobante: tipoComprobanteSugerido(r.servicio?.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
       monto: totalCobrable(r).toFixed(2),
       id_archivo: null
@@ -209,7 +222,7 @@ export default function Contabilidad() {
 
   const emitirFactura = async () => {
     if (!facturando || guardandoFactura) return;
-    if (!factura.numero_factura.trim()) return toast.error('Número de factura obligatorio');
+    if (!factura.numero_factura.trim()) return toast.error('Número de comprobante obligatorio');
     if (!factura.fecha_emision) return toast.error('Fecha de emisión obligatoria');
     const monto = Number(factura.monto);
     if (!Number.isFinite(monto) || monto < 0) return toast.error('Monto inválido');
@@ -222,6 +235,7 @@ export default function Contabilidad() {
       await facturasService.create({
         id_servicio: facturando.id_servicio,
         numero_factura: factura.numero_factura.trim(),
+        tipo_comprobante: factura.tipo_comprobante,
         fecha_emision: factura.fecha_emision,
         monto,
         id_archivo: factura.id_archivo
@@ -247,10 +261,31 @@ export default function Contabilidad() {
         }
       />
 
+      {resumen && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
+          <CardMetrica
+            titulo="Por facturar"
+            ayuda="Servicios que requieren comprobante y aún no lo tienen emitido por completo (incluye los parcialmente facturados). No cuenta los marcados «Sin factura» ni los gratuitos."
+            cantidad={resumen.por_facturar?.cantidad}
+            montos={resumen.por_facturar?.montos}
+            unidad="servicio(s)"
+            tono="amber"
+          />
+          <CardMetrica
+            titulo="Facturado"
+            ayuda="Servicios con la emisión completa (Facturado o Enviada)."
+            cantidad={resumen.facturado?.cantidad}
+            montos={resumen.facturado?.montos}
+            unidad="servicio(s)"
+            tono="green"
+          />
+        </div>
+      )}
+
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input lg:col-span-2"
-            placeholder="Buscar por código, RUC/DNI, cliente o código de edificio…"
+            placeholder="Buscar por código, RUC/DNI, cliente, edificio o código de ascensor…"
             value={filtros.q}
             onChange={e => setF('q', e.target.value)} />
           <select className="select" value={filtros.tipo_categoria} onChange={e => setF('tipo_categoria', e.target.value)}>
@@ -301,7 +336,9 @@ export default function Contabilidad() {
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.map((r, idx) => {
-                    const tieneOt = !!(r.numero_ot || r.archivo_ot);
+                    // La OT vive en el servicio (antes se copiaba al registro de realizado).
+                    const ot = { numero: r.servicio?.numero_ot, archivo: r.servicio?.archivo_ot };
+                    const tieneOt = !!(ot.numero || ot.archivo);
                     const enEjecucion = r.estado_administrativo === EN_EJECUCION;
                     // Servicios gratuitos / con cobertura: no se les crea cobro, así que
                     // el precio interno (referencial) y el estado_cobro almacenado pueden
@@ -343,11 +380,11 @@ export default function Contabilidad() {
                           {tieneOt ? (
                             <button
                               type="button"
-                              onClick={() => setOtAbierta({ numero: r.numero_ot, archivo: r.archivo_ot })}
+                              onClick={() => setOtAbierta(ot)}
                               className="inline-flex items-center gap-1 text-brand-700 text-xs hover:underline font-mono"
                               title="Ver OT"
                             >
-                              📄 {r.numero_ot || 'OT'}
+                              📄 {ot.numero || 'OT'}
                             </button>
                           ) : (
                             <span className="text-slate-400 text-xs">—</span>
@@ -388,11 +425,11 @@ export default function Contabilidad() {
         )}
       </div>
 
-      <Modal open={!!facturando} onClose={cerrarFacturar} title="Emitir factura" size="sm"
+      <Modal open={!!facturando} onClose={cerrarFacturar} title="Emitir comprobante" size="sm"
         footer={<>
           <button type="button" className="btn-secondary" onClick={cerrarFacturar} disabled={guardandoFactura}>Cancelar</button>
           <button type="button" className="btn-primary" onClick={emitirFactura} disabled={guardandoFactura}>
-            {guardandoFactura ? 'Emitiendo…' : 'Emitir factura'}
+            {guardandoFactura ? 'Emitiendo…' : 'Emitir comprobante'}
           </button>
         </>}>
         {facturando && (
@@ -411,8 +448,19 @@ export default function Contabilidad() {
               </div>
             </div>
             <div>
-              <label className="label">Número de factura *</label>
-              <input className="input" placeholder="F001-000XXX" value={factura.numero_factura}
+              <label className="label">Tipo de comprobante *</label>
+              <select className="select" value={factura.tipo_comprobante}
+                onChange={e => setFactura(f => ({ ...f, tipo_comprobante: e.target.value }))}>
+                {TIPOS_COMPROBANTE.map(t => <option key={t.codigo} value={t.codigo}>{t.etiqueta}</option>)}
+              </select>
+              <p className="text-xs text-slate-500 mt-1">
+                Sugerido por el documento del cliente ({docCliente(facturando)}); puede cambiarse.
+              </p>
+            </div>
+            <div>
+              <label className="label">Número de comprobante *</label>
+              <input className="input" placeholder={ejemploNumeroComprobante(factura.tipo_comprobante)}
+                value={factura.numero_factura}
                 onChange={e => setFactura(f => ({ ...f, numero_factura: e.target.value }))} />
             </div>
             <div>
@@ -429,7 +477,7 @@ export default function Contabilidad() {
               </p>
             </div>
             <div>
-              <label className="label">Archivo de factura</label>
+              <label className="label">Archivo del comprobante</label>
               <input type="file" className="input" onChange={subirArchivoFactura} />
               {factura.id_archivo && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
             </div>

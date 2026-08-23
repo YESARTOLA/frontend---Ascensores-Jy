@@ -5,6 +5,8 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Modal from '../components/common/Modal.jsx';
+import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
+import { tramoDeUnDia, fechasDesdeTramos, payloadDias, errorDeTramos } from '../utils/programacion.js';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { formatFecha, formatFechaHora, formatHora, badgeEstado, codigosAscensores } from '../utils/formatters.js';
@@ -70,7 +72,7 @@ export default function Calendario() {
   const [materializarEv, setMaterializarEv] = useState(null); // evento a materializar
   const [materializarForm, setMaterializarForm] = useState({ fecha: '', hora: '', precio: '', moneda: 'PEN' });
   const toast = useToast();
-  const { esSuperAdmin, esAdmin, esCoordinador, esVendedora, rol } = useAuth();
+  const { esSuperAdmin, esAdmin, esCoordinador, esVendedora, puedeVerPrecio, rol } = useAuth();
   const puedeMaterializar = esSuperAdmin || esAdmin || esCoordinador;
   // La Vendedora consulta la agenda en modo lectura: NO navega al detalle del
   // servicio/proyecto (solo valida disponibilidad de técnicos).
@@ -105,7 +107,9 @@ export default function Calendario() {
     const total = ascs.reduce((acc, a) => acc + Number(a.monto || 0), 0);
     setMaterializarEv(e);
     setMaterializarForm({
-      fecha: ymdLima(new Date(e.fecha_inicio)),
+      // Días de trabajo de ESTA ocurrencia: arranca en el día del evento y admite
+      // rangos y/o fechas sueltas si el mantenimiento ocupará más de un día.
+      tramos: [tramoDeUnDia(ymdLima(new Date(e.fecha_inicio)))],
       hora: plan?.hora_programada || new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(e.fecha_inicio)),
       precio: ascs.length ? total.toFixed(2) : '',
       moneda: ascs[0]?.moneda || 'PEN'
@@ -116,12 +120,16 @@ export default function Calendario() {
   const confirmarMaterializar = async (e) => {
     e.preventDefault();
     if (materializandoId || !materializarEv) return;
+    const errorProgramacion = errorDeTramos(materializarForm.tramos);
+    if (errorProgramacion) return toast.error(errorProgramacion);
     setMaterializandoId(materializarEv.id);
     try {
       await mantenimientosService.materializarEvento(materializarEv.id, {
-        precio: Number(materializarForm.precio),
-        moneda: materializarForm.moneda,
-        fecha_programada: materializarForm.fecha,
+        // Sin visibilidad de precios no se manda importe: el backend conserva el
+        // monto pactado del plan (mandar 0 lo pisaría).
+        ...(puedeVerPrecio ? { precio: Number(materializarForm.precio), moneda: materializarForm.moneda } : {}),
+        dias: payloadDias(materializarForm.tramos),
+        fecha_programada: fechasDesdeTramos(materializarForm.tramos)[0],
         hora_programada: materializarForm.hora
       });
       toast.success('Servicio creado');
@@ -431,41 +439,43 @@ export default function Calendario() {
                   <div className="text-slate-800">{plan?.tipo_servicio?.nombre || '—'}</div>
                 </div>
               </div>
+              <ProgramacionDias
+                tramos={materializarForm.tramos}
+                onChange={tramos => setMaterializarForm(f => ({ ...f, tramos }))}
+                ayuda="Rango de fechas, días sueltos o ambos. Solo esos días entran en el calendario del técnico." />
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Fecha *</label>
-                  <input type="date" className="input" required
-                    value={materializarForm.fecha}
-                    onChange={e => setMaterializarForm(f => ({ ...f, fecha: e.target.value }))} />
-                </div>
                 <div>
                   <label className="label">Hora</label>
                   <input type="time" className="input"
                     value={materializarForm.hora}
                     onChange={e => setMaterializarForm(f => ({ ...f, hora: e.target.value }))} />
                 </div>
-                <div>
-                  <label className="label">Precio *</label>
-                  <input type="number" step="0.01" min="0" className="input font-mono" required
-                    value={materializarForm.precio}
-                    onChange={e => setMaterializarForm(f => ({ ...f, precio: e.target.value }))} />
-                  {!filaActual && (
-                    <p className="text-xs text-amber-700 mt-1">
-                      El cliente no tiene precio configurado para este tipo de servicio. Ingréselo manualmente.
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="label">Moneda</label>
-                  <select className="select" value={materializarForm.moneda}
-                    onChange={e => setMaterializarForm(f => ({ ...f, moneda: e.target.value }))}>
-                    <option value="PEN">PEN (S/)</option>
-                    <option value="USD">USD ($)</option>
-                  </select>
-                </div>
+                {puedeVerPrecio && (
+                  <>
+                    <div>
+                      <label className="label">Precio *</label>
+                      <input type="number" step="0.01" min="0" className="input font-mono" required
+                        value={materializarForm.precio}
+                        onChange={e => setMaterializarForm(f => ({ ...f, precio: e.target.value }))} />
+                      {!filaActual && (
+                        <p className="text-xs text-amber-700 mt-1">
+                          El cliente no tiene precio configurado para este tipo de servicio. Ingréselo manualmente.
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="label">Moneda</label>
+                      <select className="select" value={materializarForm.moneda}
+                        onChange={e => setMaterializarForm(f => ({ ...f, moneda: e.target.value }))}>
+                        <option value="PEN">PEN (S/)</option>
+                        <option value="USD">USD ($)</option>
+                      </select>
+                    </div>
+                  </>
+                )}
               </div>
               <p className="text-xs text-slate-500">
-                Al confirmar se crea un servicio en estado "Pendiente" y se enlaza con este evento del calendario. La fecha modifica solo esta instancia; los demás eventos del plan no se mueven.
+                Al confirmar se crea un servicio en estado "Pendiente" y se enlaza con este evento del calendario. Los días programados modifican solo esta instancia; los demás eventos del plan no se mueven.
               </p>
             </form>
           );

@@ -5,6 +5,7 @@ import { dashboardService, recordatoriosService } from '../services';
 import Loader from '../components/common/Loader.jsx';
 import PageHeader from '../components/common/PageHeader.jsx';
 import { formatMonto, badgeEstado, formatFechaHora } from '../utils/formatters.js';
+import { destinoRecordatorio } from '../utils/destinoRecordatorio.js';
 
 /* =========================================================
    Estilos de KPI por "tono". Cada uno con su gradiente de
@@ -162,11 +163,7 @@ export default function Dashboard() {
             <div className="px-4 pb-4">
               <ul className="space-y-0.5">
                 {recProx.map(r => {
-                  const destino = r.servicio?.id ? `/servicios/${r.servicio.id}`
-                    : r.cobro?.id ? `/cobros/${r.cobro.id}`
-                    : r.emergencia ? '/emergencias'
-                    : r.mantenimiento_plan ? '/mantenimientos'
-                    : '/recordatorios';
+                  const destino = destinoRecordatorio(r);
                   const noLeido = !r.fecha_lectura;
                   const onClick = () => {
                     if (!noLeido) return;

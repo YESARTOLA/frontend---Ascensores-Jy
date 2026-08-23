@@ -21,13 +21,48 @@ export default function ServiciosRealizados() {
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
   const [clientes, setClientes] = useState([]);
   const toast = useToast();
-  const { puedeVerPrecio, esSuperAdmin, esAdmin, esContabilidad, esTecnico } = useAuth();
+  const { puedeVerPrecio, esSuperAdmin, esAdmin, esContabilidad, esCoordinador, esTecnico } = useAuth();
+  // Corrección del informe que dejó el técnico. Coordinación y administración
+  // pueden arreglarlo hasta la revisión administrativa; el backend aplica el
+  // corte real (utils/registrosTecnico.js), aquí solo se ofrece la acción.
+  const [editandoNotas, setEditandoNotas] = useState(false);
+  const [notasForm, setNotasForm] = useState({ observaciones_tecnicas: '', descargo_tecnico: '' });
+  const [guardandoNotas, setGuardandoNotas] = useState(false);
+  const gestionaRegistros = esSuperAdmin || esAdmin || esCoordinador;
   const puedeRevisar = esSuperAdmin || esAdmin || esContabilidad;
   const verCobroFactura = !esTecnico;
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(serviciosService.realizadosPaginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
+
+  const abrirEdicionNotas = () => {
+    setNotasForm({
+      observaciones_tecnicas: openDetalle?.observaciones_tecnicas || '',
+      descargo_tecnico: openDetalle?.descargo_tecnico || ''
+    });
+    setEditandoNotas(true);
+  };
+
+  const guardarNotas = async () => {
+    if (!openDetalle || guardandoNotas) return;
+    setGuardandoNotas(true);
+    try {
+      const r = await serviciosService.actualizarInformeTecnico(openDetalle.id_servicio, {
+        observaciones_tecnicas: notasForm.observaciones_tecnicas,
+        descargo_tecnico: notasForm.descargo_tecnico
+      });
+      // El modal sigue abierto: se refresca con lo guardado y se recarga la tabla.
+      setOpenDetalle(prev => (prev ? { ...prev, ...r } : prev));
+      setEditandoNotas(false);
+      toast.success('Notas técnicas actualizadas');
+      recargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al actualizar las notas');
+    } finally {
+      setGuardandoNotas(false);
+    }
+  };
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
 
@@ -171,19 +206,60 @@ export default function ServiciosRealizados() {
         )}
       </div>
 
-      <Modal open={!!openDetalle} onClose={() => setOpenDetalle(null)} title={`Notas técnicas · ${openDetalle?.servicio?.codigo || ''}`}>
+      <Modal
+        open={!!openDetalle}
+        onClose={() => { setOpenDetalle(null); setEditandoNotas(false); }}
+        title={`Notas técnicas · ${openDetalle?.servicio?.codigo || ''}`}
+        footer={gestionaRegistros ? (
+          editandoNotas ? (
+            <>
+              <button className="btn-secondary" onClick={() => setEditandoNotas(false)} disabled={guardandoNotas}>Cancelar</button>
+              <button className="btn-primary" onClick={guardarNotas} disabled={guardandoNotas}>
+                {guardandoNotas ? 'Guardando…' : 'Guardar'}
+              </button>
+            </>
+          ) : (
+            <button className="btn-secondary" onClick={abrirEdicionNotas}>Editar notas</button>
+          )
+        ) : undefined}
+      >
         <div className="space-y-3 text-sm">
-          {openDetalle?.observaciones_tecnicas && (
-            <div>
-              <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Observaciones técnicas</p>
-              <p className="text-slate-700 whitespace-pre-line">{openDetalle.observaciones_tecnicas}</p>
-            </div>
-          )}
-          {openDetalle?.descargo_tecnico && (
-            <div>
-              <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Descargo técnico</p>
-              <p className="text-slate-700 whitespace-pre-line">{openDetalle.descargo_tecnico}</p>
-            </div>
+          {editandoNotas ? (
+            <>
+              <div>
+                <label className="label">Observaciones técnicas</label>
+                <textarea className="textarea w-full" rows="4" value={notasForm.observaciones_tecnicas}
+                  onChange={e => setNotasForm(f => ({ ...f, observaciones_tecnicas: e.target.value }))}
+                  disabled={guardandoNotas} />
+              </div>
+              <div>
+                <label className="label">Descargo técnico</label>
+                <textarea className="textarea w-full" rows="4" value={notasForm.descargo_tecnico}
+                  onChange={e => setNotasForm(f => ({ ...f, descargo_tecnico: e.target.value }))}
+                  disabled={guardandoNotas} />
+              </div>
+              <p className="text-xs text-slate-500">
+                Corrige lo que el técnico registró al cerrar. Solo es posible mientras el servicio no haya pasado la revisión administrativa.
+              </p>
+            </>
+          ) : (
+            <>
+              {openDetalle?.observaciones_tecnicas && (
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Observaciones técnicas</p>
+                  <p className="text-slate-700 whitespace-pre-line">{openDetalle.observaciones_tecnicas}</p>
+                </div>
+              )}
+              {openDetalle?.descargo_tecnico && (
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Descargo técnico</p>
+                  <p className="text-slate-700 whitespace-pre-line">{openDetalle.descargo_tecnico}</p>
+                </div>
+              )}
+              {!openDetalle?.observaciones_tecnicas && !openDetalle?.descargo_tecnico && (
+                <p className="text-slate-500">El técnico no dejó notas al cerrar el servicio.</p>
+              )}
+            </>
           )}
         </div>
       </Modal>

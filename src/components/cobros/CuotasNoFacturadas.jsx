@@ -8,6 +8,7 @@ import Modal from '../common/Modal.jsx';
 import Pagination from '../common/Pagination.jsx';
 import { useToast } from '../common/Toast.jsx';
 import { formatFecha, formatFechaHora, formatMonto, hoyISO } from '../../utils/formatters.js';
+import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../../utils/exportTabla.js';
 
 // Espejo de las opciones del filtro por tipo de servicio de Cobros.jsx.
@@ -38,6 +39,11 @@ const docCliente = (f) => {
   return `${f.cliente.tipo_documento || ''} ${f.cliente.numero_documento}`.trim();
 };
 
+// Las cuotas de un plan de mantenimiento son MESES del plan; el resto son
+// cuotas correlativas del cobro. La etiqueta refleja cuál es cuál.
+const etiquetaCuota = (f) =>
+  f.detalle_mensual?.etiqueta || `${f.numero_cuota}/${f.cobro?.numero_cuotas ?? '?'}`;
+
 const proyectoTitulo = (f) =>
   f.servicio?.titulo || (f.mantenimiento_plan ? 'Plan de mantenimiento' : '—');
 
@@ -54,7 +60,7 @@ const COLUMNAS_EXPORT = [
   { header: 'Proyecto', get: f => (proyectoTitulo(f) === '—' ? '' : proyectoTitulo(f)) },
   { header: 'Servicio', get: f => f.servicio?.codigo || '' },
   { header: 'Tipo de servicio', get: f => f.tipo_servicio || '' },
-  { header: 'Cuota', get: f => `${f.numero_cuota}/${f.cobro?.numero_cuotas ?? '?'}` },
+  { header: 'Cuota', get: f => etiquetaCuota(f) },
   { header: 'Fecha de vencimiento', get: f => (f.fecha_vencimiento ? formatFecha(f.fecha_vencimiento) : '') },
   { header: 'Fecha de registro', get: f => (f.fecha_registro ? formatFecha(f.fecha_registro) : '') },
   { header: 'Monto cuota', align: 'right', get: f => formatMonto(f.monto, f.cobro?.moneda) },
@@ -157,7 +163,13 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
 
   // Abre el modal de factura por-cuota precargado para la cuota de la fila.
   const abrirFacturar = (f) => {
-    setFactura({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null });
+    setFactura({
+      numero_factura: '',
+      // Sugerencia por el documento del cliente (RUC → Factura, DNI → Boleta).
+      tipo_comprobante: tipoComprobanteSugerido(f.cliente?.tipo_documento),
+      fecha_emision: hoyISO(),
+      id_archivo: null
+    });
     setFacturarCuota(f);
   };
 
@@ -177,10 +189,11 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
   // origen del cobro. Al terminar, refresca la lista (la cuota desaparece).
   const guardarFactura = async () => {
     if (guardandoFactura || !facturarCuota) return;
-    if (!factura.numero_factura.trim()) return toast.error('Número de factura obligatorio');
+    if (!factura.numero_factura.trim()) return toast.error('Número de comprobante obligatorio');
     const cu = facturarCuota;
     const payload = {
       numero_factura: factura.numero_factura.trim(),
+      tipo_comprobante: factura.tipo_comprobante,
       fecha_emision: factura.fecha_emision,
       monto: Number(cu.monto),
       id_cuota: cu.id,
@@ -295,7 +308,7 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
                           )}
                         </td>
                         <td className="table-td text-xs">{f.tipo_servicio || <span className="text-slate-400">—</span>}</td>
-                        <td className="table-td text-center text-xs whitespace-nowrap">{f.numero_cuota}/{f.cobro?.numero_cuotas ?? '?'}</td>
+                        <td className="table-td text-center text-xs whitespace-nowrap">{etiquetaCuota(f)}</td>
                         <td className="table-td text-xs whitespace-nowrap">{formatFecha(f.fecha_vencimiento)}</td>
                         <td className="table-td text-xs whitespace-nowrap text-slate-500">{f.fecha_registro ? formatFechaHora(f.fecha_registro) : '—'}</td>
                         <td className="table-td text-right font-mono">{formatMonto(f.monto, f.cobro?.moneda)}</td>
@@ -336,7 +349,7 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
                     <span className="text-xs px-2 py-0.5 rounded-full shrink-0" style={{ backgroundColor: `${est.color}22`, color: est.color }}>{est.texto}</span>
                   </div>
                   <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
-                    <Mini label="Cuota" value={`${f.numero_cuota}/${f.cobro?.numero_cuotas ?? '?'}`} />
+                    <Mini label={f.detalle_mensual ? "Mes" : "Cuota"} value={etiquetaCuota(f)} />
                     <Mini label="Vencimiento" value={formatFecha(f.fecha_vencimiento)} />
                     <Mini label="Monto" value={formatMonto(f.monto, f.cobro?.moneda)} />
                     <Mini label="Registrada" value={f.fecha_registro ? formatFecha(f.fecha_registro) : '—'} />
@@ -379,14 +392,44 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
                 <span className="text-slate-400">{facturarCuota.servicio ? 'Servicio' : 'Plan'}:</span>{' '}
                 <span className="font-mono text-slate-800">{facturarCuota.servicio?.codigo || `Plan de mantenimiento${facturarCuota.mantenimiento_plan ? ` #${facturarCuota.mantenimiento_plan.id}` : ''}`}</span>
               </div>
-              <div><span className="text-slate-400">Cuota:</span> {facturarCuota.numero_cuota}/{facturarCuota.cobro?.numero_cuotas ?? '?'} · vence {formatFecha(facturarCuota.fecha_vencimiento)}</div>
+              <div>
+                <span className="text-slate-400">{facturarCuota.detalle_mensual ? 'Mes:' : 'Cuota:'}</span>{' '}
+                {etiquetaCuota(facturarCuota)} · vence {formatFecha(facturarCuota.fecha_vencimiento)}
+              </div>
+              {facturarCuota.detalle_mensual && (
+                <div className="mt-2 rounded-md ring-1 ring-slate-200 bg-white p-2">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+                    Mantenimientos del mes ({facturarCuota.detalle_mensual.total_visitas})
+                  </div>
+                  {facturarCuota.detalle_mensual.detalle.length === 0 ? (
+                    <p className="text-slate-500">Sin mantenimientos programados este mes.</p>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {facturarCuota.detalle_mensual.detalle.map(d => (
+                        <li key={d.id_ascensor} className="flex items-start justify-between gap-2">
+                          <span className="font-mono">{d.codigo} <span className="font-sans text-slate-500">× {d.visitas}</span></span>
+                          <span className="text-slate-500 text-right">{d.fechas.map(x => formatFecha(x.fecha)).join(', ')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-[10px] text-slate-500 mt-1">El importe del mes es fijo y no varía con estos mantenimientos.</p>
+                </div>
+              )}
               {facturarCuota.facturacion_parcial && (
                 <div className="text-amber-600">Este cobro ya factura por cuota.</div>
               )}
             </div>
             <div>
-              <label className="label">Número de factura *</label>
-              <input className="input" value={factura.numero_factura} onChange={e => setFactura(f => ({ ...f, numero_factura: e.target.value }))} placeholder="F001-000XXX" />
+              <label className="label">Tipo de comprobante *</label>
+              <select className="select" value={factura.tipo_comprobante}
+                onChange={e => setFactura(f => ({ ...f, tipo_comprobante: e.target.value }))}>
+                {TIPOS_COMPROBANTE.map(t => <option key={t.codigo} value={t.codigo}>{t.etiqueta}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Número de comprobante *</label>
+              <input className="input" value={factura.numero_factura} onChange={e => setFactura(f => ({ ...f, numero_factura: e.target.value }))} placeholder={ejemploNumeroComprobante(factura.tipo_comprobante)} />
             </div>
             <div>
               <label className="label">Fecha de emisión *</label>

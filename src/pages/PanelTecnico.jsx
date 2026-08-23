@@ -5,11 +5,25 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, resumenAscensores } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, resumenAscensores, toYMDLima } from '../utils/formatters.js';
 import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
+import { addDiasYMD, resumenProgramacion } from '../utils/programacion.js';
 
-const ESTADOS_ACTIVOS = ['Asignado', 'Checklist de salida pendiente', 'Listo para salida', 'En camino', 'En curso'];
-const ESTADOS_FINALIZADOS = ['Finalizado por técnico', 'Finalizado observado', 'En revisión administrativa', 'A gestión de cobro', 'En cobro', 'Cobrado parcial', 'Cobrado total', 'Facturado', 'Cerrado'];
+/**
+ * Días programados de un servicio, en 'YYYY-MM-DD'. Un trabajo puede ocupar días
+ * NO corridos (10, 15 y 20): `fecha_programada` solo marca el primero, así que
+ * la agrupación del panel se hace sobre la grilla `dias`. Sin grilla (datos
+ * previos) se cae a la fecha programada.
+ */
+function diasProgramados(s) {
+  const dias = (s?.dias || []).map(d => toYMDLima(d.fecha)).filter(Boolean);
+  if (dias.length > 0) return dias;
+  const f = toYMDLima(s?.fecha_programada);
+  return f ? [f] : [];
+}
+
+const ESTADOS_ACTIVOS = ['Asignado', 'En curso'];
+const ESTADOS_FINALIZADOS = ['Finalizado', 'En revisión administrativa', 'A gestión de cobro', 'En cobro', 'Cobrado parcial', 'Cobrado total', 'Facturado', 'Cerrado'];
 
 export default function PanelTecnico() {
   const [servicios, setServicios] = useState([]);
@@ -28,24 +42,21 @@ export default function PanelTecnico() {
   }, []);
 
   const grupos = useMemo(() => {
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    const en7Dias = new Date(hoy); en7Dias.setDate(hoy.getDate() + 7);
+    const hoy = toYMDLima(new Date());
+    const en7Dias = addDiasYMD(hoy, 7);
 
-    const enCurso = servicios.filter(s => ['En camino', 'En curso'].includes(s.estado_servicio));
-    const checklistPendiente = servicios.filter(s => s.estado_servicio === 'Checklist de salida pendiente' &&
-      s.asignaciones?.some(a => a.id_tecnico === user.id_tecnico && a.responsable_checklist === 1));
-    const hoyServ = servicios.filter(s => {
-      const f = new Date(s.fecha_programada); f.setHours(0, 0, 0, 0);
-      return f.getTime() === hoy.getTime() && ESTADOS_ACTIVOS.includes(s.estado_servicio);
-    });
-    const proximos = servicios.filter(s => {
-      const f = new Date(s.fecha_programada); f.setHours(0, 0, 0, 0);
-      return f > hoy && f <= en7Dias && ESTADOS_ACTIVOS.includes(s.estado_servicio);
-    });
-    const pendientes = servicios.filter(s => ['Pendiente', 'Asignado', 'Listo para salida'].includes(s.estado_servicio) && !hoyServ.includes(s) && !proximos.includes(s));
+    const enCurso = servicios.filter(s => s.estado_servicio === 'En curso');
+    // "Hoy" / "Próximos" miran TODOS los días programados, no solo el primero:
+    // un trabajo del 10, 15 y 20 debe aparecer los tres días.
+    const hoyServ = servicios.filter(s =>
+      ESTADOS_ACTIVOS.includes(s.estado_servicio) && diasProgramados(s).includes(hoy));
+    const proximos = servicios.filter(s =>
+      ESTADOS_ACTIVOS.includes(s.estado_servicio)
+      && !hoyServ.includes(s)
+      && diasProgramados(s).some(f => f > hoy && f <= en7Dias));
+    const pendientes = servicios.filter(s => ['Pendiente', 'Asignado'].includes(s.estado_servicio) && !hoyServ.includes(s) && !proximos.includes(s));
 
-    return { enCurso, checklistPendiente, hoyServ, proximos, pendientes };
+    return { enCurso, hoyServ, proximos, pendientes };
   }, [servicios, user]);
 
   if (loading) return <Loader />;
@@ -57,19 +68,11 @@ export default function PanelTecnico() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <Stat label="En curso" value={grupos.enCurso.length} accent="violet" />
         <Stat label="Hoy" value={grupos.hoyServ.length} accent="brand" />
-        <Stat label="Checklist pend." value={grupos.checklistPendiente.length} accent="amber" />
+        <Stat label="Próximos 7 días" value={grupos.proximos.length} accent="amber" />
         <Stat label="Finalizados" value={realizados.length} accent="green" />
       </div>
 
       <div className="space-y-6">
-        {grupos.checklistPendiente.length > 0 && (
-          <div className="card border-l-4 border-amber-400">
-            <div className="card-header"><h3 className="card-title text-amber-700">⚠ Checklist pendiente de llenar · {grupos.checklistPendiente.length}</h3></div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
-              {grupos.checklistPendiente.map(s => <Tarjeta key={s.id} s={s} resaltar />)}
-            </div>
-          </div>
-        )}
         <Bloque titulo="En curso" items={grupos.enCurso} />
         <Bloque titulo="Hoy" items={grupos.hoyServ} />
         <Bloque titulo="Próximos (7 días)" items={grupos.proximos} />
@@ -155,7 +158,11 @@ function Tarjeta({ s, resaltar }) {
       )}
       <div className="text-xs text-slate-500 truncate font-mono" title={(s.ascensores || []).map(a => `${a.ascensor?.codigo} · ${a.ascensor?.ubicacion || ''}`).join('\n')}>{resumenAscensores(s)}</div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <div className="text-xs text-slate-400">{formatFecha(s.fecha_programada)} {s.hora_programada || ''}</div>
+        <div className="text-xs text-slate-400 truncate" title={diasProgramados(s).length > 1 ? resumenProgramacion(diasProgramados(s)) : undefined}>
+          {diasProgramados(s).length > 1
+            ? `${diasProgramados(s).length} días · ${resumenProgramacion(diasProgramados(s))}`
+            : `${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`}
+        </div>
         {coords && (
           <a
             href={linkGoogleMaps(coords)}

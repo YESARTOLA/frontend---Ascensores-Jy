@@ -126,16 +126,20 @@ function ElevatorScene() {
 // en producción bajo ninguna circunstancia.
 // ─────────────────────────────────────────────────────────────────────────
 function QuickAccessDev({ onPick, disabled }) {
-  // Credenciales de los usuarios sembrados por scripts/seed-demo.js (password
-  // 'Demo2026!') y el super admin del seed base (superadmin / 'Admin2026!').
+  // Un usuario REAL de la base local por rol (los correos demo del seed no
+  // existen en ella). Las contraseñas las deja en este estado
+  // `backend/scripts/seed-acceso-rapido.js`, que es el espejo de esta lista:
+  // si se cambia un correo aquí, hay que cambiarlo también allí y reejecutarlo.
   const USERS = [
-    { rol: 'Super Admin',   correo: 'superadmin@ascensoresjy.com',   pass: 'Admin2026!', ico: '👑', tono: 'ember' },
-    { rol: 'Administrador',  correo: 'admin@ascensoresjy.com',        pass: 'Demo2026!',  ico: '🛠️', tono: 'brand' },
-    { rol: 'Coordinador',    correo: 'coordinador@ascensoresjy.com',  pass: 'Demo2026!',  ico: '📋', tono: 'brand' },
-    { rol: 'Contabilidad',   correo: 'contabilidad@ascensoresjy.com', pass: 'Demo2026!',  ico: '💸', tono: 'brand' },
-    { rol: 'Vendedora',      correo: 'vendedora@ascensoresjy.com',    pass: 'Demo2026!',  ico: '📈', tono: 'brand' },
-    { rol: 'Central ventas', correo: 'central@ascensoresjy.com',      pass: 'Demo2026!',  ico: '☎️', tono: 'brand' },
-    { rol: 'Técnico',        correo: 'carlos@ascensoresjy.com',       pass: 'Demo2026!',  ico: '👷', tono: 'brand' },
+    { rol: 'Super Admin',    correo: 'superadmin@ascensoresjy.com',     pass: 'Admin2026!', ico: '👑', tono: 'ember' },
+    { rol: 'Administrador',  correo: 'preventivo@ascensoresjy.com',     pass: 'Demo2026!',  ico: '🛠️', tono: 'brand' },
+    { rol: 'Coordinador',    correo: 'oficinatecnica@ascensoresjy.com', pass: 'Demo2026!',  ico: '📋', tono: 'brand' },
+    { rol: 'Contabilidad',   correo: 'contabilidad@ascensoresjy.com',   pass: 'Demo2026!',  ico: '💸', tono: 'brand' },
+    // Único de la lista que no es una cuenta de la empresa: el rol Vendedora no
+    // tenía ningún usuario, así que se sembró uno de pruebas.
+    { rol: 'Vendedora',      correo: 'vendedora@ascensoresjy.com',      pass: 'Demo2026!',  ico: '📈', tono: 'brand' },
+    { rol: 'Central ventas', correo: 'cventas@gmail.com',               pass: 'Demo2026!',  ico: '☎️', tono: 'brand' },
+    { rol: 'Técnico',        correo: 'freddyhuata44@gmail.com',         pass: 'Demo2026!',  ico: '👷', tono: 'brand' },
   ];
   return (
     <div className="mt-8 rounded-2xl border border-dashed border-ember-300/80 bg-ember-50/50 p-4">
@@ -257,7 +261,7 @@ export default function Login() {
             <ul className="grid grid-cols-2 gap-3 max-w-2xl">
               {[
                 ['🛠', 'Multi técnico con responsable documental'],
-                ['📋', 'Checklist de salida obligatorio'],
+                ['📋', 'Orden de trabajo digital'],
                 ['💸', 'Cobros con mora + recordatorio WhatsApp'],
                 ['🏢', 'Historial 360 por cliente y ascensor']
               ].map(([ico, txt], i) => (

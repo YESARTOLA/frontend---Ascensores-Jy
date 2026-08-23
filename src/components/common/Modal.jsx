@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 
-export default function Modal({ open, onClose, title, children, footer, size = 'md' }) {
+// `banner`: contenido fijo bajo la cabecera, FUERA del área que scrollea. Para
+// avisos que no pueden perderse de vista aunque el formulario sea largo.
+export default function Modal({ open, onClose, title, children, footer, banner, size = 'md' }) {
   useEffect(() => {
     if (!open) return;
     const handler = (e) => e.key === 'Escape' && onClose();
@@ -41,6 +43,12 @@ export default function Modal({ open, onClose, title, children, footer, size = '
             </svg>
           </button>
         </div>
+
+        {banner && (
+          <div className="relative px-5 sm:px-6 py-3 border-b border-carbon-100/80 bg-white/60 backdrop-blur-sm">
+            {banner}
+          </div>
+        )}
 
         <div className="relative p-5 sm:p-6 overflow-y-auto scroll-thin grow bg-white/60 backdrop-blur-sm">
           {children}

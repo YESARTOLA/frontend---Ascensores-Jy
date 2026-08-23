@@ -13,12 +13,16 @@ import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_FACTURA, ESTADO_FACTURA_SIN, ESTADO_FACTURA_ENVIADA, esFacturaActiva } from '../utils/estadoFactura.js';
+import { TIPOS_COMPROBANTE, etiquetaTipoComprobante } from '../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
+import CardMetricaDoble from '../components/common/CardMetricaDoble.jsx';
 
 const FILTROS_INICIALES = {
-  q: '', id_cliente: '', estado_factura: '', cobertura: '', tipo_categoria: '', desde: '', hasta: '',
-  // Orden por defecto: correlativo (id) ascendente → el 1 arriba.
-  sort: 'correlativo', dir: 'asc'
+  q: '', id_cliente: '', estado_factura: '', tipo_comprobante: '', cobertura: '', tipo_categoria: '', desde: '', hasta: '',
+  // Orden por defecto: serie y N° de factura, ascendente. Es el orden con el que
+  // administración lleva el registro; el correlativo interno (#) sigue
+  // disponible como columna ordenable.
+  sort: 'numero_factura', dir: 'asc'
 };
 
 // Tipo de servicio facturado (espejo del filtro de Cobros).
@@ -32,6 +36,14 @@ const TIPOS_SERVICIO = [
 const docCliente = (cliente) => {
   if (!cliente?.numero_documento) return '';
   return `${cliente.tipo_documento || ''} ${cliente.numero_documento}`.trim();
+};
+
+// Nombre del edificio / obra facturado. Sale de los ascensores del servicio o,
+// si la factura es de una cuota de plan (sin servicio), de los del plan. Mismo
+// criterio que en Gestión de cobros.
+const nombreEdificio = (f) => {
+  const ascs = f.servicio?.ascensores?.length ? f.servicio.ascensores : (f.mantenimiento_plan?.ascensores || []);
+  return ascs.map(a => a.ascensor?.edificio?.nombre).find(Boolean) || '';
 };
 
 // La factura no guarda moneda: la hereda del cobro y, si no lo hay, del servicio.
@@ -51,12 +63,14 @@ const etiquetaTipoServicio = (f) => {
 const COLUMNAS_EXPORT = [
   { header: '#', get: (_f, i) => i + 1 },
   { header: 'Emisión', get: f => formatFecha(f.fecha_emision) },
-  { header: 'Número', get: f => f.numero_factura },
+  { header: 'Inicio servicio', get: f => (f.fecha_inicio_servicio ? formatFecha(f.fecha_inicio_servicio) : '') },
+  { header: 'Serie y N° de factura', get: f => f.numero_factura },
+  { header: 'Comprobante', get: f => etiquetaTipoComprobante(f.tipo_comprobante) },
   { header: 'Cliente', get: f => f.cliente?.nombre },
   { header: 'RUC / DNI', get: f => docCliente(f.cliente) },
+  { header: 'Edificio', get: f => nombreEdificio(f) },
   { header: 'Servicio', get: f => f.servicio?.codigo },
   { header: 'Tipo de servicio', get: f => etiquetaTipoServicio(f) },
-  { header: 'Inicio servicio', get: f => (f.fecha_inicio_servicio ? formatFecha(f.fecha_inicio_servicio) : '') },
   { header: 'Monto', align: 'right', get: f => formatMonto(f.monto, monedaDe(f)) },
   { header: 'Cobertura', get: f => (f.id_cuota ? `Cuota N° ${f.cuota?.numero_cuota ?? '?'}` : 'General') },
   { header: 'Estado', badge: true, get: f => f.estado_factura }
@@ -96,12 +110,26 @@ export default function Facturas() {
   const [anulando, setAnulando] = useState(false);
   // Detalle de la factura (se abre desde su número) con descarga del comprobante.
   const [facturaDetalle, setFacturaDetalle] = useState(null);
+
+  // El listado no incluye el desglose mensual de las facturas de plan (lo
+  // arma el endpoint de detalle desde el cronograma). Se abre el modal al
+  // instante con lo que ya se tiene y se completa al llegar la respuesta.
+  const abrirDetalleFactura = (f) => {
+    setFacturaDetalle(f);
+    facturasService.get(f.id)
+      .then(completa => setFacturaDetalle(prev => (prev && prev.id === f.id ? { ...prev, ...completa } : prev)))
+      .catch(() => {});
+  };
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   const puedeAnular = esSuperAdmin || esAdmin || esContabilidad;
 
-  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar, meta } =
     usePaginatedList(facturasService.paginate, filtros, { initialPageSize: 25 });
+  // Resumen del conjunto filtrado COMPLETO (no solo de la página visible). Lo
+  // calcula el backend con el mismo `where` que la tabla y viaja junto al
+  // listado, así que se recalcula solo cada vez que cambian los filtros.
+  const resumen = meta?.resumen_facturas;
 
   const anularFactura = async () => {
     if (!facturaAAnular) return;
@@ -129,6 +157,7 @@ export default function Facturas() {
     if (filtros.q) p.push(`Búsqueda: ${filtros.q}`);
     if (filtros.id_cliente) p.push(`Cliente: ${clientes.find(c => String(c.id) === String(filtros.id_cliente))?.nombre || filtros.id_cliente}`);
     if (filtros.estado_factura) p.push(`Estado: ${filtros.estado_factura}`);
+    if (filtros.tipo_comprobante) p.push(`Comprobante: ${filtros.tipo_comprobante}`);
     if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_SERVICIO.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
     if (filtros.cobertura) p.push(`Cobertura: ${filtros.cobertura === 'cuota' ? 'Por cuota' : 'General'}`);
     if (filtros.desde) p.push(`Emisión desde: ${filtros.desde}`);
@@ -182,10 +211,37 @@ export default function Facturas() {
         }
       />
 
+      {resumen && (
+        <div className="mb-4">
+          <CardMetricaDoble
+            titulo="Resumen del filtro actual"
+            metricas={[
+              {
+                titulo: 'Facturado',
+                ayuda: 'Facturas que cumplen los filtros, con su importe emitido. No cuenta las anuladas.',
+                cantidad: resumen.facturado?.cantidad,
+                montos: resumen.facturado?.montos,
+                unidad: 'factura(s)',
+                tono: 'green'
+              },
+              {
+                titulo: 'Pendiente de cobro',
+                ayuda: 'De esas mismas facturas, las que aún tienen saldo por cobrar y cuánto falta.',
+                cantidad: resumen.pendiente?.cantidad,
+                montos: resumen.pendiente?.montos,
+                unidad: 'factura(s)',
+                tono: 'amber',
+                nota: 'Del total facturado, lo que falta cobrar.'
+              }
+            ]}
+          />
+        </div>
+      )}
+
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input lg:col-span-2"
-            placeholder="Buscar por número, RUC/DNI, cliente o código de servicio…"
+            placeholder="Buscar por número, RUC/DNI, cliente, edificio o código de servicio…"
             value={filtros.q}
             onChange={e => setF('q', e.target.value)} />
           {/* Desplegable buscable de clientes registrados (filtra por nombre,
@@ -201,6 +257,10 @@ export default function Facturas() {
           <select className="select" value={filtros.tipo_categoria} onChange={e => setF('tipo_categoria', e.target.value)}>
             <option value="">Todo tipo de servicio</option>
             {TIPOS_SERVICIO.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <select className="select" value={filtros.tipo_comprobante} onChange={e => setF('tipo_comprobante', e.target.value)}>
+            <option value="">Todo comprobante</option>
+            {TIPOS_COMPROBANTE.map(t => <option key={t.codigo} value={t.codigo}>{t.etiqueta}</option>)}
           </select>
           <select className="select" value={filtros.estado_factura} onChange={e => setF('estado_factura', e.target.value)}>
             <option value="">Todos los estados</option>
@@ -229,12 +289,15 @@ export default function Facturas() {
                 <thead><tr>
                   <ThSort label="#" {...propsTh('correlativo')} />
                   <ThSort label="Emisión" {...propsTh('fecha_emision')} />
-                  <ThSort label="Número" {...propsTh('numero_factura')} />
-                  <ThSort label="Cliente" {...propsTh('cliente')} />
-                  <ThSort label="Servicio" {...propsTh('servicio')} />
                   {/* Inicio real del servicio (o su fecha programada si aún no
                       se inició): no es una columna de la factura, por eso no ordena. */}
                   <th className="table-th whitespace-nowrap" title="Fecha en que se inició el servicio facturado">Inicio servicio</th>
+                  <ThSort label="Serie y N° de factura" {...propsTh('numero_factura')} />
+                  <ThSort label="Cliente" {...propsTh('cliente')} />
+                  {/* El edificio cuelga de los ascensores del servicio o del
+                      plan, no de la factura: se muestra pero no ordena. */}
+                  <th className="table-th">Edificio</th>
+                  <ThSort label="Servicio" {...propsTh('servicio')} />
                   <ThSort label="Monto" {...propsTh('monto', 'right')} />
                   <ThSort label="Cobertura" {...propsTh('cobertura')} />
                   <ThSort label="Estado" {...propsTh('estado_factura')} />
@@ -246,26 +309,6 @@ export default function Facturas() {
                     <tr key={f.id} className="table-row-hover">
                       <td className="table-td text-xs font-mono text-slate-500">{(page - 1) * pageSize + i + 1}</td>
                       <td className="table-td text-xs whitespace-nowrap">{formatFecha(f.fecha_emision)}</td>
-                      <td className="table-td">
-                        {/* El número (serie y correlativo) abre el detalle de la
-                            factura, desde donde se descarga el comprobante. */}
-                        <button
-                          type="button"
-                          onClick={() => setFacturaDetalle(f)}
-                          className="font-mono text-xs text-brand-700 hover:underline"
-                          title="Ver detalle de la factura"
-                        >{f.numero_factura}</button>
-                      </td>
-                      <td className="table-td text-sm">
-                        {f.cliente?.nombre}
-                        {docCliente(f.cliente) && <div className="text-[11px] text-slate-500 font-mono">{docCliente(f.cliente)}</div>}
-                      </td>
-                      <td className="table-td">
-                        {f.servicio
-                          ? <Link to={`/servicios/${f.servicio.id}`} className="font-mono text-xs text-brand-700">{f.servicio.codigo}</Link>
-                          : <span className="badge-blue text-[10px]">Plan de mant.{f.mantenimiento_plan ? ` #${f.mantenimiento_plan.id}` : ''}</span>}
-                        <div className="text-[11px] text-slate-500">{etiquetaTipoServicio(f)}</div>
-                      </td>
                       <td className="table-td text-xs whitespace-nowrap">
                         {f.fecha_inicio_servicio
                           ? <span title={f.inicio_servicio_es_real ? 'Inicio real del servicio' : 'Fecha programada (el servicio aún no se inició)'}>
@@ -273,6 +316,30 @@ export default function Facturas() {
                               {!f.inicio_servicio_es_real && <span className="text-slate-400"> (prog.)</span>}
                             </span>
                           : '—'}
+                      </td>
+                      <td className="table-td">
+                        {/* El número (serie y correlativo) abre el detalle de la
+                            factura, desde donde se descarga el comprobante. */}
+                        <button
+                          type="button"
+                          onClick={() => abrirDetalleFactura(f)}
+                          className="font-mono text-xs text-brand-700 hover:underline"
+                          title="Ver detalle del comprobante"
+                        >{f.numero_factura}</button>
+                        {/* Tipo de comprobante bajo el número: es lo que
+                            distingue una factura de una boleta a simple vista. */}
+                        <div className="text-[11px] text-slate-500">{etiquetaTipoComprobante(f.tipo_comprobante)}</div>
+                      </td>
+                      <td className="table-td text-sm">
+                        {f.cliente?.nombre}
+                        {docCliente(f.cliente) && <div className="text-[11px] text-slate-500 font-mono">{docCliente(f.cliente)}</div>}
+                      </td>
+                      <td className="table-td text-xs">{nombreEdificio(f) || '—'}</td>
+                      <td className="table-td">
+                        {f.servicio
+                          ? <Link to={`/servicios/${f.servicio.id}`} className="font-mono text-xs text-brand-700">{f.servicio.codigo}</Link>
+                          : <span className="badge-blue text-[10px]">Plan de mant.{f.mantenimiento_plan ? ` #${f.mantenimiento_plan.id}` : ''}</span>}
+                        <div className="text-[11px] text-slate-500">{etiquetaTipoServicio(f)}</div>
                       </td>
                       <td className="table-td text-right font-mono whitespace-nowrap">{formatMonto(f.monto, monedaDe(f))}</td>
                       <td className="table-td text-xs">
@@ -325,7 +392,12 @@ export default function Facturas() {
         </>}>
         {facturaDetalle && (
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <Dato label="Número (serie y correlativo)" value={<span className="font-mono">{facturaDetalle.numero_factura}</span>} />
+            <Dato label="Número (serie y correlativo)" value={
+              <>
+                <span className="font-mono">{facturaDetalle.numero_factura}</span>
+                <div className="text-[11px] text-slate-500">{etiquetaTipoComprobante(facturaDetalle.tipo_comprobante)}</div>
+              </>
+            } />
             <Dato label="Estado" value={<span className={badgeEstado(facturaDetalle.estado_factura)}>{facturaDetalle.estado_factura}</span>} />
             <Dato label="Cliente" value={facturaDetalle.cliente?.nombre} cols={2} />
             <Dato label="RUC / DNI" value={docCliente(facturaDetalle.cliente) || '—'} />
@@ -359,6 +431,38 @@ export default function Facturas() {
                   </FileLink>
                 : <span className="text-slate-400">Sin comprobante adjunto</span>
             } />
+            {facturaDetalle.detalle_mensual && (
+              <div className="col-span-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+                  Mantenimientos facturados · {facturaDetalle.detalle_mensual.etiqueta} ·{' '}
+                  {formatFecha(facturaDetalle.detalle_mensual.desde)} → {formatFecha(facturaDetalle.detalle_mensual.hasta)}
+                </div>
+                {facturaDetalle.detalle_mensual.detalle.length === 0 ? (
+                  <p className="text-xs text-slate-500">Sin mantenimientos programados este mes.</p>
+                ) : (
+                  <ul className="text-xs space-y-0.5">
+                    {facturaDetalle.detalle_mensual.detalle.map(d => (
+                      <li key={d.id_ascensor} className="flex items-start justify-between gap-3">
+                        <span className="font-mono text-slate-800">
+                          {d.codigo} <span className="font-sans text-slate-500">× {d.visitas}</span>
+                          {d.edificio && <span className="font-sans text-slate-400"> · {d.edificio}</span>}
+                        </span>
+                        <span className="text-slate-600 text-right">
+                          {d.fechas.map(x => (
+                            <span key={x.id_programacion} className={x.realizada ? 'text-emerald-700' : ''}>
+                              {formatFecha(x.fecha)}{x.codigo_servicio ? ` (${x.codigo_servicio})` : ''}{' '}
+                            </span>
+                          ))}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-[10px] text-slate-500 mt-1">
+                  El importe del mes es fijo: no varía con el número de mantenimientos realizados.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </Modal>

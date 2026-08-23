@@ -143,6 +143,10 @@ export default function Cotizaciones() {
   // Filtros "virtuales" (p.ej. 'Aprobadas' = todas las aceptadas, incluidas las
   // que ya pasaron a ejecución). También vienen del backend para no duplicarlos.
   const [filtrosGlobales, setFiltrosGlobales] = useState([]);
+  // Etiquetas con las que se pinta un estado REAL cuyo filtro arrastra las
+  // fases posteriores (p.ej. 'Terminado' trae también los que están en cobro o
+  // facturación). Vienen del backend, que es quien hace esa expansión.
+  const [etiquetasGlobales, setEtiquetasGlobales] = useState({});
   const [open, setOpen] = useState(false);
   // Sección "Cuentas bancarias en el PDF" del modal: colapsada por defecto.
   const [cuentasAbiertas, setCuentasAbiertas] = useState(false);
@@ -294,7 +298,7 @@ export default function Cotizaciones() {
       tiposServicioService.list(),
       configuracionService.get('IGV_RATE').catch(() => ({ valor: 0.18 })),
       cuentasBancariasService.list().catch(() => []),
-      cotizacionesService.catalogos().catch(() => ({ estados_globales: [], filtros_globales: [] }))
+      cotizacionesService.catalogos().catch(() => ({ estados_globales: [], filtros_globales: [], etiquetas_globales: {} }))
     ]).then(([cs, as, eds, ts, igv, ctas, cat]) => {
       setClientes(cs);
       setAscensores(as);
@@ -304,6 +308,7 @@ export default function Cotizaciones() {
       setCuentas(Array.isArray(ctas) ? ctas : []);
       setEstadosGlobales(cat?.estados_globales || []);
       setFiltrosGlobales(cat?.filtros_globales || []);
+      setEtiquetasGlobales(cat?.etiquetas_globales || {});
     });
   }, []);
 
@@ -653,7 +658,10 @@ export default function Cotizaciones() {
           <select className="select" value={filtros.estado_global} onChange={e => setFiltros(f => ({ ...f, estado_global: e.target.value }))}>
             <option value="">Todos los estados</option>
             {estadosGlobales.flatMap(s => [
-              <option key={s} value={s}>{s}</option>,
+              // `etiquetasGlobales` sobrescribe el texto de los estados cuyo
+              // filtro no es una igualdad estricta ('Terminado' arrastra los
+              // que ya terminaron pero siguen en cobro o facturación).
+              <option key={s} value={s}>{etiquetasGlobales[s] || s}</option>,
               // Inserta cada filtro virtual justo después del estado real al que
               // acompaña (p.ej. 'Aceptadas (incluye ejecución)' tras 'Aceptado').
               ...filtrosGlobales

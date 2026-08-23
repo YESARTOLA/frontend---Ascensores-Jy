@@ -49,6 +49,18 @@ export const ESTADOS_GLOBALES = [
 // Espejo de backend/utils/estadoCotizacion.js.
 export const FILTRO_GLOBAL_APROBADAS = 'Aprobadas';
 
+// Estados en los que el trabajo en campo YA TERMINÓ: el técnico cerró el
+// servicio y lo que queda es circuito administrativo/contable (revisión, cobro,
+// facturación) hasta el cierre. Filtrar por 'Terminado' devuelve TODOS estos,
+// no solo los que tienen ese badge — por eso en la lista conviven filas
+// 'Terminado' y 'Pendiente' bajo ese filtro. La traducción la hace el backend;
+// aquí está para poder explicarlo en la UI. Espejo de
+// backend/utils/estadoCotizacion.js.
+export const ESTADOS_GLOBALES_TRABAJO_TERMINADO = [
+  ESTADO_GLOBAL_PENDIENTE,
+  ESTADO_GLOBAL_TERMINADO
+];
+
 // Estados del embudo ya aceptado. Con cualquiera de estos filtros (o con el
 // virtual 'Aprobadas') el rango de fechas del listado NO filtra por fecha de
 // creación sino por FECHA DE ACEPTACIÓN de la cotización: "aceptadas de agosto"

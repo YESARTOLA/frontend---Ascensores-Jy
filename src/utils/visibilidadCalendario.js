@@ -2,8 +2,8 @@
 // Mantener ambos en sincronía.
 
 export const VISIBILIDAD_POR_ROL = {
-  super_admin:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
-  admin:        { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso'] },
+  super_admin:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'cobro', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso', 'correctivo_gratuito'] },
+  admin:        { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar', 'servicio_finalizado_facturar', 'servicio_finalizado_aviso', 'correctivo_gratuito'] },
   coordinador:  { operativos: 'todos',     tipos_recordatorio: ['manual', 'mantenimiento', 'emergencia', 'observacion', 'observacion_alerta', 'cotizacion_urgente', 'servicio_finalizado_revisar'] },
   tecnico:      { operativos: 'asignados', tipos_recordatorio: ['mantenimiento', 'emergencia'] },
   // Contabilidad recibe SOLO el aviso sin detalle (observacion_facturar).
@@ -34,7 +34,10 @@ export const CATALOGO_TIPOS_EVENTO = [
   { value: 'cotizacion_urgente', label: 'Cotización urgente', label_plural: 'cotizaciones urgentes', color: '#c026d3', dominio: 'recordatorio' }, // fucsia
   { value: 'servicio_finalizado_revisar',  label: 'Revisar servicio',  label_plural: 'revisiones de servicio',   color: '#65a30d', dominio: 'recordatorio' }, // lima
   { value: 'servicio_finalizado_facturar', label: 'Facturar servicio', label_plural: 'facturaciones pendientes', color: '#4f46e5', dominio: 'recordatorio' }, // índigo
-  { value: 'servicio_finalizado_aviso',    label: 'Servicio finalizado', label_plural: 'servicios finalizados',  color: '#475569', dominio: 'recordatorio' }  // gris pizarra
+  { value: 'servicio_finalizado_aviso',    label: 'Servicio finalizado', label_plural: 'servicios finalizados',  color: '#475569', dominio: 'recordatorio' }, // gris pizarra
+  // Correctivo marcado sin costo por un rol que no maneja precios: administración
+  // se entera para poder revisarlo.
+  { value: 'correctivo_gratuito',          label: 'Correctivo gratuito', label_plural: 'correctivos gratuitos',  color: '#b45309', dominio: 'recordatorio' }  // ámbar oscuro
 ];
 
 const COLOR_FALLBACK = '#0ea5e9';

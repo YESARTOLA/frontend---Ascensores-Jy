@@ -1,30 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { serviciosService, tecnicosService, checklistService, archivosService, evidenciasGuiasService, entregasService, assetUrl } from '../services';
+import { serviciosService, tecnicosService, archivosService, evidenciasGuiasService, entregasService, assetUrl } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import { FileLink, useFilePreview } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, toYMDLima, codigosAscensores, resumenAscensores, nombreCliente } from '../utils/formatters.js';
+import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, codigosAscensores, resumenAscensores, nombreCliente } from '../utils/formatters.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 import {
   estaServicioFinalizado,
   esServicioEditable,
   esServicioPostRevision,
-  ESTADO_SERVICIO_FINALIZADO_TECNICO,
-  ESTADO_SERVICIO_FINALIZADO_OBSERVADO
+  ESTADO_SERVICIO_EN_CURSO,
+  ESTADO_SERVICIO_FINALIZADO
 } from '../utils/estadoServicio.js';
-import { ESTADOS_GUIA, ESTADO_GUIA_OBSERVADA, estadoGuiaSegunArchivo } from '../utils/estadoGuia.js';
+import { ESTADOS_GUIA, ESTADO_GUIA_OBSERVADA, ESTADO_GUIA_ADJUNTA, estadoGuiaSegunArchivo } from '../utils/estadoGuia.js';
 import ObservacionesServicioPanel from '../components/servicios/ObservacionesServicioPanel.jsx';
 import ChecklistFinalizacionPanel from '../components/servicios/ChecklistFinalizacionPanel.jsx';
+import InformePreviewModal from '../components/servicios/InformePreviewModal.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
+import FichaTecnicaAscensor from '../components/ascensores/FichaTecnicaAscensor.jsx';
 import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
+import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
+import {
+  tramoDeUnDia, tramosDeServicio, payloadDias, errorDeTramos, resumenProgramacion
+} from '../utils/programacion.js';
 
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
-const TIPOS_ITEM = ['Herramienta', 'Material', 'Equipo', 'Repuesto', 'Otro'];
-const UNIDADES = ['Unidad', 'Metro', 'Caja', 'Bolsa', 'Litro', 'Juego', 'Otro'];
 const TIPOS_EVIDENCIA = ['Foto', 'Video', 'Documento', 'Otro'];
 const TIPOS_ENTREGA = ['Entrega parcial', 'Entrega final', 'Entrega documental', 'Entrega técnica'];
 const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
@@ -206,21 +210,26 @@ export default function ServicioDetalle() {
   const [openEntrega, setOpenEntrega] = useState(false);
   const [openEvidencia, setOpenEvidencia] = useState(false);
   const [asignaciones, setAsignaciones] = useState([]);
-  const [items, setItems] = useState([]);
-  const [finalizarForm, setFinalizarForm] = useState({ observaciones_tecnicas: '', descargo_tecnico: '', codigo_guia: '', id_archivo_guia: null, finalizar_observado: false, numero_ot: '', id_archivo_ot: null });
-  const [archivoOtFinalizar, setArchivoOtFinalizar] = useState(null); // { id, nombre_original, ruta_almacenamiento, mime_type }
-  const [subiendoOt, setSubiendoOt] = useState(false);
-  const [evidenciasFinalizar, setEvidenciasFinalizar] = useState([]); // [{ id, nombre_original, ruta_almacenamiento, mime_type }]
-  const [subiendoEvidencia, setSubiendoEvidencia] = useState(false);
+  // Previsualización del informe: el técnico revisa y corrige los textos antes
+  // de que se emita el PDF.
+  const [openInforme, setOpenInforme] = useState(false);
+  // Orden de trabajo del servicio (sección propia, junto a la guía de salida).
+  const [otForm, setOtForm] = useState({ numero_ot: '', id_archivo: null });
+  const [subiendoOtServicio, setSubiendoOtServicio] = useState(false);
+  const [guardandoOt, setGuardandoOt] = useState(false);
+  // Programación que se decide junto con los técnicos (técnico + fecha = Asignado).
+  const [asignarProgramacion, setAsignarProgramacion] = useState({ tramos: [], hora_programada: '' });
+  const [finalizarForm, setFinalizarForm] = useState({ observaciones_tecnicas: '', descargo_tecnico: '', codigo_guia: '', id_archivo_guia: null, finalizar_observado: false });
   const [subiendoMomento, setSubiendoMomento] = useState(null); // 'Antes' | 'Despues' | null (sección que está subiendo fotos)
   const [guardandoFinalizar, setGuardandoFinalizar] = useState(false);
   const filePreview = useFilePreview();
   const [entregaForm, setEntregaForm] = useState({ tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', id_archivo: null, estado_entrega: 'Entregada' });
   const [evidenciaForm, setEvidenciaForm] = useState({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null, id_dia: '' });
   const [subiendoEvidenciaArchivo, setSubiendoEvidenciaArchivo] = useState(false);
-  const [openDuracion, setOpenDuracion] = useState(false);
-  const [duracionForm, setDuracionForm] = useState(1);
-  const [guardandoDuracion, setGuardandoDuracion] = useState(false);
+  // Modal único de programación: días de trabajo (rangos y/o fechas sueltas) + hora.
+  const [openProgramacion, setOpenProgramacion] = useState(false);
+  const [programacionForm, setProgramacionForm] = useState({ tramos: [], hora_programada: '' });
+  const [guardandoProgramacion, setGuardandoProgramacion] = useState(false);
   // Habilitación del cierre fuera de plazo (solo super admin).
   const [habilitandoCierre, setHabilitandoCierre] = useState(false);
   // Datos de apoyo que carga el coordinador en el card "Datos": contacto en
@@ -228,9 +237,6 @@ export default function ServicioDetalle() {
   const [openDatos, setOpenDatos] = useState(false);
   const [datosForm, setDatosForm] = useState({ contacto_nombre: '', contacto_telefono: '', cuarto_maquinas: '' });
   const [guardandoDatos, setGuardandoDatos] = useState(false);
-  const [openProgramar, setOpenProgramar] = useState(false);
-  const [programarForm, setProgramarForm] = useState({ fecha_programada: '', hora_programada: '' });
-  const [guardandoProgramar, setGuardandoProgramar] = useState(false);
   const [openGuia, setOpenGuia] = useState(false);
   const [guiaEditando, setGuiaEditando] = useState(null); // null = modo crear; objeto guía = modo editar
   const [guiaForm, setGuiaForm] = useState({ codigo_guia: '', id_archivo: null, archivo: null, observaciones_tecnicas: '', estado_guia: ESTADO_GUIA_OBSERVADA });
@@ -281,8 +287,6 @@ export default function ServicioDetalle() {
   const puedeAsignar = (esSuperAdmin || esAdmin || esCoordinador)
     && s.estado_servicio !== 'Borrador'
     && !estaServicioFinalizado(s.estado_servicio);
-  const puedeIniciar = (esSuperAdmin || esAdmin || (esTecnico && s.asignaciones?.some(a => a.id_tecnico === user.id_tecnico))) &&
-    ['Asignado', 'Checklist de salida pendiente', 'Listo para salida', 'En camino'].includes(s.estado_servicio);
   // Plazo del técnico para registrar el cierre (calculado por el backend a partir
   // de la fecha programada y del parámetro SERVICIO_CIERRE_PLAZO_DIAS).
   const plazoCierre = s.plazo_cierre || null;
@@ -307,10 +311,22 @@ export default function ServicioDetalle() {
   const puedeEditarServicio = puedeReprogramar && !esMantenimientoDePlan;
   const esTecnicoResponsable = esTecnico && s.asignaciones?.some(a =>
     a.id_tecnico === user.id_tecnico && (a.responsable_documentacion || s.asignaciones.length === 1));
+  const tieneOt = !!(s.numero_ot || s.archivo_ot);
+  // Misma regla que las guías: coordinación/admin siempre, y el técnico
+  // responsable documental del servicio. Se congela tras la revisión.
+  const puedeGestionarOt = (esSuperAdmin || esAdmin || esCoordinador || esTecnicoResponsable)
+    && !esServicioPostRevision(s.estado_servicio);
+  // Cierre sin guía: la deuda documental vive en la GUÍA, no en un estado aparte.
+  const finalizadoSinGuia = s.estado_servicio === ESTADO_SERVICIO_FINALIZADO
+    && (s.guias || []).every(g => g.estado_guia === ESTADO_GUIA_OBSERVADA || !g.id_archivo);
   const guiasBloqueadasPorEstado = esServicioPostRevision(s.estado_servicio);
   const puedeGestionarGuias = (esSuperAdmin || esAdmin || esCoordinador || esTecnicoResponsable) && !guiasBloqueadasPorEstado;
-  const puedeEliminarGuia = (esSuperAdmin || esAdmin) && !guiasBloqueadasPorEstado;
-  const checklist = s.checklists?.[0];
+  // Gestión del expediente que dejó el técnico (evidencias, guías,
+  // observaciones, informe): coordinación corrige lo cargado en obra hasta la
+  // revisión administrativa. Espejo de backend/utils/registrosTecnico.js.
+  const gestionaRegistrosTecnico = (esSuperAdmin || esAdmin || esCoordinador)
+    && !esServicioPostRevision(s.estado_servicio);
+  const puedeEliminarGuia = gestionaRegistrosTecnico;
 
   // Servicios multidía: la grilla de días y la evidencia esperada por día.
   const dias = s.dias || [];
@@ -327,10 +343,17 @@ export default function ServicioDetalle() {
     if (ev.id_dia) acc[ev.id_dia] = (acc[ev.id_dia] || 0) + 1;
     return acc;
   }, {});
-  const ESTADOS_DURACION_EDITABLE = ['Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida', 'En camino', 'En curso'];
-  const puedeSubirEvidenciaDia = (esTecnico || esSuperAdmin || esAdmin)
-    && ['En camino', 'En curso'].includes(s.estado_servicio);
-  const puedeEditarDuracion = (esSuperAdmin || esAdmin) && !!s.fecha_programada
+  // Estados en los que se pueden (re)programar los días de trabajo. Incluye el
+  // borrador —guarda sus días sin salir aún en la agenda— y llega hasta En curso:
+  // los días ya trabajados se conservan con su evidencia.
+  const ESTADOS_DURACION_EDITABLE = ['Borrador', 'Pendiente', 'Asignado', ESTADO_SERVICIO_EN_CURSO];
+  // El técnico sube evidencia desde que el servicio está asignado: ese registro
+  // es, además, lo que enciende "En curso".
+  const puedeSubirEvidenciaDia = gestionaRegistrosTecnico
+    || (esTecnico && ['Asignado', ESTADO_SERVICIO_EN_CURSO].includes(s.estado_servicio));
+  // Programar / reprogramar los días de trabajo. Vale también con el servicio ya
+  // En curso: los días ya trabajados se conservan con su evidencia.
+  const puedeProgramar = (esSuperAdmin || esAdmin)
     && ESTADOS_DURACION_EDITABLE.includes(s.estado_servicio);
 
   // El coordinador (además de admin/super_admin) mantiene los datos de apoyo del
@@ -392,47 +415,77 @@ export default function ServicioDetalle() {
       id_tecnico: a.id_tecnico,
       rol_asignacion: a.rol_asignacion,
       responsable_principal: !!a.responsable_principal,
-      responsable_documentacion: !!a.responsable_documentacion,
-      responsable_checklist: !!a.responsable_checklist
+      responsable_documentacion: !!a.responsable_documentacion
     })) || []);
-    setItems(checklist?.items?.map(it => ({ id: it.id, tipo_item: it.tipo_item, nombre: it.nombre, cantidad: it.cantidad, unidad: it.unidad, observaciones: it.observaciones || '' })) || []);
+    const tramos = tramosDeServicio(s);
+    setAsignarProgramacion({
+      tramos: tramos.length > 0 ? tramos : [tramoDeUnDia(hoyISO())],
+      hora_programada: s.hora_programada || ''
+    });
     setOpenAsignar(true);
   };
 
-  const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
+  const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false }]);
   const quitarTec = (idx) => setAsignaciones(a => a.filter((_, i) => i !== idx));
   const cambiarTec = (idx, key, val) => setAsignaciones(a => actualizarFilaAsignacion(a, idx, key, val));
 
-  const agregarItem = () => setItems(i => [...i, { tipo_item: 'Herramienta', nombre: '', cantidad: 1, unidad: 'Unidad', observaciones: '' }]);
-  const cambiarItem = (idx, key, val) => setItems(i => i.map((x, j) => j === idx ? { ...x, [key]: val } : x));
-  const quitarItem = (idx) => setItems(i => i.filter((_, j) => j !== idx));
 
   const guardarAsignacion = async () => {
     const consistencia = validarConsistenciaAsignaciones(asignaciones, { requerirAlMenosUno: true });
     if (!consistencia.ok) return toast.error(consistencia.error);
     try {
-      await serviciosService.asignar(id, { tecnicos: asignaciones, items_checklist: items });
-      toast.success('Asignación guardada');
+      const errorProgramacion = errorDeTramos(asignarProgramacion.tramos);
+      if (errorProgramacion) return toast.error(errorProgramacion);
+      const r = await serviciosService.asignar(id, {
+        tecnicos: asignaciones,
+        dias: payloadDias(asignarProgramacion.tramos),
+        hora_programada: asignarProgramacion.hora_programada || null
+      });
+      toast.success(r?.falta_programar
+        ? 'Técnicos guardados. Falta programar los días para que quede Asignado.'
+        : 'Técnicos asignados y días programados');
       setOpenAsignar(false);
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
-  const toggleItemChecklist = async (item) => {
-    if (estaServicioFinalizado(s.estado_servicio)) {
-      return toast.error(`El servicio está ${s.estado_servicio}: no se pueden modificar los ítems del checklist`);
-    }
-    const nuevo = item.estado_item === 'Completo' ? 'Pendiente' : 'Completo';
+  // --- Orden de trabajo -----------------------------------------------------
+  const subirArchivoOtServicio = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const fd = new FormData(); fd.append('archivo', file);
+    setSubiendoOtServicio(true);
     try {
-      await checklistService.updateItem(item.id, { estado_item: nuevo });
-      toast.success(`Ítem marcado como ${nuevo}`);
-      cargar();
-    } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+      const arch = await archivosService.upload(fd, 'ot');
+      setOtForm(f => ({ ...f, id_archivo: arch.id }));
+    } catch { toast.error('No se pudo subir el documento de la OT'); }
+    finally { setSubiendoOtServicio(false); }
   };
 
-  const iniciarAccion = async (accion) => {
-    try { await serviciosService.iniciar(id, accion); toast.success('Estado actualizado'); cargar(); }
-    catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+  const guardarOt = async () => {
+    if (guardandoOt) return;
+    setGuardandoOt(true);
+    try {
+      await serviciosService.guardarOt(id, {
+        numero_ot: otForm.numero_ot.trim(),
+        id_archivo: otForm.id_archivo
+      });
+      toast.success('Orden de trabajo registrada');
+      setOtForm({ numero_ot: '', id_archivo: null });
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo registrar la OT');
+    } finally { setGuardandoOt(false); }
+  };
+
+  const quitarOt = async () => {
+    if (!window.confirm('¿Quitar la OT registrada? Podrás volver a subirla.')) return;
+    try {
+      await serviciosService.eliminarOt(id);
+      toast.success('OT retirada');
+      cargar();
+    } catch (err) { toast.error(err.response?.data?.error || 'No se pudo quitar la OT'); }
   };
 
   const subirArchivoYAsignarGuia = async (e) => {
@@ -447,72 +500,31 @@ export default function ServicioDetalle() {
     } catch (err) { toast.error('Error al subir archivo'); }
   };
 
-  const agregarEvidenciasFinalizar = async (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    if (files.length === 0) return;
-    setSubiendoEvidencia(true);
-    try {
-      for (const file of files) {
-        const fd = new FormData(); fd.append('archivo', file);
-        const arch = await archivosService.upload(fd, 'evidencias');
-        setEvidenciasFinalizar(prev => [...prev, arch]);
-      }
-      toast.success(files.length > 1 ? `${files.length} evidencias subidas` : 'Evidencia subida');
-    } catch (err) {
-      toast.error('Error al subir evidencia');
-    } finally {
-      setSubiendoEvidencia(false);
-    }
-  };
+  // El cierre no vuelve a pedir nada: las fotos, la guía y la OT se registran
+  // durante el servicio, en sus propias secciones. Aquí todos los campos son
+  // opcionales; lo único que se sigue exigiendo al técnico es tener la OT
+  // cargada, porque es el documento que arrastra el circuito administrativo.
+  const requiereOt = esTecnico && !(esSuperAdmin || esAdmin);
+  const otOk = !requiereOt || tieneOt;
 
-  const quitarEvidenciaFinalizar = (idArchivo) => {
-    setEvidenciasFinalizar(prev => prev.filter(e => e.id !== idArchivo));
-  };
+  // Finalizar abre primero la PREVISUALIZACIÓN del informe: el técnico revisa lo
+  // que va a salir y corrige los textos. El PDF se emite al confirmar allí.
+  const iniciarFinalizacion = () => setOpenInforme(true);
 
-  const requiereCierreCompleto = esTecnico && !(esSuperAdmin || esAdmin);
-  const requiereEvidencias = requiereCierreCompleto;
-  const requiereOt = requiereCierreCompleto;
-  const evidenciasOk = !requiereEvidencias || evidenciasFinalizar.length > 0;
-  const otOk = !requiereOt || (finalizarForm.numero_ot.trim() !== '' && !!finalizarForm.id_archivo_ot);
-
-  const subirArchivoOt = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setSubiendoOt(true);
-    try {
-      const fd = new FormData(); fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'ot');
-      setArchivoOtFinalizar(arch);
-      setFinalizarForm(f => ({ ...f, id_archivo_ot: arch.id }));
-      toast.success('OT subida');
-    } catch {
-      toast.error('Error al subir OT');
-    } finally {
-      setSubiendoOt(false);
-    }
-  };
-  const quitarArchivoOt = () => {
-    setArchivoOtFinalizar(null);
-    setFinalizarForm(f => ({ ...f, id_archivo_ot: null }));
-  };
-
-  const iniciarFinalizacion = async () => {
-    // El checklist se completa progresivamente en el panel (estado "En curso").
-    // Al pulsar Finalizar se genera el informe PDF a partir de lo persistido y,
-    // si está completo, se abre el modal de cierre (guía / OT / evidencias).
+  const generarInformeYContinuar = async (textos) => {
     if (generandoInforme) return;
     setGenerandoInforme(true);
     try {
-      await serviciosService.generarInformeFinalizacion(id);
+      await serviciosService.generarInformeFinalizacion(id, { textos });
       const fresco = await cargar();
       // Otro usuario (o el propio técnico desde su equipo) pudo finalizarlo
       // mientras esta pantalla estaba abierta: no se abre el modal de cierre.
       if (estaServicioFinalizado(fresco?.estado_servicio)) {
         toast.error(`El servicio ya fue finalizado (${fresco.estado_servicio})`);
+        setOpenInforme(false);
         return;
       }
+      setOpenInforme(false);
       setOpenFinalizar(true);
     } catch (err) {
       toast.error(err.response?.data?.error || 'No se pudo generar el informe de finalización');
@@ -524,19 +536,17 @@ export default function ServicioDetalle() {
   const finalizar = async (e) => {
     if (e?.preventDefault) e.preventDefault();
     if (guardandoFinalizar) return;
-    if (!evidenciasOk) { toast.error('Debe adjuntar al menos una foto de evidencia'); return; }
-    if (!otOk) { toast.error('Debe adjuntar la OT (número y documento)'); return; }
+    if (!otOk) { toast.error('Registre la OT en su sección antes de finalizar'); return; }
     setGuardandoFinalizar(true);
     try {
       await serviciosService.finalizar(id, {
         ...finalizarForm,
-        id_archivos_evidencias: evidenciasFinalizar.map(ev => ev.id)
       });
       toast.success('Servicio finalizado');
       setOpenFinalizar(false);
       setEvidenciasFinalizar([]);
       setArchivoOtFinalizar(null);
-      setFinalizarForm({ observaciones_tecnicas: '', descargo_tecnico: '', codigo_guia: '', id_archivo_guia: null, finalizar_observado: false, numero_ot: '', id_archivo_ot: null });
+      setFinalizarForm({ observaciones_tecnicas: '', descargo_tecnico: '', codigo_guia: '', id_archivo_guia: null, finalizar_observado: false });
       cargar();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error');
@@ -774,60 +784,47 @@ export default function ServicioDetalle() {
     }
   };
 
-  // Registrar/editar la fecha de programación cuando el servicio llega al área.
-  // Los servicios aprobados desde una cotización nacen sin fecha; aquí se define.
-  const abrirProgramar = () => {
-    setProgramarForm({
-      fecha_programada: s.fecha_programada ? toYMDLima(s.fecha_programada) : hoyISO(),
+  // Programar / reprogramar los DÍAS DE TRABAJO. Un trabajo puede ocupar un rango
+  // de fechas, días sueltos (10, 15 y 20) o una combinación de ambos; el técnico
+  // solo verá esos días en su calendario. Los servicios aprobados desde una
+  // cotización nacen sin fecha: aquí se define por primera vez.
+  const abrirProgramacion = () => {
+    const tramos = tramosDeServicio(s);
+    setProgramacionForm({
+      tramos: tramos.length > 0 ? tramos : [tramoDeUnDia(hoyISO())],
       hora_programada: s.hora_programada || ''
     });
-    setOpenProgramar(true);
+    setOpenProgramacion(true);
   };
 
-  const guardarProgramacion = async () => {
-    if (!programarForm.fecha_programada) return toast.error('La fecha es obligatoria');
-    if (guardandoProgramar) return;
-    setGuardandoProgramar(true);
+  const guardarProgramacion = async (confirmar = false) => {
+    const error = errorDeTramos(programacionForm.tramos);
+    if (error) return toast.error(error);
+    if (guardandoProgramacion) return;
+    setGuardandoProgramacion(true);
     try {
-      await serviciosService.update(id, {
-        fecha_programada: programarForm.fecha_programada,
-        hora_programada: programarForm.hora_programada || null
+      await serviciosService.cambiarProgramacion(id, {
+        dias: payloadDias(programacionForm.tramos),
+        hora_programada: programacionForm.hora_programada || null,
+        confirmar
       });
-      toast.success('Fecha de programación registrada');
-      setOpenProgramar(false);
-      cargar();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al programar');
-    } finally {
-      setGuardandoProgramar(false);
-    }
-  };
-
-  // Editar la duración (días) de un servicio ya programado, incluso En curso.
-  const abrirDuracion = () => { setDuracionForm(s.duracion_dias || 1); setOpenDuracion(true); };
-  const guardarDuracion = async (confirmar = false) => {
-    const diasN = Math.max(1, parseInt(duracionForm, 10) || 0);
-    if (!diasN) return toast.error('Duración inválida (mínimo 1 día)');
-    if (guardandoDuracion) return;
-    setGuardandoDuracion(true);
-    try {
-      await serviciosService.cambiarDuracion(id, { duracion_dias: diasN, confirmar });
-      toast.success('Duración actualizada');
-      setOpenDuracion(false);
+      toast.success('Programación actualizada');
+      setOpenProgramacion(false);
       cargar();
     } catch (err) {
       const data = err.response?.data;
+      // Quitar días ya trabajados exige confirmación explícita del usuario.
       if (err.response?.status === 409 && data?.requiere_confirmacion) {
         const lista = (data.dias_con_evidencia || []).map(d => `Día ${d.orden}`).join(', ');
-        if (window.confirm(`Reducir la duración dará de baja días que ya tienen evidencia (${lista}). La evidencia se conserva, pero esos días salen de la agenda. ¿Continuar?`)) {
-          setGuardandoDuracion(false);
-          return guardarDuracion(true);
+        if (window.confirm(`La nueva programación dará de baja días que ya tienen evidencia (${lista}). La evidencia se conserva, pero esos días salen de la agenda. ¿Continuar?`)) {
+          setGuardandoProgramacion(false);
+          return guardarProgramacion(true);
         }
       } else {
-        toast.error(data?.error || 'Error al cambiar la duración');
+        toast.error(data?.error || 'Error al guardar la programación');
       }
     } finally {
-      setGuardandoDuracion(false);
+      setGuardandoProgramacion(false);
     }
   };
 
@@ -858,22 +855,22 @@ export default function ServicioDetalle() {
           <>
             <button type="button" onClick={volver} className="btn-secondary">← Volver</button>
             {puedeEditarServicio && <button type="button" onClick={() => navigate(`/servicios?edit=${s.id}`)} className="btn-secondary">Editar</button>}
-            {puedeReprogramar && <button type="button" onClick={abrirProgramar} className={s.fecha_programada ? 'btn-secondary' : 'btn-primary'}>{s.fecha_programada ? 'Reprogramar' : 'Programar fecha'}</button>}
+            {puedeProgramar && (
+              <button type="button" onClick={abrirProgramacion} className={s.fecha_programada ? 'btn-secondary' : 'btn-primary'}>
+                {s.fecha_programada ? `Reprogramar (${dias.length || s.duracion_dias || 1} día${(dias.length || s.duracion_dias || 1) > 1 ? 's' : ''})` : 'Programar días'}
+              </button>
+            )}
             {esMantenimientoDePlan && (esSuperAdmin || esAdmin) && (
               <Link to="/mantenimientos" className="btn-secondary">Ver plan</Link>
             )}
-            {puedeEditarDuracion && <button type="button" onClick={abrirDuracion} className="btn-secondary">Duración ({s.duracion_dias || 1} día{(s.duracion_dias || 1) > 1 ? 's' : ''})</button>}
             {puedePromover && <button onClick={promover} className="btn-primary">Promover borrador</button>}
-            {puedeAsignar && <button onClick={iniciarAsignar} className="btn-secondary">Asignar / Checklist</button>}
-            {puedeIniciar && s.estado_servicio === 'Listo para salida' && <button onClick={() => iniciarAccion('en_camino')} className="btn-secondary">En camino</button>}
-            {puedeIniciar && ['Listo para salida', 'En camino'].includes(s.estado_servicio) && <button onClick={() => iniciarAccion('iniciar_servicio')} className="btn-primary">Iniciar servicio</button>}
+            {puedeAsignar && <button onClick={iniciarAsignar} className="btn-secondary">Asignar y programar</button>}
             {puedeFinalizar && (
               <button
                 onClick={iniciarFinalizacion}
-                disabled={generandoInforme}
-                title="El checklist de finalización es opcional; puedes finalizar sin completarlo"
-                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed">
-                {generandoInforme ? 'Generando informe…' : 'Finalizar'}
+                title="Se abre la previsualización del informe para revisarlo antes de emitirlo"
+                className="btn-primary">
+                Finalizar
               </button>
             )}
             {puedeRevisar && <button onClick={() => abrirRevisar('aprobado')} className="btn-primary">Aprobar revisión</button>}
@@ -934,6 +931,16 @@ export default function ServicioDetalle() {
                 </button>
               )}
               <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
+              {/* Distintivo del cierre sin guía: mismo estado "Finalizado", pero
+                  reconocible de un vistazo y completable desde la tarjeta de guías. */}
+              {finalizadoSinGuia && (
+                <span className="badge-amber" title="Se finalizó sin guía de salida. Cárgala en la tarjeta «Guía de salida» para completarlo.">
+                  Sin guía
+                </span>
+              )}
+              {s.estado_servicio === ESTADO_SERVICIO_FINALIZADO && !tieneOt && (
+                <span className="badge-amber" title="Se finalizó sin orden de trabajo.">Sin OT</span>
+              )}
             </div>
           </div>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
@@ -966,7 +973,12 @@ export default function ServicioDetalle() {
             <Info label="Fecha programada" value={s.fecha_programada
               ? `${formatFecha(s.fecha_programada)} ${s.hora_programada || ''}`.trim()
               : <span className="text-amber-600">Sin programar</span>} />
-            <Info label="Duración" value={`${s.duracion_dias || 1} día${(s.duracion_dias || 1) > 1 ? 's' : ''}`} />
+            <Info label="Días de trabajo" value={dias.length > 0
+              ? <span title={resumenProgramacion(dias.map(d => d.fecha))}>
+                  {`${dias.length} día${dias.length > 1 ? 's' : ''}`}
+                  <span className="block text-[11px] text-slate-500">{resumenProgramacion(dias.map(d => d.fecha))}</span>
+                </span>
+              : `${s.duracion_dias || 1} día${(s.duracion_dias || 1) > 1 ? 's' : ''}`} />
             <Info label="Prioridad" value={s.prioridad} />
             <Info label="Cliente" value={esTecnico
               ? <span className="text-slate-800">{nombreCliente(s.cliente)}</span>
@@ -1082,7 +1094,6 @@ export default function ServicioDetalle() {
                       <div className="flex flex-wrap gap-1 mt-1">
                         {a.responsable_principal === 1 && <span className="badge-blue">Principal</span>}
                         {a.responsable_documentacion === 1 && <span className="badge-violet">Documental</span>}
-                        {a.responsable_checklist === 1 && <span className="badge-amber">Checklist</span>}
                       </div>
                     </div>
                   </div>
@@ -1092,18 +1103,38 @@ export default function ServicioDetalle() {
           </div>
         </div>
 
-        {/* Adjuntos de la cotización de origen. El técnico no accede a la
-            cotización, pero sí necesita ver las fotos que se adjuntaron ahí
-            (a él se le muestran solo imágenes, no documentos). */}
+        {/* FICHA TÉCNICA de cada ascensor del servicio: marca, modelo, capacidad,
+            cuarto de máquinas, contacto en sitio y cómo llegar. Es lo que el
+            técnico necesita antes de subir a la obra y lo que el coordinador
+            consulta al programar, sin tener que salir a la pantalla de
+            Ascensores (a la que además el técnico no entra). Es el mismo
+            componente que usa el historial del ascensor. */}
+        {(s.ascensores || []).filter(sa => sa.ascensor).map(sa => (
+          <FichaTecnicaAscensor
+            key={sa.ascensor.id}
+            ascensor={sa.ascensor}
+            titulo={`Ficha técnica · ${sa.ascensor.codigo}`}
+            // El mini-mapa ya está en la card de datos del servicio; aquí basta
+            // con la dirección y el acceso directo a Google Maps.
+            mostrarMapa={false}
+            className="card" />
+        ))}
+
+        {/* Adjuntos de la cotización de origen: SOLO para roles con visibilidad
+            financiera. Son el expediente comercial del acuerdo (cotización
+            firmada, orden de compra, presupuestos); el Coordinador y el técnico
+            reciben únicamente el alcance del trabajo —los ítems y sus fotos, en
+            el bloque siguiente—. El backend ya se los envía vacío: esto solo
+            evita pintar una tarjeta sin contenido. */}
         {(() => {
-          const adjuntos = (s.cotizacion?.archivos || []).filter(a => a.archivo);
+          if (!puedeVerPrecio) return null;
+          const visibles = (s.cotizacion?.archivos || []).filter(a => a.archivo);
           const esImagen = a => (a.archivo.mime_type || '').startsWith('image/');
-          const visibles = esTecnico ? adjuntos.filter(esImagen) : adjuntos;
           if (visibles.length === 0) return null;
           return (
             <div className="card lg:col-span-3">
               <div className="card-header">
-                <h3 className="card-title">{esTecnico ? 'Fotos de referencia' : 'Adjuntos de la cotización'} · {visibles.length}</h3>
+                <h3 className="card-title">Adjuntos de la cotización · {visibles.length}</h3>
               </div>
               <div className="card-body">
                 <div className="flex flex-wrap gap-3">
@@ -1163,67 +1194,79 @@ export default function ServicioDetalle() {
           );
         })()}
 
-        {checklist && (() => {
-          const itemsCk = checklist.items || [];
-          const totalCk = itemsCk.length;
-          const hechosCk = itemsCk.filter(it => it.estado_item === 'Completo').length;
-          const servicioBloqueado = estaServicioFinalizado(s.estado_servicio);
-          const checklistBloqueado = servicioBloqueado || ['Aprobado', 'Observado'].includes(checklist.estado_checklist);
-          const puedeMarcarChecklist = !checklistBloqueado && (
-            esSuperAdmin || esAdmin || esCoordinador ||
-            (esTecnico && s.asignaciones?.some(a => a.id_tecnico === user.id_tecnico))
-          );
+        {/* Antecedentes del EQUIPO: otros correctivos del mismo ascensor. Solo
+            aparece en servicios correctivos, que es cuando el historial de
+            fallas del equipo es lo que orienta el diagnóstico. El backend lo
+            adjunta ya aplanado en `historial_correctivos_ascensor`. */}
+        {Array.isArray(s.historial_correctivos_ascensor) && (() => {
+          const previos = s.historial_correctivos_ascensor;
+          const codigoAscensor = s.correctivo?.id_ascensor
+            ? (s.ascensores || []).find(sa => sa.ascensor?.id === s.correctivo.id_ascensor)?.ascensor?.codigo
+            : null;
           return (
-          <div className="card lg:col-span-3">
-            <div className="card-header">
-              <h3 className="card-title">
-                Checklist de salida · <span className={badgeEstado(checklist.estado_checklist)}>{checklist.estado_checklist}</span>
-                {totalCk > 0 && <span className="ml-2 text-xs text-slate-500 font-normal">· {hechosCk} / {totalCk} completos</span>}
-              </h3>
-            </div>
-            <div className="overflow-x-auto scroll-thin">
-              <table className="table-base">
-                <thead><tr>
-                  <th className="table-th">Tipo</th><th className="table-th">Ítem</th>
-                  <th className="table-th">Cantidad</th><th className="table-th">Observación</th>
-                  <th className="table-th">Estado</th>
-                  {puedeMarcarChecklist && <th className="table-th text-right">Acciones</th>}
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {totalCk === 0 && <tr><td colSpan={puedeMarcarChecklist ? 6 : 5} className="table-td text-center text-slate-400 py-4">Sin ítems</td></tr>}
-                  {itemsCk.map(it => {
-                    const completo = it.estado_item === 'Completo';
-                    return (
-                      <tr key={it.id}>
-                        <td className="table-td text-xs">{it.tipo_item}</td>
-                        <td className="table-td">{it.nombre}</td>
-                        <td className="table-td font-mono text-xs">{Number(it.cantidad)} {it.unidad}</td>
-                        <td className="table-td text-xs">{it.observaciones || '—'}</td>
-                        <td className="table-td"><span className={badgeEstado(it.estado_item)}>{it.estado_item}</span></td>
-                        {puedeMarcarChecklist && (
-                          <td className="table-td text-right">
-                            <button
-                              onClick={() => toggleItemChecklist(it)}
-                              className={completo
-                                ? 'text-xs text-slate-500 hover:text-slate-700 hover:underline'
-                                : 'text-xs text-emerald-700 hover:underline font-medium'}
-                            >
-                              {completo ? '↺ Marcar pendiente' : '✓ Marcar completo'}
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {totalCk > 0 && hechosCk < totalCk && (
-              <div className="px-4 py-2.5 border-t border-slate-100 text-xs text-slate-500">
-                Marca cada ítem como completo. Cuando todos estén completos, el checklist pasa automáticamente a <strong>Completo</strong> y el servicio a <strong>Listo para salida</strong>.
+            <div className="card lg:col-span-3">
+              <div className="card-header">
+                <h3 className="card-title">
+                  Historial de correctivos de este ascensor
+                  {codigoAscensor && <span className="ml-2 font-mono text-xs text-slate-500">{codigoAscensor}</span>}
+                  <span className="ml-2 text-xs text-slate-500 font-normal">· {previos.length}</span>
+                </h3>
               </div>
-            )}
-          </div>
+              <div className="card-body">
+                {previos.length === 0 ? (
+                  <p className="text-sm text-slate-500">
+                    Es el primer correctivo registrado para este ascensor.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-slate-500 mb-3">
+                      Fallas reportadas antes en el mismo equipo y lo que se hizo en cada una.
+                    </p>
+                    <ul className="space-y-2">
+                      {previos.map(c => (
+                        <li key={c.id} className="rounded-lg ring-1 ring-slate-100 p-3">
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="text-slate-500">
+                              {formatFecha(c.fecha_realizacion || c.fecha_reporte)}
+                            </span>
+                            {c.codigo && (
+                              // El técnico solo abre los servicios donde está
+                              // asignado: para el resto se muestra el código sin enlace.
+                              esTecnico
+                                ? <span className="font-mono text-slate-700">{c.codigo}</span>
+                                : <Link to={`/servicios/${c.id_servicio}`} className="font-mono text-brand-700 hover:underline">{c.codigo}</Link>
+                            )}
+                            <span className={badgeEstado(c.estado_correctivo)}>{c.estado_correctivo}</span>
+                            {c.nivel_urgencia && (
+                              <span className={`text-[10px] ${c.nivel_urgencia === 'alta' ? 'badge-red' : 'badge-amber'}`}>{c.nivel_urgencia}</span>
+                            )}
+                            {c.tecnicos.length > 0 && (
+                              <span className="text-slate-400 truncate">· {c.tecnicos.join(', ')}</span>
+                            )}
+                          </div>
+                          <div className="text-sm text-slate-800 mt-1 break-words">
+                            <span className="text-slate-400 text-xs uppercase tracking-wide">Falla: </span>
+                            {c.falla || '—'}
+                          </div>
+                          {c.descargo_tecnico && (
+                            <div className="text-xs text-slate-600 mt-1 break-words">
+                              <span className="text-slate-400 uppercase tracking-wide">Descargo: </span>
+                              {c.descargo_tecnico}
+                            </div>
+                          )}
+                          {c.observaciones_tecnicas && (
+                            <div className="text-xs text-slate-600 mt-1 break-words">
+                              <span className="text-slate-400 uppercase tracking-wide">Observaciones: </span>
+                              {c.observaciones_tecnicas}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            </div>
           );
         })()}
 
@@ -1276,31 +1319,76 @@ export default function ServicioDetalle() {
           </div>
         </div>}
 
-        {(s.servicio_realizado?.numero_ot || s.servicio_realizado?.archivo_ot) && (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Orden de Trabajo</h3>
-            </div>
-            <div className="card-body space-y-3">
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">N° OT</div>
-                <div className="font-mono text-sm text-slate-800">{s.servicio_realizado?.numero_ot || '—'}</div>
-              </div>
-              {s.servicio_realizado?.archivo_ot && (() => {
-                const arch = s.servicio_realizado.archivo_ot;
-                const esImagen = (arch.mime_type || '').startsWith('image/');
-                return esImagen ? (
-                  <button type="button" onClick={() => filePreview.open(arch)}
-                          className="block w-full max-w-xs rounded-md overflow-hidden ring-1 ring-slate-200 hover:ring-brand-400 transition">
-                    <img src={assetUrl(arch.ruta_almacenamiento)} alt={arch.nombre_original} className="w-full h-40 object-cover" />
-                  </button>
-                ) : (
-                  <FileLink archivo={arch} className="text-brand-700 text-xs hover:underline inline-block">Ver documento</FileLink>
-                );
-              })()}
-            </div>
+        {/* ORDEN DE TRABAJO. Junto a la guía de salida y con el mismo peso: es el
+            documento que el técnico trae firmado de la obra. Se sube aquí, durante
+            la ejecución, y de aquí lo toman el cierre, Contabilidad y los cobros. */}
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">Orden de trabajo</h3>
+            {tieneOt
+              ? <span className="badge-green">Registrada</span>
+              : <span className="badge-amber">Pendiente</span>}
           </div>
-        )}
+          <div className="card-body space-y-3">
+            {tieneOt ? (
+              <>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400">N° OT</div>
+                  <div className="font-mono text-sm text-slate-800">{s.numero_ot || '—'}</div>
+                </div>
+                {s.archivo_ot && (() => {
+                  const arch = s.archivo_ot;
+                  const esImagen = (arch.mime_type || '').startsWith('image/');
+                  return esImagen ? (
+                    <button type="button" onClick={() => filePreview.open(arch)}
+                            className="block w-full max-w-xs rounded-md overflow-hidden ring-1 ring-slate-200 hover:ring-brand-400 transition">
+                      <img src={assetUrl(arch.ruta_almacenamiento)} alt={arch.nombre_original} className="w-full h-40 object-cover" />
+                    </button>
+                  ) : (
+                    <FileLink archivo={arch} className="text-brand-700 text-xs hover:underline inline-block">Ver documento</FileLink>
+                  );
+                })()}
+                {s.ot_subida_en && (
+                  <p className="text-[11px] text-slate-400">Registrada el {formatFechaHora(s.ot_subida_en)}</p>
+                )}
+                {puedeGestionarOt && (
+                  <button type="button" onClick={quitarOt} className="text-xs text-rose-600 hover:underline">
+                    Quitar OT y volver a subirla
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">
+                Aún no se ha registrado la orden de trabajo.
+                {esTecnico && ' Es obligatoria para poder finalizar el servicio.'}
+              </p>
+            )}
+
+            {puedeGestionarOt && !tieneOt && (
+              <div className="space-y-2 border-t border-slate-100 pt-3">
+                <div>
+                  <label className="label">N° de OT *</label>
+                  <input className="input" value={otForm.numero_ot} placeholder="Ej. OT-2026-0123"
+                    onChange={e => setOtForm(f => ({ ...f, numero_ot: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label">Documento de la OT *</label>
+                  <input type="file" className="input" accept="image/*,.pdf"
+                    disabled={subiendoOtServicio} onChange={subirArchivoOtServicio} />
+                  {subiendoOtServicio && <p className="text-xs text-slate-500 mt-1">Subiendo…</p>}
+                  {otForm.id_archivo && !subiendoOtServicio && (
+                    <p className="text-xs text-emerald-700 mt-1">✓ Documento cargado</p>
+                  )}
+                </div>
+                <button type="button" onClick={guardarOt}
+                  disabled={guardandoOt || !otForm.numero_ot.trim() || !otForm.id_archivo}
+                  className="btn-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+                  {guardandoOt ? 'Guardando…' : 'Registrar OT'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
 
         {esMultidia && (
           <div className="card lg:col-span-3">
@@ -1352,7 +1440,10 @@ export default function ServicioDetalle() {
           { key: 'Antes', titulo: 'Antes', lista: evidenciasAntes },
           { key: 'Despues', titulo: 'Después', lista: evidenciasDespues },
         ].map(sec => {
-          const puedeGestionar = (esTecnico || esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio);
+          // El técnico sube mientras ejecuta; coordinación y administración
+          // pueden además corregir después, hasta la revisión administrativa.
+          const puedeGestionar = gestionaRegistrosTecnico
+            || (esTecnico && !estaServicioFinalizado(s.estado_servicio));
           const subiendoEsta = subiendoMomento === sec.key;
           return (
             <div key={sec.key} className="card lg:col-span-3">
@@ -1467,7 +1558,7 @@ export default function ServicioDetalle() {
         </div>
       </div>
 
-      <Modal open={openAsignar} onClose={() => setOpenAsignar(false)} title="Asignación multi técnico + Checklist de salida" size="xl"
+      <Modal open={openAsignar} onClose={() => setOpenAsignar(false)} title="Asignar técnicos y programar" size="xl"
         footer={<><button className="btn-secondary" onClick={() => setOpenAsignar(false)}>Cancelar</button><button className="btn-primary" onClick={guardarAsignacion}>Guardar</button></>}>
 
         <div className="space-y-4">
@@ -1482,11 +1573,10 @@ export default function ServicioDetalle() {
                   <th className="table-th">Técnico</th><th className="table-th">Rol</th>
                   <th className="table-th text-center">Principal</th>
                   <th className="table-th text-center">Documental</th>
-                  <th className="table-th text-center">Checklist</th>
                   <th className="table-th"></th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {asignaciones.length === 0 && <tr><td colSpan="6" className="table-td text-center text-slate-400 py-4">Agregue técnicos</td></tr>}
+                  {asignaciones.length === 0 && <tr><td colSpan="5" className="table-td text-center text-slate-400 py-4">Agregue técnicos</td></tr>}
                   {asignaciones.map((a, idx) => (
                     <tr key={idx}>
                       <td className="table-td">
@@ -1502,7 +1592,6 @@ export default function ServicioDetalle() {
                       </td>
                       <td className="table-td text-center"><input type="checkbox" checked={a.responsable_principal} onChange={e => cambiarTec(idx, 'responsable_principal', e.target.checked)} /></td>
                       <td className="table-td text-center"><input type="checkbox" checked={a.responsable_documentacion} onChange={e => cambiarTec(idx, 'responsable_documentacion', e.target.checked)} /></td>
-                      <td className="table-td text-center"><input type="checkbox" checked={a.responsable_checklist} onChange={e => cambiarTec(idx, 'responsable_checklist', e.target.checked)} /></td>
                       <td className="table-td text-right"><button onClick={() => quitarTec(idx)} className="text-rose-600 text-xs">Quitar</button></td>
                     </tr>
                   ))}
@@ -1512,45 +1601,37 @@ export default function ServicioDetalle() {
           </div>
 
           <div className="border-t border-slate-100 pt-4">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-medium text-slate-800">Checklist de salida</h4>
-              <button onClick={agregarItem} className="btn-secondary text-xs">+ Agregar ítem</button>
-            </div>
-            <div className="overflow-x-auto scroll-thin">
-              <table className="table-base">
-                <thead><tr>
-                  <th className="table-th">Tipo</th><th className="table-th">Ítem</th>
-                  <th className="table-th">Cantidad</th><th className="table-th">Unidad</th>
-                  <th className="table-th">Observación</th><th className="table-th"></th>
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {items.length === 0 && <tr><td colSpan="6" className="table-td text-center text-slate-400 py-4">Sin ítems</td></tr>}
-                  {items.map((it, idx) => (
-                    <tr key={idx}>
-                      <td className="table-td"><select className="select" value={it.tipo_item} onChange={e => cambiarItem(idx, 'tipo_item', e.target.value)}>{TIPOS_ITEM.map(t => <option key={t}>{t}</option>)}</select></td>
-                      <td className="table-td"><input className="input" value={it.nombre} onChange={e => cambiarItem(idx, 'nombre', e.target.value)} placeholder="Nombre" /></td>
-                      <td className="table-td"><input type="number" step="0.01" className="input" value={it.cantidad} onChange={e => cambiarItem(idx, 'cantidad', e.target.value)} /></td>
-                      <td className="table-td"><select className="select" value={it.unidad} onChange={e => cambiarItem(idx, 'unidad', e.target.value)}>{UNIDADES.map(u => <option key={u}>{u}</option>)}</select></td>
-                      <td className="table-td"><input className="input" value={it.observaciones} onChange={e => cambiarItem(idx, 'observaciones', e.target.value)} /></td>
-                      <td className="table-td text-right"><button onClick={() => quitarItem(idx)} className="text-rose-600 text-xs">Quitar</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {/* Un servicio queda "Asignado" cuando tiene técnico Y fecha: por eso
+                la programación se decide aquí mismo y no en otra pantalla. */}
+            <ProgramacionDias
+              tramos={asignarProgramacion.tramos}
+              onChange={tramos => setAsignarProgramacion(f => ({ ...f, tramos }))}
+              ayuda="El servicio pasa a «Asignado» cuando tiene técnico y días programados. Rango, días sueltos o ambos." />
+            <div className="mt-3 w-40">
+              <label className="label">Hora</label>
+              <input type="time" className="input" value={asignarProgramacion.hora_programada}
+                onChange={e => setAsignarProgramacion(f => ({ ...f, hora_programada: e.target.value }))} />
             </div>
           </div>
         </div>
       </Modal>
 
+      <InformePreviewModal
+        open={openInforme}
+        onClose={() => setOpenInforme(false)}
+        idServicio={id}
+        generando={generandoInforme}
+        onConfirmar={generarInformeYContinuar} />
+
       <Modal open={openFinalizar} onClose={() => !guardandoFinalizar && setOpenFinalizar(false)} title="Finalizar servicio" size="lg"
         footer={<>
           <button type="button" className="btn-secondary" onClick={() => setOpenFinalizar(false)} disabled={guardandoFinalizar}>Cancelar</button>
-          <button type="submit" form="form-finalizar" className="btn-primary" disabled={guardandoFinalizar || subiendoEvidencia || subiendoOt || !evidenciasOk || !otOk}>
+          <button type="submit" form="form-finalizar" className="btn-primary" disabled={guardandoFinalizar || !otOk}>
             {guardandoFinalizar ? 'Finalizando…' : 'Finalizar'}
           </button>
         </>}>
         <form id="form-finalizar" onSubmit={finalizar} className="space-y-4">
-          <div><label className="label">Observaciones técnicas *</label><textarea className="textarea" rows="3" required value={finalizarForm.observaciones_tecnicas} onChange={e => setFinalizarForm(f => ({ ...f, observaciones_tecnicas: e.target.value }))} /></div>
+          <div><label className="label">Observaciones técnicas</label><textarea className="textarea" rows="3" value={finalizarForm.observaciones_tecnicas} onChange={e => setFinalizarForm(f => ({ ...f, observaciones_tecnicas: e.target.value }))} /></div>
           <div><label className="label">Descargo técnico</label><textarea className="textarea" rows="2" value={finalizarForm.descargo_tecnico} onChange={e => setFinalizarForm(f => ({ ...f, descargo_tecnico: e.target.value }))} /></div>
 
           {/* El técnico no carga guía de salida (solo evidencias y OT): se ocultaba
@@ -1578,71 +1659,18 @@ export default function ServicioDetalle() {
           </div>
           )}
 
-          <div className="border-t border-slate-100 pt-4 space-y-2">
-            <label className="label">
-              Orden de Trabajo (OT) {requiereOt && <span className="text-rose-600">*</span>}
-            </label>
-            <input
-              className="input"
-              placeholder="Número de OT"
-              value={finalizarForm.numero_ot}
-              onChange={e => setFinalizarForm(f => ({ ...f, numero_ot: e.target.value }))}
-            />
-            <div className="flex flex-wrap gap-2">
-              <label className={`btn-secondary cursor-pointer text-xs ${subiendoOt ? 'opacity-50 pointer-events-none' : ''}`}>
-                📷 Tomar foto
-                <input type="file" className="hidden" accept="image/*" capture="environment" onChange={subirArchivoOt} />
-              </label>
-              <label className={`btn-secondary cursor-pointer text-xs ${subiendoOt ? 'opacity-50 pointer-events-none' : ''}`}>
-                📎 Adjuntar archivo
-                <input type="file" className="hidden" accept="image/*,application/pdf" onChange={subirArchivoOt} />
-              </label>
-              {subiendoOt && <span className="text-xs text-slate-500 self-center">Subiendo…</span>}
-              {finalizarForm.id_archivo_ot && !subiendoOt && (
-                <span className="inline-flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-md px-2 py-1">
-                  ✓ OT cargada
-                  <button type="button" onClick={quitarArchivoOt} className="text-emerald-900 hover:underline">Quitar</button>
-                </span>
-              )}
-            </div>
-            {requiereOt && !otOk && (
-              <p className="text-xs text-rose-600">Como técnico, debe ingresar el número de OT y adjuntar el documento para finalizar.</p>
-            )}
-          </div>
-
-          <div className="border-t border-slate-100 pt-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="label mb-0">
-                Evidencias del trabajo terminado {requiereEvidencias && <span className="text-rose-600">*</span>}
-              </label>
-              <span className="text-xs text-slate-500">{evidenciasFinalizar.length} foto(s)</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <label className={`btn-secondary cursor-pointer text-xs ${subiendoEvidencia ? 'opacity-50 pointer-events-none' : ''}`}>
-                📷 Tomar foto
-                <input type="file" className="hidden" accept="image/*" capture="environment" onChange={agregarEvidenciasFinalizar} />
-              </label>
-              <label className={`btn-secondary cursor-pointer text-xs ${subiendoEvidencia ? 'opacity-50 pointer-events-none' : ''}`}>
-                📎 Adjuntar fotos
-                <input type="file" className="hidden" accept="image/*" multiple onChange={agregarEvidenciasFinalizar} />
-              </label>
-              {subiendoEvidencia && <span className="text-xs text-slate-500 self-center">Subiendo…</span>}
-            </div>
-            {evidenciasFinalizar.length > 0 && (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-2">
-                {evidenciasFinalizar.map(ev => (
-                  <div key={ev.id} className="relative group rounded-md overflow-hidden ring-1 ring-slate-200 aspect-square bg-slate-50">
-                    <img src={assetUrl(ev.ruta_almacenamiento)} alt={ev.nombre_original} className="w-full h-full object-cover" />
-                    <button type="button" onClick={() => quitarEvidenciaFinalizar(ev.id)}
-                            className="absolute top-1 right-1 h-6 w-6 rounded-full bg-rose-600 text-white text-xs grid place-items-center opacity-0 group-hover:opacity-100 transition">
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {requiereEvidencias && evidenciasFinalizar.length === 0 && (
-              <p className="text-xs text-rose-600">Como técnico, debe adjuntar al menos 1 foto del trabajo terminado para finalizar.</p>
+          {/* La OT ya no se adjunta al cerrar: se registra en su propia sección,
+              junto a la guía. Aquí solo se refleja si está o si falta. */}
+          <div className="border-t border-slate-100 pt-4">
+            <label className="label">Orden de trabajo</label>
+            {tieneOt ? (
+              <p className="text-xs text-emerald-700">
+                ✓ OT <span className="font-mono">{s.numero_ot}</span> registrada.
+              </p>
+            ) : (
+              <p className={`text-xs ${requiereOt ? 'text-rose-600' : 'text-amber-700'}`}>
+                Todavía no hay OT registrada.{requiereOt && ' Como técnico, debe registrarla en la sección "Orden de trabajo" antes de finalizar.'}
+              </p>
             )}
           </div>
 
@@ -1656,52 +1684,33 @@ export default function ServicioDetalle() {
         </form>
       </Modal>
 
-      <Modal open={openProgramar} onClose={() => !guardandoProgramar && setOpenProgramar(false)}
-        title={s.fecha_programada ? 'Reprogramar servicio' : 'Programar fecha del servicio'} size="sm"
+      <Modal open={openProgramacion} onClose={() => !guardandoProgramacion && setOpenProgramacion(false)}
+        title={s.fecha_programada ? 'Reprogramar días de trabajo' : 'Programar días de trabajo'}
+        size="lg"
         footer={<>
-          <button className="btn-secondary" onClick={() => setOpenProgramar(false)} disabled={guardandoProgramar}>Cancelar</button>
-          <button className="btn-primary" onClick={guardarProgramacion} disabled={guardandoProgramar}>Guardar</button>
+          <button className="btn-secondary" onClick={() => setOpenProgramacion(false)} disabled={guardandoProgramacion}>Cancelar</button>
+          <button className="btn-primary" onClick={() => guardarProgramacion(false)} disabled={guardandoProgramacion}>Guardar</button>
         </>}>
-        <div className="space-y-3">
+        <div className="space-y-4">
           <p className="text-xs text-carbon-500">
-            Registra cuándo se ejecutará el servicio. Al guardar, aparece en el calendario operativo.
+            Define qué días se ejecutará el trabajo. Puede ser un rango de fechas, días
+            sueltos (por ejemplo el 10, el 15 y el 20) o una combinación de ambos. Al
+            guardar, esos días —y solo esos— aparecen en el calendario del técnico.
           </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Fecha *</label>
-              <input type="date" className="input" value={programarForm.fecha_programada}
-                onChange={e => setProgramarForm(f => ({ ...f, fecha_programada: e.target.value }))} required />
-            </div>
-            <div>
-              <label className="label">Hora</label>
-              <input type="time" className="input" value={programarForm.hora_programada}
-                onChange={e => setProgramarForm(f => ({ ...f, hora_programada: e.target.value }))} />
-            </div>
+          <ProgramacionDias
+            tramos={programacionForm.tramos}
+            disabled={guardandoProgramacion}
+            onChange={tramos => setProgramacionForm(f => ({ ...f, tramos }))} />
+          <div className="w-40">
+            <label className="label">Hora</label>
+            <input type="time" className="input" value={programacionForm.hora_programada}
+              disabled={guardandoProgramacion}
+              onChange={e => setProgramacionForm(f => ({ ...f, hora_programada: e.target.value }))} />
           </div>
-        </div>
-      </Modal>
-
-      <Modal open={openDuracion} onClose={() => !guardandoDuracion && setOpenDuracion(false)}
-        title="Duración del servicio" size="sm"
-        footer={<>
-          <button className="btn-secondary" onClick={() => setOpenDuracion(false)} disabled={guardandoDuracion}>Cancelar</button>
-          <button className="btn-primary" onClick={() => guardarDuracion(false)} disabled={guardandoDuracion}>Guardar</button>
-        </>}>
-        <div className="space-y-3">
-          <p className="text-xs text-slate-500">
-            Días corridos que dura el trabajo, desde la fecha programada. Se regeneran
-            los días de la agenda conservando los ya trabajados con su evidencia.
+          <p className="text-[11px] text-carbon-500">
+            Los días ya trabajados conservan su evidencia. Si la nueva programación deja
+            fuera alguno que ya la tiene, se pedirá confirmación.
           </p>
-          <div>
-            <label className="label">Duración (días) *</label>
-            <input type="number" min="1" step="1" className="input" value={duracionForm}
-              onChange={e => setDuracionForm(e.target.value)} />
-          </div>
-          {Number(duracionForm) < (s.duracion_dias || 1) && (
-            <p className="text-[11px] text-amber-700">
-              Vas a reducir la duración. Si algún día eliminado ya tiene evidencia, se pedirá confirmación.
-            </p>
-          )}
         </div>
       </Modal>
 
@@ -1899,9 +1908,11 @@ export default function ServicioDetalle() {
               {ESTADOS_GUIA.map(es => <option key={es} value={es}>{es}</option>)}
             </select>
           </div>
+          {/* El cierre sin guía dejó de ser un estado del servicio: ahora vive
+              en el estado de la GUÍA (ver utils/estadoServicio.js). */}
           <p className="text-[11px] text-slate-500">
-            Si el servicio está marcado como <strong>{ESTADO_SERVICIO_FINALIZADO_OBSERVADO}</strong> y carga el archivo de guía,
-            el servicio se regularizará automáticamente a <strong>{ESTADO_SERVICIO_FINALIZADO_TECNICO}</strong>.
+            Un servicio cerrado sin guía la deja en <strong>{ESTADO_GUIA_OBSERVADA}</strong>.
+            Al cargar el archivo pasa a <strong>{ESTADO_GUIA_ADJUNTA}</strong> y queda regularizada.
           </p>
         </form>
       </Modal>
@@ -1940,7 +1951,7 @@ export default function ServicioDetalle() {
             </select>
           </div>
           <p className="text-[11px] text-slate-500">
-            El técnico asignado se gestiona desde <strong>Asignar / Checklist</strong> y se muestra en este mismo card.
+            El técnico asignado se gestiona desde <strong>Asignar y programar</strong> y se muestra en este mismo card.
           </p>
         </form>
       </Modal>

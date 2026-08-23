@@ -31,9 +31,15 @@ export function esAscensorServiciable(a) {
  * catálogo (`ascensor.precios`). Devuelve `{ precio, moneda }` o null si el
  * ascensor no tiene precio para ese subtipo. SSoT del modelo de precios por
  * ascensor.
+ *
+ * A los roles sin visibilidad financiera el backend les envía la fila SIN el
+ * importe: entonces `precio` viene en null y solo se sabe que hay un precio
+ * configurado y en qué moneda. Eso basta para elegir el ascensor; el monto real
+ * lo resuelve el backend al guardar.
  */
 export function precioConfigurado(ascensor, idTipoServicio) {
   if (!idTipoServicio) return null;
   const p = (ascensor?.precios || []).find(x => Number(x.id_tipo_servicio) === Number(idTipoServicio));
-  return p ? { precio: Number(p.precio), moneda: p.moneda || 'PEN' } : null;
+  if (!p) return null;
+  return { precio: p.precio == null ? null : Number(p.precio), moneda: p.moneda || 'PEN' };
 }

@@ -7,8 +7,9 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
-import { badgeEstado, formatFecha, codigosAscensores, resumenAscensores } from '../utils/formatters.js';
+import { badgeEstado, codigosAscensores, resumenAscensores } from '../utils/formatters.js';
 import { ESTADOS_SERVICIO_EN_GESTION } from '../utils/estadoServicio.js';
+import { etiquetaProgramacion } from '../utils/programacion.js';
 
 export default function Asignaciones() {
   const [filtros, setFiltros] = useState({ estado_servicio: '', origen: '', prioridad: '', desde: '', hasta: '' });
@@ -93,21 +94,16 @@ export default function Asignaciones() {
             <table className="table-base">
               <thead><tr>
                 <th className="table-th">Servicio</th><th className="table-th">Cliente / Ascensor</th>
-                <th className="table-th">Técnicos</th><th className="table-th">Resp. doc / chk</th>
+                <th className="table-th">Técnicos</th><th className="table-th">Resp. documental</th>
                 <th className="table-th">Fecha / hora</th>
                 <th className="table-th text-center">Prioridad</th>
                 <th className="table-th text-center">Origen</th>
-                <th className="table-th text-center">Checklist</th>
                 <th className="table-th">Estado</th>
                 <th className="table-th text-right">Acciones</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {data.map(s => {
                   const docu = s.asignaciones?.find(a => a.responsable_documentacion === 1);
-                  const chk = s.asignaciones?.find(a => a.responsable_checklist === 1);
-                  const checklist = s.checklists?.[0] || null;
-                  const itemsCount = (checklist?.items || []).filter(i => i.estado === 1).length;
-                  const checklistEstado = checklist?.estado_checklist || (s.estado_servicio === 'Asignado' ? 'Sin items' : '—');
                   return (
                     <tr key={s.id} className="table-row-hover">
                       <td className="table-td">
@@ -118,26 +114,15 @@ export default function Asignaciones() {
                       <td className="table-td text-xs">{s.asignaciones?.map(a => a.tecnico?.nombre).join(', ') || <span className="text-rose-500">Sin asignar</span>}</td>
                       <td className="table-td text-xs">
                         <div>{docu?.tecnico?.nombre || '—'}</div>
-                        <div className="text-slate-500">{chk?.tecnico?.nombre || '—'}</div>
                       </td>
-                      <td className="table-td text-xs">{formatFecha(s.fecha_programada)} {s.hora_programada || ''}</td>
+                      <td className="table-td text-xs" title={etiquetaProgramacion(s).detalle}>{etiquetaProgramacion(s).texto}</td>
                       <td className="table-td text-center text-xs">{s.prioridad}</td>
                       <td className="table-td text-center text-xs">{s.origen}</td>
-                      <td className="table-td text-center text-xs">
-                        <div>{checklistEstado}</div>
-                        {itemsCount > 0 && <div className="text-slate-500">{itemsCount} ítems</div>}
-                      </td>
                       <td className="table-td"><span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span></td>
                       <td className="table-td text-right whitespace-nowrap">
                         <div className="flex justify-end gap-1 flex-wrap">
                           {s.estado_servicio === 'Borrador' && puedeGestionar && (
                             <button onClick={() => accion(s.id, () => serviciosService.promover(s.id), 'Borrador promovido', '¿Promover borrador?')} className="text-emerald-700 text-xs hover:underline">Promover</button>
-                          )}
-                          {s.estado_servicio === 'Listo para salida' && (
-                            <button onClick={() => accion(s.id, () => serviciosService.iniciar(s.id, 'en_camino'), 'En camino')} className="text-brand-700 text-xs hover:underline">En camino</button>
-                          )}
-                          {['Listo para salida', 'En camino'].includes(s.estado_servicio) && (
-                            <button onClick={() => accion(s.id, () => serviciosService.iniciar(s.id, 'iniciar_servicio'), 'En curso')} className="text-brand-700 text-xs hover:underline">En curso</button>
                           )}
                           {puedeCancelar && (
                             <button onClick={() => {

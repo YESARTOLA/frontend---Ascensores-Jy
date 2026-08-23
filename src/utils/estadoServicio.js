@@ -2,21 +2,25 @@
 //
 // Espejo de backend/utils/estadoServicio.js — mantener ambos en sincronía.
 
-// Estados nominados que se referencian explícitamente desde la lógica de
-// negocio (transiciones de cierre, regularización de guías).
-export const ESTADO_SERVICIO_FINALIZADO_TECNICO = 'Finalizado por técnico';
-export const ESTADO_SERVICIO_FINALIZADO_OBSERVADO = 'Finalizado observado';
+// Los cuatro estados del trabajo del técnico. El resto del catálogo es el
+// circuito administrativo, que mueve contabilidad.
+export const ESTADO_SERVICIO_PENDIENTE = 'Pendiente';
+// Asignado = técnico Y fecha programada. Con solo una de las dos cosas el
+// servicio se queda en Pendiente: no hay nada ejecutable en la agenda.
+export const ESTADO_SERVICIO_ASIGNADO = 'Asignado';
+// No se marca a mano: lo enciende el primer registro del técnico sobre el
+// servicio (evidencia, guía, OT, observación o checklist de finalización).
+export const ESTADO_SERVICIO_EN_CURSO = 'En curso';
+// Cierre manual del trabajo de campo. Único: un cierre sin guía se reconoce por
+// el estado de la GUÍA ("Observada"), no por un estado de servicio aparte.
+export const ESTADO_SERVICIO_FINALIZADO = 'Finalizado';
 
 export const ESTADOS_SERVICIO = [
   'Borrador',
-  'Pendiente',
-  'Asignado',
-  'Checklist de salida pendiente',
-  'Listo para salida',
-  'En camino',
-  'En curso',
-  ESTADO_SERVICIO_FINALIZADO_TECNICO,
-  ESTADO_SERVICIO_FINALIZADO_OBSERVADO,
+  ESTADO_SERVICIO_PENDIENTE,
+  ESTADO_SERVICIO_ASIGNADO,
+  ESTADO_SERVICIO_EN_CURSO,
+  ESTADO_SERVICIO_FINALIZADO,
   'En revisión administrativa',
   'A gestión de cobro',
   'En cobro',
@@ -32,10 +36,8 @@ export const ESTADOS_SERVICIO = [
 // riesgo de romper historial, evidencias, guías, cobros o facturación.
 export const ESTADOS_SERVICIO_EDITABLES = [
   'Borrador',
-  'Pendiente',
-  'Asignado',
-  'Checklist de salida pendiente',
-  'Listo para salida'
+  ESTADO_SERVICIO_PENDIENTE,
+  ESTADO_SERVICIO_ASIGNADO
 ];
 
 // Estados "en gestión": el servicio está vivo en el flujo operativo, desde
@@ -43,12 +45,9 @@ export const ESTADOS_SERVICIO_EDITABLES = [
 // universo que muestra la pantalla de Asignaciones.
 export const ESTADOS_SERVICIO_EN_GESTION = [
   'Borrador',
-  'Pendiente',
-  'Asignado',
-  'Checklist de salida pendiente',
-  'Listo para salida',
-  'En camino',
-  'En curso'
+  ESTADO_SERVICIO_PENDIENTE,
+  ESTADO_SERVICIO_ASIGNADO,
+  ESTADO_SERVICIO_EN_CURSO
 ];
 
 // Estados post-ejecución (administrativo, contable o terminal). Mientras un
@@ -78,8 +77,8 @@ export function esServicioEditable(estadoServicio) {
 // El servicio ya pasó por revisión administrativa o está en flujo posterior
 // (cobro / facturación / cerrado / cancelado). Las guías de salida y sus
 // observaciones técnicas no se deben crear/editar/eliminar a partir de aquí.
-// Distinto de `estaServicioFinalizado` porque "Finalizado por técnico" y
-// "Finalizado observado" sí permiten todavía gestionar/regularizar guías.
+// Distinto de `estaServicioFinalizado` porque "Finalizado" sí permite todavía
+// gestionar/regularizar la guía que faltó.
 export function esServicioPostRevision(estadoServicio) {
   return ESTADOS_POST_EJECUCION.includes(estadoServicio);
 }

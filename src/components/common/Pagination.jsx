@@ -20,6 +20,10 @@ export function usePaginatedList(fetcher, filtros = {}, opts = {}) {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
+  // Campos extra que el endpoint devuelva junto a `data` (totales, resúmenes…).
+  // Se exponen tal cual para que la página los use sin una segunda llamada, y
+  // así no puedan desincronizarse de los filtros con los que se calcularon.
+  const [meta, setMeta] = useState({});
 
   const filtrosKey = JSON.stringify(filtros);
 
@@ -33,15 +37,18 @@ export function usePaginatedList(fetcher, filtros = {}, opts = {}) {
           setData(res);
           setTotal(res.length);
           setTotalPages(1);
+          setMeta({});
         } else if (res && Array.isArray(res.data)) {
+          const { data: _filas, total: _t, page: _p, pageSize: _ps, totalPages: _tp, ...extra } = res;
           setData(res.data);
           setTotal(res.total ?? res.data.length);
           setTotalPages(res.totalPages ?? 1);
+          setMeta(extra);
         } else {
-          setData([]); setTotal(0); setTotalPages(1);
+          setData([]); setTotal(0); setTotalPages(1); setMeta({});
         }
       })
-      .catch(() => { if (!cancel) { setData([]); setTotal(0); setTotalPages(1); } })
+      .catch(() => { if (!cancel) { setData([]); setTotal(0); setTotalPages(1); setMeta({}); } })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -51,7 +58,7 @@ export function usePaginatedList(fetcher, filtros = {}, opts = {}) {
   useEffect(() => { setPage(1); }, [filtrosKey]);
 
   return {
-    data, total, totalPages, page, pageSize, loading,
+    data, total, totalPages, page, pageSize, loading, meta,
     setPage, setPageSize,
     recargar: () => setVersion(v => v + 1)
   };

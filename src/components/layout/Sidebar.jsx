@@ -160,7 +160,7 @@ function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
     <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
       <Section label="Operación" />
       <Link to="/" icon={ICONS.dashboard} label="Dashboard" onClose={onClose} />
-      {visibleFor('super_admin', 'admin', 'contabilidad', 'coordinador') && (
+      {visibleFor('super_admin', 'admin', 'contabilidad') && (
         <Link to="/clientes" icon={ICONS.users} label="Clientes" onClose={onClose} />
       )}
       {visibleFor('super_admin', 'admin', 'contabilidad', 'coordinador') && (
@@ -206,7 +206,7 @@ function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
       {visibleFor('super_admin', 'admin', 'coordinador') && accesoServicios && (
         <Link to="/atenciones-rapidas" icon={ICONS.doc} label="Atención rápida" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'coordinador') && (
+      {visibleFor('super_admin', 'admin') && (
         <Link to="/leads" icon={ICONS.briefcase} label="Leads" onClose={onClose} />
       )}
 

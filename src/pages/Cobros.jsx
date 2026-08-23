@@ -9,6 +9,7 @@ import OtModal from '../components/common/OtModal.jsx';
 import Combobox from '../components/common/Combobox.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import CardMetrica from '../components/common/CardMetrica.jsx';
 import CuotasNoFacturadas from '../components/cobros/CuotasNoFacturadas.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
@@ -67,8 +68,8 @@ const cuentasAbonoTexto = (c) => (
 
 // Columnas del export (espejo de la tabla, sin la columna de acciones). El orden
 // sigue el "orden de registro" definido por administración: fecha de servicio →
-// emisión → factura → cliente → obra → servicio → montos → estado; las columnas
-// de seguimiento (cuotas, vencimiento, mora) van al final.
+// emisión → factura → cliente → edificio → tipo y servicio → montos → estado; las
+// columnas de seguimiento (cuotas, vencimiento, mora) van al final.
 const COLUMNAS_EXPORT = [
   { header: 'Fecha de servicio', get: c => { const f = fechaServicio(c); return f ? formatFecha(f) : ''; } },
   { header: 'Fecha de emisión', get: c => { const f = facturaReciente(c); return f?.fecha_emision ? formatFecha(f.fecha_emision) : ''; } },
@@ -76,10 +77,9 @@ const COLUMNAS_EXPORT = [
   { header: 'RUC / DNI', get: c => (docCliente(c) === '—' ? '' : docCliente(c)) },
   { header: 'Razón social', get: c => c.cliente?.nombre },
   { header: 'Edificio', get: c => (nombreEdificio(c) === '—' ? '' : nombreEdificio(c)) },
-  { header: 'Proyecto', get: c => c.servicio?.titulo },
   { header: 'Tipo de servicio', get: c => (tipoServicioLabel(c) === '—' ? '' : tipoServicioLabel(c)) },
   { header: 'Servicio / Cotización', get: c => [c.servicio?.codigo, c.servicio?.cotizacion?.codigo].filter(Boolean).join(' · ') },
-  { header: 'OT', get: c => c.servicio?.servicio_realizado?.numero_ot || '' },
+  { header: 'OT', get: c => c.servicio?.numero_ot || '' },
   { header: 'Monto facturado', align: 'right', get: c => formatMonto(c.monto_total, c.moneda) },
   { header: 'Abonos realizados', align: 'right', get: c => formatMonto(c.total_abonado, c.moneda) },
   { header: 'Saldo pendiente', align: 'right', get: c => formatMonto(c.saldo_pendiente, c.moneda) },
@@ -155,8 +155,12 @@ export default function Cobros() {
   const [exportando, setExportando] = useState(false);
   const toast = useToast();
 
-  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
+  const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar, meta } =
     usePaginatedList(cobrosService.paginate, filtros, { initialPageSize: 25 });
+  // Indicadores de cobranza del recorte filtrado completo (no solo de la página
+  // visible). Los calcula el backend con los mismos filtros, así que se
+  // recalculan solos en cada cambio de filtro.
+  const resumen = meta?.resumen_cobranza;
 
   useEffect(() => {
     Promise.all([
@@ -358,6 +362,29 @@ export default function Cobros() {
         }
       />
 
+      {vistaModo === 'tabla' && resumen && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
+          <CardMetrica
+            titulo="Cobrados"
+            ayuda="Dinero efectivamente recibido en los cobros del filtro, incluidos los abonos parciales de cobros que siguen abiertos. La cantidad son los cobros ya saldados por completo."
+            cantidad={resumen.cobrados?.cantidad}
+            montos={resumen.cobrados?.montos}
+            unidad="cobro(s) saldado(s)"
+            tono="green"
+            nota="Incluye abonos parciales de cobros aún abiertos."
+          />
+          <CardMetrica
+            titulo="Pendientes a cobrar"
+            ayuda="Saldo que falta cobrar en los cobros del filtro, y cuántos siguen abiertos."
+            cantidad={resumen.pendientes?.cantidad}
+            montos={resumen.pendientes?.montos}
+            unidad="cobro(s) abierto(s)"
+            tono="amber"
+            nota="Saldo pendiente; junto al cobrado suma la cartera facturada."
+          />
+        </div>
+      )}
+
       {vistaModo === 'tabla' && (
         <div className="card mb-4 relative z-20">
           <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
@@ -370,7 +397,7 @@ export default function Cobros() {
               options={opcionesClientes}
               value={filtros.q}
               onChange={v => setF('q', v ?? '')}
-              placeholder="Buscar cliente, servicio, RUC/DNI o N° de factura…"
+              placeholder="Buscar cliente, edificio, servicio, RUC/DNI o N° de factura…"
               emptyLabel="Sin clientes que coincidan (se buscará el texto igual)"
             />
             <select className="select" value={filtros.situacion_cobro} onChange={e => setF('situacion_cobro', e.target.value)}>
@@ -436,11 +463,10 @@ export default function Cobros() {
                   <thead><tr>
                     <th className="table-th">Fecha de servicio</th>
                     <th className="table-th">Fecha de emisión</th>
-                    <th className="table-th">Serie y N° factura</th>
+                    <ThOrden col="factura" filtros={filtros} ordenarPor={ordenarPor}>Serie y N° factura</ThOrden>
                     <th className="table-th">RUC / DNI</th>
                     <ThOrden col="cliente" filtros={filtros} ordenarPor={ordenarPor}>Razón social</ThOrden>
                     <th className="table-th">Edificio</th>
-                    <ThOrden col="proyecto" filtros={filtros} ordenarPor={ordenarPor}>Proyecto</ThOrden>
                     <th className="table-th">Tipo de servicio</th>
                     <ThOrden col="servicio" filtros={filtros} ordenarPor={ordenarPor}>Servicio / Cotización</ThOrden>
                     <ThOrden col="ot" filtros={filtros} ordenarPor={ordenarPor}>OT</ThOrden>
@@ -456,10 +482,9 @@ export default function Cobros() {
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.map(c => {
-                      const sr = c.servicio?.servicio_realizado;
-                      const tieneOt = !!(sr?.numero_ot || sr?.archivo_ot);
-                      const esPlan = !c.servicio && !!c.mantenimiento_plan;
-                      const cantAsc = c.servicio?.ascensores?.length || c.mantenimiento_plan?.ascensores?.length || 0;
+                      // La OT vive en el servicio (antes se copiaba al registro de realizado).
+                      const ot = { numero: c.servicio?.numero_ot, archivo: c.servicio?.archivo_ot };
+                      const tieneOt = !!(ot.numero || ot.archivo);
                       return (
                       <tr key={c.id} className={`table-row-hover ${c.vencido ? 'row-vencido' : ''}`}>
                         <td className="table-td text-xs">{(() => { const f = fechaServicio(c); return f ? formatFecha(f) : <span className="text-slate-400">—</span>; })()}</td>
@@ -468,14 +493,6 @@ export default function Cobros() {
                         <td className="table-td text-xs font-mono whitespace-nowrap">{docCliente(c)}</td>
                         <td className="table-td text-sm">{c.cliente?.nombre}</td>
                         <td className="table-td text-xs">{nombreEdificio(c)}</td>
-                        <td className="table-td text-sm">
-                          <div className="truncate max-w-[220px]" title={c.servicio?.titulo || c.mantenimiento_plan?.tipo_servicio?.nombre || ''}>
-                            {c.servicio?.titulo || (esPlan ? (c.mantenimiento_plan?.tipo_servicio?.nombre || 'Mantenimiento (plan)') : '—')}
-                          </div>
-                          {cantAsc > 1 && (
-                            <div className="text-[10px] text-slate-500">{cantAsc} ascensores</div>
-                          )}
-                        </td>
                         <td className="table-td text-xs">{tipoServicioLabel(c)}</td>
                         <td className="table-td whitespace-nowrap min-w-[160px]">
                           {c.servicio ? (
@@ -501,11 +518,11 @@ export default function Cobros() {
                           {tieneOt ? (
                             <button
                               type="button"
-                              onClick={() => setOtAbierta({ numero: sr.numero_ot, archivo: sr.archivo_ot })}
+                              onClick={() => setOtAbierta(ot)}
                               className="inline-flex items-center gap-1 text-brand-700 text-xs hover:underline font-mono"
                               title="Ver OT"
                             >
-                              📄 {sr.numero_ot || 'OT'}
+                              📄 {ot.numero || 'OT'}
                             </button>
                           ) : (
                             <span className="text-slate-400 text-xs">—</span>
@@ -549,8 +566,9 @@ export default function Cobros() {
             {/* Vista cards (móvil) */}
             <div className="md:hidden grid gap-3">
               {data.map(c => {
-                const sr = c.servicio?.servicio_realizado;
-                const tieneOt = !!(sr?.numero_ot || sr?.archivo_ot);
+                // La OT vive en el servicio (antes se copiaba al registro de realizado).
+                const ot = { numero: c.servicio?.numero_ot, archivo: c.servicio?.archivo_ot };
+                const tieneOt = !!(ot.numero || ot.archivo);
                 return (
                 <div key={c.id} className={`card p-4 ${c.vencido ? 'ring-2 ring-rose-200' : ''}`}>
                   {/* Mismo orden de registro que la tabla de escritorio. */}
@@ -567,9 +585,6 @@ export default function Cobros() {
                       <div className="font-medium text-sm truncate">{c.cliente?.nombre}</div>
                       {nombreEdificio(c) !== '—' && (
                         <div className="text-[11px] text-slate-500 truncate">{nombreEdificio(c)}</div>
-                      )}
-                      {(c.servicio?.titulo || (!c.servicio && c.mantenimiento_plan)) && (
-                        <div className="text-xs text-slate-700 truncate">{c.servicio?.titulo || c.mantenimiento_plan?.tipo_servicio?.nombre || 'Mantenimiento (plan)'}</div>
                       )}
                       {tipoServicioLabel(c) !== '—' && (
                         <div className="text-[11px] text-slate-500 truncate">{tipoServicioLabel(c)}</div>
@@ -623,7 +638,7 @@ export default function Cobros() {
                     {tieneOt && (
                       <button
                         type="button"
-                        onClick={() => setOtAbierta({ numero: sr.numero_ot, archivo: sr.archivo_ot })}
+                        onClick={() => setOtAbierta(ot)}
                         className="btn-secondary text-xs flex-1 text-brand-700"
                       >📄 OT</button>
                     )}

@@ -15,9 +15,9 @@ import ImpactoEliminacionEdificio from '../components/edificios/ImpactoEliminaci
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import ContratoNuevoModal from '../components/clientes/ContratoNuevoModal.jsx';
 
-const ESTADOS_PENDIENTE = ['Borrador', 'Pendiente', 'Asignado', 'Checklist de salida pendiente', 'Listo para salida'];
-const ESTADOS_CURSO = ['En camino', 'En curso'];
-const ESTADOS_FIN = ['Finalizado por técnico', 'Finalizado observado', 'En revisión administrativa', 'A gestión de cobro', 'En cobro', 'Cobrado parcial', 'Cobrado total', 'Facturado', 'Cerrado'];
+const ESTADOS_PENDIENTE = ['Borrador', 'Pendiente', 'Asignado'];
+const ESTADOS_CURSO = ['En curso'];
+const ESTADOS_FIN = ['Finalizado', 'En revisión administrativa', 'A gestión de cobro', 'En cobro', 'Cobrado parcial', 'Cobrado total', 'Facturado', 'Cerrado'];
 
 export default function Cliente360() {
   const { id } = useParams();
@@ -386,6 +386,7 @@ export default function Cliente360() {
           </div>
         </div>
 
+        {puedeVerPrecio && (
         <div className="card lg:col-span-1">
           <div className="card-header"><h3 className="card-title">Facturas ({data.facturas?.length || 0})</h3></div>
           <div className="card-body">
@@ -408,6 +409,7 @@ export default function Cliente360() {
             )}
           </div>
         </div>
+        )}
 
         {puedeVerPrecio && (
           <div className="card lg:col-span-2">

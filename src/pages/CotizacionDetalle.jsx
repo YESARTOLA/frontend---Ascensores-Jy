@@ -20,6 +20,7 @@ import {
   ESTADOS_GLOBALES_SERVICIO_EN_MARCHA
 } from '../utils/estadoCotizacion.js';
 import CuotasEditor, { planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
+import CotizacionSinFinanzas from '../components/cotizaciones/CotizacionSinFinanzas.jsx';
 
 const itemVacio = () => ({
   descripcion: '',
@@ -221,6 +222,24 @@ export default function CotizacionDetalle() {
   if (loading) return <Loader />;
   if (!cot) return <div className="p-6 text-center text-carbon-500">Cotización no encontrada</div>;
   if (!versionActiva) return <div className="p-6 text-center text-carbon-500">Sin versiones</div>;
+
+  // Rol sin visibilidad financiera (Coordinador): el backend ya respondió una
+  // cotización recortada —marcada con `sin_finanzas`— y aquí se pinta su propia
+  // vista. Se sale antes de tocar cualquier campo económico, para que ningún
+  // importe pueda colarse por un condicional olvidado más abajo.
+  if (cot.sin_finanzas) {
+    return (
+      <CotizacionSinFinanzas
+        cot={cot}
+        version={versionActiva}
+        verActivaNum={verActivaNum}
+        onVersion={setVerActivaNum}
+        volver={location.state?.from || null}
+        volverLabel={location.state?.fromLabel || null}
+        onVolver={() => navigate(-1)}
+      />
+    );
+  }
 
   // Versión todavía en proceso: editable y susceptible de aprobar/rechazar.
   const versionEditable = versionActiva.estado_version === ESTADO_VERSION_COTIZADO;

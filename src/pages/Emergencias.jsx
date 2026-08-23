@@ -14,17 +14,24 @@ import AdjuntosEmergenciaModal from '../components/emergencias/AdjuntosEmergenci
 import { badgeEstado, formatFecha, formatFechaHora, hoyISO, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
 import { esServicioEditable, esEmergenciaCerrada, estaServicioFinalizado, ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
+import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
+import {
+  tramoDeUnDia, tramosDeServicio, fechasDesdeTramos, payloadDias, errorDeTramos, etiquetaProgramacion
+} from '../utils/programacion.js';
 
 const NIVELES_URGENCIA = ['alta', 'media', 'baja'];
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
-const TIPOS_ITEM = ['Herramienta', 'Material', 'Equipo', 'Repuesto', 'Otro'];
-const UNIDADES = ['Unidad', 'Metro', 'Caja', 'Bolsa', 'Litro', 'Juego', 'Otro'];
 const FORM_ID = 'form-emergencia';
 
-// requiere_factura por defecto en false: las emergencias nacen "sin factura" (editable).
-const inicial = { id_cliente: '', id_ascensor: '', motivo: '', nivel_urgencia: 'alta', fecha_programada: '', hora_programada: '', fecha_estimada_entrega: '', precio_interno: '', sin_cobro: false, requiere_factura: false, observaciones: '' };
+// Sin campos de cobro ni de factura: la emergencia nace sin costo y sin factura
+// (lo fija el backend); ajustarlo es cosa del servicio vinculado.
+// `tramos` son los días de trabajo: lista de { desde, hasta }. Un día suelto es
+// un tramo con desde === hasta; un rango, uno con hasta posterior. Se combinan.
+// Sin campos económicos: la emergencia se registra siempre sin costo (el
+// backend la crea en 0 y marcada `sin_cobro`).
+const inicial = { id_cliente: '', id_ascensor: '', motivo: '', nivel_urgencia: 'alta', tramos: [], hora_programada: '', fecha_estimada_entrega: '', observaciones: '' };
 
 export default function Emergencias() {
   const [clientes, setClientes] = useState([]);
@@ -34,7 +41,6 @@ export default function Emergencias() {
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(inicial);
   const [asignaciones, setAsignaciones] = useState([]);
-  const [items, setItems] = useState([]);
   // Emergencia cuyo modal de adjuntos está abierto desde la tabla.
   const [adjuntosDe, setAdjuntosDe] = useState(null);
   // Adjuntos cargados durante la CREACIÓN: la emergencia aún no existe, así que
@@ -44,7 +50,7 @@ export default function Emergencias() {
   const [guardando, setGuardando] = useState(false);
   const guardandoRef = useRef(false);
   const toast = useToast();
-  const { esSuperAdmin, esAdmin, esCoordinador, puedeVerPrecio } = useAuth();
+  const { esSuperAdmin, esAdmin, esCoordinador } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
   // Eliminar una emergencia (y su servicio vinculado) queda restringido al superadministrador.
@@ -64,19 +70,15 @@ export default function Emergencias() {
   const ascensoresFiltrados = (form.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(form.id_cliente)) : ascensores).filter(esAscensorServiciable);
   const labelCampoCliente = 'Cliente';
 
-  const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false, responsable_checklist: false }]);
+  const agregarTec = () => setAsignaciones(a => [...a, { id_tecnico: '', rol_asignacion: 'Apoyo técnico', responsable_principal: false, responsable_documentacion: false }]);
   const quitarTec = (idx) => setAsignaciones(a => a.filter((_, i) => i !== idx));
   const cambiarTec = (idx, key, val) => setAsignaciones(a => actualizarFilaAsignacion(a, idx, key, val));
 
-  const agregarItem = () => setItems(i => [...i, { tipo_item: 'Herramienta', nombre: '', cantidad: 1, unidad: 'Unidad', observaciones: '' }]);
-  const cambiarItem = (idx, key, val) => setItems(i => i.map((x, j) => j === idx ? { ...x, [key]: val } : x));
-  const quitarItem = (idx) => setItems(i => i.filter((_, j) => j !== idx));
 
   const abrirNuevo = () => {
     setEditando(null);
-    setForm({ ...inicial, fecha_programada: hoyISO() });
+    setForm({ ...inicial, tramos: [tramoDeUnDia(hoyISO())] });
     setAsignaciones([]);
-    setItems([]);
     setAdjuntosBorrador([]);
     setOpen(true);
   };
@@ -96,16 +98,12 @@ export default function Emergencias() {
       id_ascensor: String(em.id_ascensor || ''),
       motivo: em.motivo || '',
       nivel_urgencia: em.nivel_urgencia || 'alta',
-      fecha_programada: em.servicio?.fecha_programada ? String(em.servicio.fecha_programada).slice(0, 10) : '',
+      tramos: tramosDeServicio(em.servicio),
       hora_programada: em.servicio?.hora_programada || '',
       fecha_estimada_entrega: em.servicio?.fecha_estimada_entrega ? String(em.servicio.fecha_estimada_entrega).slice(0, 10) : '',
-      precio_interno: em.servicio?.precio_interno != null ? String(em.servicio.precio_interno) : '',
-      sin_cobro: em.servicio?.sin_cobro === 1,
-      requiere_factura: em.servicio?.requiere_factura === 1,
       observaciones: em.observaciones || ''
     });
     setAsignaciones([]);
-    setItems([]);
     setOpen(true);
   };
 
@@ -144,7 +142,6 @@ export default function Emergencias() {
     setEditando(null);
     setForm(inicial);
     setAsignaciones([]);
-    setItems([]);
     setAdjuntosBorrador([]);
     setAdjuntosBorradorAbierto(false);
   };
@@ -156,33 +153,39 @@ export default function Emergencias() {
       const consistencia = validarConsistenciaAsignaciones(asignaciones);
       if (!consistencia.ok) return toast.error(consistencia.error);
     }
+    const errorProgramacion = errorDeTramos(form.tramos);
+    if (errorProgramacion) return toast.error(errorProgramacion);
+    // La fecha programada del servicio es siempre el PRIMER día de trabajo.
+    const primerDia = fechasDesdeTramos(form.tramos)[0];
     guardandoRef.current = true;
     setGuardando(true);
     try {
       if (editando) {
         // Edición: solo metadatos del registro + datos del servicio vinculado.
-        // Técnicos y checklist se gestionan desde el servicio.
+        // Los técnicos se gestionan desde el servicio.
         const payload = {
           id_cliente: form.id_cliente,
           id_ascensor: form.id_ascensor,
           motivo: form.motivo,
           nivel_urgencia: form.nivel_urgencia,
-          fecha_programada: form.fecha_programada,
+          dias: payloadDias(form.tramos),
+          fecha_programada: primerDia,
           hora_programada: form.hora_programada,
           fecha_estimada_entrega: form.fecha_estimada_entrega,
-          observaciones: form.observaciones,
-          sin_cobro: form.sin_cobro,
-          requiere_factura: form.requiere_factura,
-          precio_interno: form.sin_cobro ? 0 : form.precio_interno
+          observaciones: form.observaciones
+          // Nada económico viaja desde aquí (`sin_cobro`, `precio_interno`,
+          // `requiere_factura`): la emergencia se registra sin costo y sin
+          // factura; si alguna vez debe cobrarse, se ajusta desde el servicio.
         };
         await emergenciasService.update(editando, payload);
         toast.success('Emergencia actualizada');
       } else {
+        const { tramos, ...resto } = form;
         const payload = {
-          ...form,
-          precio_interno: form.sin_cobro ? 0 : form.precio_interno,
+          ...resto,
+          dias: payloadDias(tramos),
+          fecha_programada: primerDia,
           tecnicos: asignaciones,
-          items_checklist: items,
           archivos: adjuntosBorrador.map((a, i) => ({ id_archivo: a.id_archivo, orden: i + 1 }))
         };
         await emergenciasService.create(payload);
@@ -252,7 +255,7 @@ export default function Emergencias() {
                     <td className="table-td text-xs">{formatFechaHora(e.fecha_reporte)}</td>
                     <td className="table-td text-xs"><div>{nombreEdificio(e.ascensor?.edificio) || nombreCliente(e.cliente)}</div><div className="font-mono text-slate-500">{e.ascensor?.codigo}</div></td>
                     <td className="table-td text-sm">{e.motivo}</td>
-                    <td className="table-td text-xs">{e.servicio?.fecha_programada ? `${formatFecha(e.servicio.fecha_programada)}${e.servicio.hora_programada ? ` ${e.servicio.hora_programada}` : ''}` : '—'}</td>
+                    <td className="table-td text-xs" title={etiquetaProgramacion(e.servicio).detalle}>{etiquetaProgramacion(e.servicio).texto}</td>
                     <td className="table-td text-xs">{e.servicio?.fecha_estimada_entrega ? formatFecha(e.servicio.fecha_estimada_entrega) : '—'}</td>
                     <td className="table-td"><span className={badgeEstado(e.estado_emergencia)}>{e.estado_emergencia}</span></td>
                     <td className="table-td">
@@ -328,7 +331,7 @@ export default function Emergencias() {
           <form id={FORM_ID} onSubmit={guardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {editando && (
               <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs p-3">
-                Editar aquí sincroniza también el servicio vinculado (cliente, ascensor, precio, prioridad y descripción). Técnicos y checklist se gestionan desde el servicio.
+                Editar aquí sincroniza también el servicio vinculado (cliente, ascensor, prioridad y descripción). Los técnicos y el dato económico se gestionan desde el servicio.
               </div>
             )}
             <div>
@@ -350,46 +353,42 @@ export default function Emergencias() {
             </div>
             <div className="sm:col-span-2"><label className="label">Motivo *</label><textarea className="textarea" required rows="2" value={form.motivo} onChange={e => setForm(f => ({ ...f, motivo: e.target.value }))} /></div>
             <div><label className="label">Nivel de urgencia</label><select className="select" value={form.nivel_urgencia} onChange={e => setForm(f => ({ ...f, nivel_urgencia: e.target.value }))}><option>alta</option><option>media</option><option>baja</option></select></div>
-            <div>
-              <label className="label">Fecha programada *</label>
-              <input type="date" className="input" required value={form.fecha_programada}
-                onChange={e => setForm(f => ({ ...f, fecha_programada: e.target.value, fecha_estimada_entrega: f.fecha_estimada_entrega && f.fecha_estimada_entrega < e.target.value ? '' : f.fecha_estimada_entrega }))} />
+            <div className="sm:col-span-2">
+              <ProgramacionDias
+                tramos={form.tramos}
+                onChange={tramos => setForm(f => ({
+                  ...f,
+                  tramos,
+                  // El término estimado nunca puede quedar antes del primer día.
+                  fecha_estimada_entrega: f.fecha_estimada_entrega && f.fecha_estimada_entrega < (fechasDesdeTramos(tramos)[0] || '')
+                    ? '' : f.fecha_estimada_entrega
+                }))} />
             </div>
             <div>
               <label className="label">Hora programada</label>
               <input type="time" className="input" value={form.hora_programada}
                 onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} />
+              <p className="text-xs text-slate-500 mt-1">Se aplica a todos los días programados.</p>
             </div>
-            <div className="sm:col-span-2">
-              <label className="label">Fecha estimada de término</label>
-              <input type="date" className="input" value={form.fecha_estimada_entrega} min={form.fecha_programada || undefined}
-                onChange={e => setForm(f => ({ ...f, fecha_estimada_entrega: e.target.value }))} />
-              <p className="text-xs text-slate-500 mt-1">Opcional. Si el servicio ocupará varios días, indica el término estimado; si se deja vacío, se agenda solo el día programado.</p>
-            </div>
-            {puedeVerPrecio && (
-              <div>
-                <label className="label">Cobertura</label>
-                <label className="flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ring-slate-200 bg-slate-50 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.sin_cobro}
-                    onChange={e => setForm(f => ({ ...f, sin_cobro: e.target.checked, precio_interno: e.target.checked ? '' : f.precio_interno }))}
-                  />
-                  <span className="text-sm text-slate-700">Sin costo (cliente con cobertura)</span>
-                </label>
-              </div>
-            )}
-            {puedeVerPrecio && !form.sin_cobro && <div><label className="label">Precio interno (S/) *</label><input type="number" step="0.01" className="input" required value={form.precio_interno} onChange={e => setForm(f => ({ ...f, precio_interno: e.target.value }))} /></div>}
             <div>
-              <label className="label">Facturación</label>
-              <label className="flex items-center gap-2 h-[42px] px-3 rounded-lg ring-1 ring-slate-200 bg-slate-50 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.requiere_factura}
-                  onChange={e => setForm(f => ({ ...f, requiere_factura: e.target.checked }))}
-                />
-                <span className="text-sm text-slate-700">Requiere factura</span>
-              </label>
+              <label className="label">Fecha estimada de término</label>
+              <input type="date" className="input" value={form.fecha_estimada_entrega} min={fechasDesdeTramos(form.tramos)[0] || undefined}
+                onChange={e => setForm(f => ({ ...f, fecha_estimada_entrega: e.target.value }))} />
+              <p className="text-xs text-slate-500 mt-1">Opcional: fecha comprometida de entrega del trabajo. No cambia los días programados.</p>
+            </div>
+            {/* La emergencia no se cobra, así que tampoco se factura: ni precio
+                ni facturación se piden aquí. El servicio nace en 0, sin costo y
+                sin factura; si un caso concreto sí debe cobrarse, ambas cosas se
+                habilitan desde el servicio vinculado. */}
+            <div className="sm:col-span-2">
+              <label className="label">Cobertura y facturación</label>
+              <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 rounded-lg ring-1 ring-emerald-200 bg-emerald-50/60">
+                <span className="badge-green text-[10px]">Sin costo</span>
+                <span className="badge-gray text-[10px]">Sin factura</span>
+                <span className="text-xs text-slate-600">
+                  La emergencia se registra sin cobro; al no cobrarse, tampoco se factura.
+                </span>
+              </div>
             </div>
             <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={form.observaciones} onChange={e => setForm(f => ({ ...f, observaciones: e.target.value }))} /></div>
           </form>
@@ -423,7 +422,6 @@ export default function Emergencias() {
                         <th className="table-th">Técnico</th><th className="table-th">Rol</th>
                         <th className="table-th text-center">Principal</th>
                         <th className="table-th text-center">Documental</th>
-                        <th className="table-th text-center">Checklist</th>
                         <th className="table-th"></th>
                       </tr></thead>
                       <tbody className="divide-y divide-slate-100">
@@ -442,7 +440,6 @@ export default function Emergencias() {
                             </td>
                             <td className="table-td text-center"><input type="checkbox" checked={a.responsable_principal} onChange={e => cambiarTec(idx, 'responsable_principal', e.target.checked)} /></td>
                             <td className="table-td text-center"><input type="checkbox" checked={a.responsable_documentacion} onChange={e => cambiarTec(idx, 'responsable_documentacion', e.target.checked)} /></td>
-                            <td className="table-td text-center"><input type="checkbox" checked={a.responsable_checklist} onChange={e => cambiarTec(idx, 'responsable_checklist', e.target.checked)} /></td>
                             <td className="table-td text-right"><button type="button" onClick={() => quitarTec(idx)} className="text-rose-600 text-xs">Quitar</button></td>
                           </tr>
                         ))}
@@ -452,38 +449,6 @@ export default function Emergencias() {
                 )}
               </div>
 
-              {asignaciones.length > 0 && (
-                <div className="border-t border-slate-100 pt-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-slate-800">Checklist de salida (opcional)</h4>
-                    <button type="button" onClick={agregarItem} className="btn-secondary text-xs">+ Agregar ítem</button>
-                  </div>
-                  {items.length === 0 && <p className="text-xs text-slate-500">Sin ítems. Podrá editarse después.</p>}
-                  {items.length > 0 && (
-                    <div className="overflow-x-auto scroll-thin">
-                      <table className="table-base">
-                        <thead><tr>
-                          <th className="table-th">Tipo</th><th className="table-th">Ítem</th>
-                          <th className="table-th">Cantidad</th><th className="table-th">Unidad</th>
-                          <th className="table-th">Observación</th><th className="table-th"></th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {items.map((it, idx) => (
-                            <tr key={idx}>
-                              <td className="table-td"><select className="select" value={it.tipo_item} onChange={e => cambiarItem(idx, 'tipo_item', e.target.value)}>{TIPOS_ITEM.map(t => <option key={t}>{t}</option>)}</select></td>
-                              <td className="table-td"><input className="input" value={it.nombre} onChange={e => cambiarItem(idx, 'nombre', e.target.value)} placeholder="Nombre" /></td>
-                              <td className="table-td"><input type="number" step="0.01" className="input" value={it.cantidad} onChange={e => cambiarItem(idx, 'cantidad', e.target.value)} /></td>
-                              <td className="table-td"><select className="select" value={it.unidad} onChange={e => cambiarItem(idx, 'unidad', e.target.value)}>{UNIDADES.map(u => <option key={u}>{u}</option>)}</select></td>
-                              <td className="table-td"><input className="input" value={it.observaciones} onChange={e => cambiarItem(idx, 'observaciones', e.target.value)} /></td>
-                              <td className="table-td text-right"><button type="button" onClick={() => quitarItem(idx)} className="text-rose-600 text-xs">Quitar</button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
             </>
           )}
         </div>
@@ -515,7 +480,7 @@ export default function Emergencias() {
         palabraClave={aEliminar?.servicio?.codigo || 'ELIMINAR'}
         descripcion={
           aEliminar?.servicio
-            ? `Se dará de baja la emergencia y su servicio vinculado ${aEliminar.servicio.codigo}, incluyendo asignaciones, checklist, evidencias, cobro, eventos de calendario y recordatorios. Esta acción revierte todo el flujo.`
+            ? `Se dará de baja la emergencia y su servicio vinculado ${aEliminar.servicio.codigo}, incluyendo asignaciones, evidencias, cobro, eventos de calendario y recordatorios. Esta acción revierte todo el flujo.`
             : 'Se dará de baja la emergencia y todo lo que generó en cascada.'
         }
         onConfirmar={eliminar}

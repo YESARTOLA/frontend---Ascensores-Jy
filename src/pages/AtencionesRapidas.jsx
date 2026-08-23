@@ -11,6 +11,8 @@ import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { badgeEstado, formatFechaHora, hoyISO, sanearTelefono, formatTelefono } from '../utils/formatters.js';
 import { esAtencionRapidaConvertida, ESTADOS_ATENCION_RAPIDA } from '../utils/estadoServicio.js';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
+import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
+import { tramoDeUnDia, fechasDesdeTramos, payloadDias, errorDeTramos } from '../utils/programacion.js';
 
 const FORM_ID = 'form-atencion-rapida';
 // SSoT de niveles de urgencia del módulo: alimenta tanto el filtro como el
@@ -20,7 +22,9 @@ const NIVELES_URGENCIA = ['alta', 'media', 'baja', 'seguimiento'];
 const badgeUrgencia = (n) =>
   n === 'alta' ? 'badge-red' : n === 'media' ? 'badge-amber' : n === 'seguimiento' ? 'badge-blue' : 'badge-gray';
 const inicial = { nombre_contacto: '', telefono: '', mensaje_rapido: '', tipo_solicitud: '', id_responsable_usuario: '', nivel_urgencia: 'media' };
-const inicialConv = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', id_subtipo_servicio: '', fecha_programada: hoyISO(), hora_programada: '09:00', precio_interno: '', moneda: 'PEN' };
+// `tramos` = días de trabajo del servicio que se genera al convertir: rangos
+// { desde, hasta } y/o días sueltos (desde === hasta), combinables.
+const inicialConv = { id_cliente: '', id_ascensor: '', id_tipo_servicio: '', id_subtipo_servicio: '', tramos: [tramoDeUnDia(hoyISO())], hora_programada: '09:00', precio_interno: '', moneda: 'PEN' };
 
 export default function AtencionesRapidas() {
   const [clientes, setClientes] = useState([]);
@@ -121,7 +125,12 @@ export default function AtencionesRapidas() {
   };
 
   const convertir = async () => {
-    try { await atencionesRapidasService.convertir(openConv.id, convForm); toast.success('Convertido'); setOpenConv(null); setConvForm(inicialConv); recargar(); }
+    const errorProgramacion = errorDeTramos(convForm.tramos);
+    if (errorProgramacion) return toast.error(errorProgramacion);
+    const { tramos, ...resto } = convForm;
+    // La fecha programada del servicio es siempre el PRIMER día de trabajo.
+    const payload = { ...resto, dias: payloadDias(tramos), fecha_programada: fechasDesdeTramos(tramos)[0] };
+    try { await atencionesRapidasService.convertir(openConv.id, payload); toast.success('Convertido'); setOpenConv(null); setConvForm(inicialConv); recargar(); }
     catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
@@ -247,7 +256,9 @@ export default function AtencionesRapidas() {
             />
           </div>
           <div><label className="label">Ascensor *</label><select className="select" required value={convForm.id_ascensor} onChange={e => setConvForm(f => ({ ...f, id_ascensor: e.target.value }))}><option value="">—</option>{ascensoresF.map(a => <option key={a.id} value={a.id}>{a.codigo}</option>)}</select></div>
-          <div><label className="label">Fecha</label><input type="date" className="input" value={convForm.fecha_programada} onChange={e => setConvForm(f => ({ ...f, fecha_programada: e.target.value }))} /></div>
+          <div className="sm:col-span-2">
+            <ProgramacionDias tramos={convForm.tramos} onChange={tramos => setConvForm(f => ({ ...f, tramos }))} />
+          </div>
           <div><label className="label">Hora</label><input type="time" className="input" value={convForm.hora_programada} onChange={e => setConvForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>
           {puedeVerPrecio && <div className="sm:col-span-2"><label className="label">Precio (S/) *</label><input type="number" step="0.01" required className="input" value={convForm.precio_interno} onChange={e => setConvForm(f => ({ ...f, precio_interno: e.target.value }))} /></div>}
         </form>

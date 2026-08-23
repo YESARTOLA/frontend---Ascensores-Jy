@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { mantenimientosService, clientesService, ascensoresService, tiposServicioService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
@@ -10,18 +10,24 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import AscensoresChecklist from '../components/common/AscensoresChecklist.jsx';
-import { sumaMontos, precioConfigurado, esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
+import AscensoresFrecuenciaChecklist from '../components/common/AscensoresFrecuenciaChecklist.jsx';
+import CronogramaPlan from '../components/mantenimientos/CronogramaPlan.jsx';
+import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
+import { visitasEnMeses, etiquetaVisitas } from '../utils/frecuenciaPlan.js';
+import { totalesDelPlan } from '../utils/planMantenimiento.js';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { generarReportePorClientePDF } from '../utils/pdfReport.js';
+import { etiquetaProgramacion } from '../utils/programacion.js';
 
 const FORM_ID = 'form-nuevo-plan-mantenimiento';
 
+// Un plan se define por: sus ascensores (cada uno con SU frecuencia), la
+// duración en MESES y un monto global MENSUAL — el único importe facturable.
 const inicial = {
   id_cliente: '', ascensores_seleccion: {}, id_tipo_servicio: '', tipo_plan: 'continuo',
-  frecuencia: 'mensual', frecuencia_dias_custom: '', cantidad_mantenimientos: '12',
-  cantidad_mantenimientos_gratuitos: '0',
+  frecuencia: 'mensual', frecuencia_dias_custom: '', duracion_meses: '12',
+  monto_mensual: '', cantidad_mantenimientos_gratuitos: '0',
   fecha_inicio: hoyISO(), hora_programada: '09:00',
   observaciones: ''
 };
@@ -50,28 +56,27 @@ export default function Mantenimientos() {
   const [planDetalle, setPlanDetalle] = useState(null);
   const [instanciasPlan, setInstanciasPlan] = useState([]);
   const [cargandoInstanciasPlan, setCargandoInstanciasPlan] = useState(false);
-  // Facturación por periodo del plan (una factura + un pago por el total de cada
-  // ocurrencia). `periodos` = { id_cobro, periodos: [...] } | null.
+  // Facturación MES A MES del plan: una factura y un pago por mes, por el monto
+  // mensual pactado. `periodos` = { id_cobro, monto_mensual, meses: [...] } | null.
   const [periodos, setPeriodos] = useState(null);
   const [cargandoPeriodos, setCargandoPeriodos] = useState(false);
-  const [forzando, setForzando] = useState(null);   // periodo en el modal de forzar
-  const [modoForzar, setModoForzar] = useState('total');
+  const [forzando, setForzando] = useState(null);   // mes en el modal de forzar
   const [aprobandoPeriodo, setAprobandoPeriodo] = useState(false);
+  const [mesExpandido, setMesExpandido] = useState(null); // numero_mes con detalle abierto
   const [editandoGratuitos, setEditandoGratuitos] = useState(false);
   const [nuevoCupoGratuitos, setNuevoCupoGratuitos] = useState('');
   const [guardandoGratuitos, setGuardandoGratuitos] = useState(false);
-  // Edición del precio del plan: por ascensor (desglose) o global (el total se
-  // reparte proporcional al desglose vigente, lo hace el backend).
-  const [editandoPrecios, setEditandoPrecios] = useState(false);
-  const [modoPrecio, setModoPrecio] = useState('ascensor'); // 'ascensor' | 'total'
-  const [preciosForm, setPreciosForm] = useState({});       // id_ascensor → monto (string)
-  const [precioTotalForm, setPrecioTotalForm] = useState('');
-  const [guardandoPrecios, setGuardandoPrecios] = useState(false);
-  // Edición del precio de UNA ocurrencia (mantenimiento de un ascensor en una
-  // fecha), sin tocar el precio pactado del plan.
-  const [precioInstancia, setPrecioInstancia] = useState(null); // instancia en edición
-  const [montoInstancia, setMontoInstancia] = useState('');
-  const [guardandoPrecioInst, setGuardandoPrecioInst] = useState(false);
+  // Cronograma del plan: todas las fechas de cada ascensor, con las que se
+  // pueden omitir (desactivar) las que no se ejecutarán.
+  const [programacion, setProgramacion] = useState(null);
+  const [cargandoProgramacion, setCargandoProgramacion] = useState(false);
+  const [guardandoProgramacion, setGuardandoProgramacion] = useState(false);
+  const [visitasSel, setVisitasSel] = useState({});   // id_visita → true
+  const [omitiendo, setOmitiendo] = useState(null);   // { ids, motivo } en el modal
+  // Edición del monto mensual: el único precio del plan.
+  const [editandoMonto, setEditandoMonto] = useState(false);
+  const [montoMensualForm, setMontoMensualForm] = useState('');
+  const [guardandoMonto, setGuardandoMonto] = useState(false);
   const [openExportar, setOpenExportar] = useState(false);
   const [exportForm, setExportForm] = useState({ ids_cliente: [], ids_ascensor: [], estado_ejecucion: '', desde: '', hasta: '', formato: 'excel' });
   const [exportando, setExportando] = useState(false);
@@ -141,53 +146,63 @@ export default function Mantenimientos() {
   const esFrecuenciaCustom = frecuenciaSeleccionada?.unidad === 'custom';
   const tipoSeleccionado = tipos.find(t => String(t.id) === String(form.id_tipo_servicio));
   const esTipoPreventivo = !!tipoSeleccionado?.es_preventivo;
-  const cupoMaximoGratuitos = esContinuo ? Number(form.cantidad_mantenimientos || 0) : 1;
+  // El cupo gratuito cuenta MESES del plan, no visitas sueltas: la unidad de
+  // cobro es el mes.
+  const cupoMaximoGratuitos = esContinuo ? Number(form.duracion_meses || 0) : 1;
 
-  // El precio del plan se compone desde los ascensores: cada uno aporta su precio
-  // configurado para el subtipo (tbl_ascensores_precios). Ya no se reparte un
-  // total del catálogo del cliente.
+  // El plan NO tiene precio por ascensor: se cobra un monto global mensual. De
+  // cada ascensor solo interesa su frecuencia, que define cuántas visitas
+  // recibirá a lo largo de la duración del plan.
   const ascensoresSeleccionados = ascensoresF.filter(a => form.ascensores_seleccion[a.id]);
-  const sumaActual = sumaMontos(form.ascensores_seleccion);
-  // La moneda sale del precio configurado del ascensor elegido. No hay fallback
-  // porque el bloque de precio solo se renderiza con un ascensor seleccionado.
-  const monedaSel = ascensoresSeleccionados[0]
-    && precioConfigurado(ascensoresSeleccionados[0], form.id_tipo_servicio)?.moneda;
-  const sumaOk = ascensoresSeleccionados.length > 0;
+  const seleccionOk = ascensoresSeleccionados.length > 0;
+  // Economía prevista del plan: los meses gratuitos NO se cobran, así que el
+  // total del contrato es `monto_mensual × (meses − gratuitos)`.
+  const totalesForm = totalesDelPlan({
+    monto_mensual: form.monto_mensual,
+    duracion_meses: form.duracion_meses,
+    cantidad_mantenimientos_gratuitos: esTipoPreventivo ? form.cantidad_mantenimientos_gratuitos : 0,
+    tipo_plan: form.tipo_plan
+  });
 
-  // Al cambiar el subtipo, el precio de cada ascensor cambia; se limpia la
-  // selección para forzar re-elegir con los precios del nuevo subtipo.
+  // Total de visitas previsto del plan (suma de todos los ascensores). Es una
+  // anticipación para el usuario: el cronograma real lo calcula el backend.
+  const totalVisitasPrevistas = ascensoresSeleccionados.reduce((acc, a) => {
+    const sel = form.ascensores_seleccion[a.id];
+    const fr = frecuencias.find(f => f.codigo === sel?.frecuencia);
+    return acc + (visitasEnMeses(fr, esContinuo ? form.duracion_meses : 1, sel?.frecuencia_dias_custom) || 0);
+  }, 0);
+
+  // Fechas del cronograma marcadas para omitir/reactivar en bloque.
+  const idsVisitasSel = useMemo(
+    () => Object.keys(visitasSel).filter(k => visitasSel[k]).map(Number),
+    [visitasSel]
+  );
+
+  // Al cambiar el subtipo se limpia la selección: el subtipo define de qué
+  // módulo es el plan y con él los ascensores elegibles.
   const cambiarSubtipoPlan = (id_tipo_servicio) =>
     setForm(f => ({ ...f, id_tipo_servicio, ascensores_seleccion: {} }));
 
   // Selecciona/deselecciona un ascensor del plan. Un plan puede cubrir VARIOS
-  // ascensores (varios edificios): cada uno aporta su precio y el periodo factura
-  // la suma de todos. Alterna cada ascensor de forma acumulativa (no radio).
-  const toggleAscensorPlan = (idAsc, cfg) =>
+  // ascensores (incluso de distintos edificios), cada uno con su propia
+  // frecuencia; al marcarlo hereda la frecuencia por defecto del plan.
+  const toggleAscensorPlan = (idAsc) =>
     setForm(f => {
       const sel = { ...f.ascensores_seleccion };
       if (sel[idAsc]) { delete sel[idAsc]; return { ...f, ascensores_seleccion: sel }; }
-      if (!cfg) return f;
-      sel[idAsc] = { monto: Number(cfg.precio).toFixed(2) };
+      sel[idAsc] = { frecuencia: f.frecuencia, frecuencia_dias_custom: f.frecuencia_dias_custom || '' };
       return { ...f, ascensores_seleccion: sel };
     });
 
-  // Alta/edición del precio del ascensor para el subtipo elegido, sin salir del
-  // modal. Persiste en el catálogo del ascensor (tbl_ascensores_precios), que es
-  // donde vive el precio; el backend lo vuelve a leer de ahí al crear el plan.
-  const guardarPrecioAscensor = async (idAscensor, { precio, moneda }) => {
-    const r = await ascensoresService.guardarPrecio(idAscensor, {
-      id_tipo_servicio: form.id_tipo_servicio,
-      precio,
-      moneda
-    });
-    // El backend devuelve el catálogo vigente completo del ascensor: se reemplaza
-    // en el listado local para no recargar todos los ascensores.
-    setAscensores(prev => prev.map(a => (a.id === idAscensor ? { ...a, precios: r.precios } : a)));
-    // Configurarle el precio lo deja ya elegido con el monto vigente, sin un clic
-    // extra. Multi-ascensor: se AÑADE a la selección (merge), no la reemplaza.
-    setForm(f => ({ ...f, ascensores_seleccion: { ...f.ascensores_seleccion, [idAscensor]: { monto: Number(precio).toFixed(2) } } }));
-    toast.success('Precio guardado en el ascensor');
-  };
+  // Cambia la frecuencia (o los días de la personalizada) de UN ascensor.
+  const cambiarFrecuenciaAscensor = (idAsc, parcial) =>
+    setForm(f => ({
+      ...f,
+      ascensores_seleccion: {
+        ...f.ascensores_seleccion,
+        [idAsc]: { ...f.ascensores_seleccion[idAsc], ...parcial }
+      }
+    }));
 
   const abrirNuevo = () => {
     setEditando(null);
@@ -197,9 +212,17 @@ export default function Mantenimientos() {
 
   const abrirEditar = (plan) => {
     setEditando(plan.id);
+    // Los ascensores del plan son inmutables, pero SU FRECUENCIA sí se edita:
+    // se precarga la vigente de cada uno (o la del plan, en planes antiguos).
     const seleccion = {};
     (plan.ascensores || []).forEach(pa => {
-      if (pa.ascensor) seleccion[pa.ascensor.id] = { monto: Number(pa.monto || 0).toFixed(2), manual: true };
+      if (!pa.ascensor) return;
+      seleccion[pa.ascensor.id] = {
+        frecuencia: pa.frecuencia || plan.frecuencia || 'mensual',
+        frecuencia_dias_custom: (pa.frecuencia_dias_custom ?? plan.frecuencia_dias_custom) != null
+          ? String(pa.frecuencia_dias_custom ?? plan.frecuencia_dias_custom)
+          : ''
+      };
     });
     setForm({
       id_cliente: String(plan.id_cliente || ''),
@@ -208,7 +231,8 @@ export default function Mantenimientos() {
       tipo_plan: plan.tipo_plan || 'continuo',
       frecuencia: plan.frecuencia || 'mensual',
       frecuencia_dias_custom: plan.frecuencia_dias_custom != null ? String(plan.frecuencia_dias_custom) : '',
-      cantidad_mantenimientos: plan.cantidad_mantenimientos != null ? String(plan.cantidad_mantenimientos) : '12',
+      duracion_meses: plan.duracion_meses != null ? String(plan.duracion_meses) : '12',
+      monto_mensual: plan.monto_mensual != null ? String(Number(plan.monto_mensual)) : '',
       cantidad_mantenimientos_gratuitos: plan.cantidad_mantenimientos_gratuitos != null ? String(plan.cantidad_mantenimientos_gratuitos) : '0',
       fecha_inicio: toYMDLima(plan.fecha_inicio) || hoyISO(),
       hora_programada: plan.hora_programada || '09:00',
@@ -229,11 +253,10 @@ export default function Mantenimientos() {
     if (guardandoRef.current) return;
     if (!editando) {
       if (!form.id_tipo_servicio) return toast.error('Seleccione el subtipo de servicio');
-      if (ascensoresSeleccionados.length === 0) return toast.error('Seleccione al menos un ascensor con precio configurado');
-      // Moneda homogénea: el periodo se factura en un único cobro/cuota (suma de
-      // todos los ascensores), que tiene una sola moneda.
-      const monedasSel = new Set(ascensoresSeleccionados.map(a => precioConfigurado(a, form.id_tipo_servicio)?.moneda).filter(Boolean));
-      if (monedasSel.size > 1) return toast.error('Todos los ascensores del plan deben usar la misma moneda');
+      if (ascensoresSeleccionados.length === 0) return toast.error('Seleccione al menos un ascensor');
+      if (esContinuo && !(Number(form.duracion_meses) >= 1)) {
+        return toast.error('Indique la duración del plan en meses');
+      }
     }
     guardandoRef.current = true;
     setGuardando(true);
@@ -244,21 +267,34 @@ export default function Mantenimientos() {
         fecha_inicio: form.fecha_inicio,
         hora_programada: form.hora_programada,
         observaciones: form.observaciones,
+        // Monto global mensual: el único importe facturable del plan. Se cobra
+        // igual cada mes sin importar cuántos mantenimientos caigan en él.
+        monto_mensual: Number(form.monto_mensual || 0),
         cantidad_mantenimientos_gratuitos: esTipoPreventivo
           ? Number(form.cantidad_mantenimientos_gratuitos || 0)
           : 0
       };
-      // Cliente/ascensores solo se mandan en creación (inmutables en edición)
+      // Frecuencia de CADA ascensor. En creación viaja junto al ascensor; en
+      // edición va aparte, porque el conjunto de ascensores es inmutable pero
+      // sus frecuencias sí se pueden corregir.
+      const frecuenciasAsc = ascensoresSeleccionados.map(a => {
+        const sel = form.ascensores_seleccion[a.id] || {};
+        const fr = frecuencias.find(f => f.codigo === sel.frecuencia);
+        return {
+          id_ascensor: a.id,
+          frecuencia: sel.frecuencia || form.frecuencia,
+          ...(fr?.unidad === 'custom' ? { frecuencia_dias_custom: Number(sel.frecuencia_dias_custom) } : {})
+        };
+      });
       if (!editando) {
         payload.id_cliente = form.id_cliente;
-        payload.ascensores = ascensoresSeleccionados.map(a => ({
-          id_ascensor: a.id,
-          monto: Number(form.ascensores_seleccion[a.id]?.monto || 0)
-        }));
+        payload.ascensores = frecuenciasAsc;
+      } else {
+        payload.ascensores_frecuencias = frecuenciasAsc;
       }
       if (esContinuo) {
         payload.frecuencia = form.frecuencia;
-        payload.cantidad_mantenimientos = Number(form.cantidad_mantenimientos);
+        payload.duracion_meses = Number(form.duracion_meses);
         if (esFrecuenciaCustom) payload.frecuencia_dias_custom = Number(form.frecuencia_dias_custom);
       }
       if (editando) {
@@ -279,11 +315,43 @@ export default function Mantenimientos() {
     }
   };
 
+  // Frecuencias del plan: cada ascensor tiene la suya, así que la columna
+  // resume las distintas ("Mensual, Trimestral") en vez de una sola.
   const labelFrecuencia = (m) => {
     if (m.tipo_plan === 'eventual') return '—';
-    const fr = frecuencias.find(f => f.codigo === m.frecuencia);
-    return fr ? fr.etiqueta : (m.frecuencia || '');
+    const etiqueta = (cod) => frecuencias.find(f => f.codigo === cod)?.etiqueta || cod;
+    const propias = [...new Set(
+      (m.ascensores || []).map(pa => pa.frecuencia).filter(Boolean)
+    )];
+    if (propias.length > 0) return propias.map(etiqueta).join(', ');
+    return m.frecuencia ? etiqueta(m.frecuencia) : '';
   };
+
+  // Soporte ?plan=ID en la URL: lo usan las notificaciones de un plan de
+  // mantenimiento, que antes solo llevaban al listado y obligaban a buscarlo.
+  // El plan se pide por id (no se busca en la página cargada, que puede no
+  // contenerlo) y se abre su detalle; luego se limpia el parámetro para que
+  // recargar la página no lo reabra.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const planUrlAbiertoRef = useRef(null);
+  useEffect(() => {
+    const idPlan = searchParams.get('plan');
+    if (!idPlan || planUrlAbiertoRef.current === idPlan) return;
+    planUrlAbiertoRef.current = idPlan;
+    mantenimientosService.list({ id: idPlan })
+      .then(lista => {
+        const plan = (Array.isArray(lista) ? lista : [])[0];
+        if (plan) abrirDetallePlan(plan);
+        else toast.error('El plan de la notificación ya no existe');
+      })
+      .catch(() => toast.error('No se pudo abrir el plan'))
+      .finally(() => {
+        const next = new URLSearchParams(searchParams);
+        next.delete('plan');
+        setSearchParams(next, { replace: true });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const abrirDetallePlan = (plan) => {
     setPlanDetalle(plan);
@@ -300,6 +368,12 @@ export default function Mantenimientos() {
       .then(setPeriodos)
       .catch(() => setPeriodos(null))
       .finally(() => setCargandoPeriodos(false));
+    setProgramacion(null);
+    setCargandoProgramacion(true);
+    mantenimientosService.programacion(plan.id)
+      .then(setProgramacion)
+      .catch(() => setProgramacion(null))
+      .finally(() => setCargandoProgramacion(false));
   };
 
   const recargarPeriodos = () => {
@@ -311,32 +385,55 @@ export default function Mantenimientos() {
       .finally(() => setCargandoPeriodos(false));
   };
 
-  // Aprueba un periodo (normal si está completo; forzado con total/equivalente si
-  // faltan mantenimientos). Al aprobar se crea la cuota del periodo en el cobro
-  // del plan y queda lista para facturar.
-  const aprobarPeriodoUI = async (p, { forzar = false, modo } = {}) => {
+  const recargarProgramacion = () => {
+    if (!planDetalle) return;
+    setCargandoProgramacion(true);
+    mantenimientosService.programacion(planDetalle.id)
+      .then(setProgramacion)
+      .catch(() => {})
+      .finally(() => setCargandoProgramacion(false));
+  };
+
+  // Aprueba un MES del plan: crea su cuota por el monto mensual pactado en el
+  // cobro único del plan, lista para emitir UNA factura y recibir UN pago.
+  // Un mes con mantenimientos pendientes requiere aprobación forzada, pero el
+  // importe es el mismo: el monto mensual no varía con lo ejecutado.
+  const aprobarPeriodoUI = async (p, { forzar = false } = {}) => {
     if (aprobandoPeriodo || !planDetalle) return;
     setAprobandoPeriodo(true);
     try {
-      await mantenimientosService.aprobarPeriodo(planDetalle.id, { fecha_ocurrencia: p.fecha, forzar, modo });
-      toast.success('Periodo aprobado y listo para facturar');
+      await mantenimientosService.aprobarPeriodo(planDetalle.id, { numero_mes: p.numero_mes, forzar });
+      toast.success(`${p.etiqueta} aprobado y listo para facturar`);
       setForzando(null);
       recargarPeriodos();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al aprobar el periodo');
+      toast.error(err.response?.data?.error || 'Error al aprobar el mes');
     } finally {
       setAprobandoPeriodo(false);
     }
   };
 
-  const ajustarPeriodoUI = async (p) => {
-    if (!planDetalle) return;
+  // Omite (o reactiva) fechas del cronograma. Omitir no cambia el monto mensual.
+  const cambiarActivoVisitas = async (ids, activo, motivo) => {
+    if (!planDetalle || guardandoProgramacion || ids.length === 0) return;
+    setGuardandoProgramacion(true);
     try {
-      await mantenimientosService.ajustarPeriodo(planDetalle.id, { fecha_ocurrencia: p.fecha });
-      toast.success('Monto del periodo ajustado al total');
+      const r = await mantenimientosService.cambiarActivoProgramacion(planDetalle.id, { ids, activo, motivo });
+      toast.success(
+        activo === 1
+          ? `${r.actualizadas} fecha(s) reactivada(s)`
+          : `${r.actualizadas} fecha(s) omitida(s)${r.servicios_dados_de_baja ? ` · ${r.servicios_dados_de_baja} mantenimiento(s) pendiente(s) dado(s) de baja` : ''}`
+      );
+      setOmitiendo(null);
+      setVisitasSel({});
+      recargarProgramacion();
       recargarPeriodos();
+      recargarInstanciasPlan();
+      recargarInstancias();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al ajustar el periodo');
+      toast.error(err.response?.data?.error || 'Error al actualizar la programación');
+    } finally {
+      setGuardandoProgramacion(false);
     }
   };
 
@@ -344,10 +441,13 @@ export default function Mantenimientos() {
     setPlanDetalle(null);
     setInstanciasPlan([]);
     setEditandoGratuitos(false);
-    setEditandoPrecios(false);
-    setPrecioInstancia(null);
+    setEditandoMonto(false);
     setPeriodos(null);
+    setProgramacion(null);
     setForzando(null);
+    setOmitiendo(null);
+    setVisitasSel({});
+    setMesExpandido(null);
   };
 
   const recargarInstanciasPlan = () => {
@@ -359,93 +459,38 @@ export default function Mantenimientos() {
       .finally(() => setCargandoInstanciasPlan(false));
   };
 
-  // --- Precio del plan (por ascensor y/o global) ---------------------------
+  // --- Monto mensual: el único precio del plan -----------------------------
 
-  const iniciarEdicionPrecios = () => {
-    const filas = planDetalle?.ascensores || [];
-    const map = {};
-    filas.forEach(pa => { if (pa.ascensor) map[pa.ascensor.id] = Number(pa.monto || 0).toFixed(2); });
-    setPreciosForm(map);
-    setPrecioTotalForm(filas.reduce((a, pa) => a + Number(pa.monto || 0), 0).toFixed(2));
-    setModoPrecio('ascensor');
-    setEditandoPrecios(true);
+  const iniciarEdicionMonto = () => {
+    setMontoMensualForm(planDetalle?.monto_mensual != null ? String(Number(planDetalle.monto_mensual)) : '');
+    setEditandoMonto(true);
   };
 
-  const totalPreciosForm = Object.values(preciosForm).reduce((a, v) => a + (Number(v) || 0), 0);
-
-  const guardarPrecios = async () => {
-    if (!planDetalle || guardandoPrecios) return;
-    let payload;
-    if (modoPrecio === 'total') {
-      const total = Number(precioTotalForm);
-      if (!Number.isFinite(total) || total < 0) return toast.error('Precio total inválido');
-      payload = { precio_total: total };
-    } else {
-      const filas = (planDetalle.ascensores || []).filter(pa => pa.ascensor);
-      const items = filas.map(pa => ({ id_ascensor: pa.ascensor.id, monto: Number(preciosForm[pa.ascensor.id]) }));
-      if (items.some(it => !Number.isFinite(it.monto) || it.monto < 0)) {
-        return toast.error('Todos los montos deben ser números mayores o iguales a 0');
-      }
-      payload = { ascensores: items };
-    }
-    setGuardandoPrecios(true);
+  const guardarMontoMensual = async () => {
+    if (!planDetalle || guardandoMonto) return;
+    const monto = Number(montoMensualForm);
+    if (!Number.isFinite(monto) || monto < 0) return toast.error('El monto mensual debe ser un número mayor o igual a 0');
+    setGuardandoMonto(true);
     try {
-      const r = await mantenimientosService.actualizarPrecios(planDetalle.id, payload);
-      // Refresca el desglose en el detalle abierto sin recargar todo el modal.
-      const porAscensor = new Map((r.ascensores || []).map(a => [a.id_ascensor, a.monto]));
-      setPlanDetalle(p => p ? {
-        ...p,
-        ascensores: (p.ascensores || []).map(pa => porAscensor.has(pa.id_ascensor)
-          ? { ...pa, monto: porAscensor.get(pa.id_ascensor) }
-          : pa)
-      } : p);
-      setEditandoPrecios(false);
+      const r = await mantenimientosService.actualizarMontoMensual(planDetalle.id, { monto_mensual: monto });
+      setPlanDetalle(p => (p ? { ...p, monto_mensual: r.monto_mensual, moneda: r.moneda } : p));
+      setEditandoMonto(false);
       toast.success(
-        r.servicios_actualizados > 0
-          ? `Precios actualizados (${r.servicios_actualizados} mantenimiento(s) pendiente(s) al nuevo precio)`
-          : 'Precios actualizados'
+        r.cuotas_ajustadas > 0
+          ? `Monto mensual actualizado (${r.cuotas_ajustadas} mes(es) pendiente(s) al nuevo importe)`
+          : 'Monto mensual actualizado'
       );
-      if (r.periodos_bloqueados > 0) {
-        toast.info(`${r.periodos_bloqueados} periodo(s) ya aprobado(s) conservan su monto facturado`);
+      if (r.cuotas_bloqueadas > 0) {
+        toast.info(`${r.cuotas_bloqueadas} mes(es) ya facturado(s) conservan su importe`);
       }
       recargarPeriodos();
-      recargarInstanciasPlan();
       cargar();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al actualizar los precios');
+      toast.error(err.response?.data?.error || 'Error al actualizar el monto mensual');
     } finally {
-      setGuardandoPrecios(false);
+      setGuardandoMonto(false);
     }
   };
-
-  // --- Precio de una ocurrencia concreta ----------------------------------
-
-  const abrirPrecioInstancia = (it) => {
-    setPrecioInstancia(it);
-    setMontoInstancia(Number(it.precio_interno || 0).toFixed(2));
-  };
-
-  const guardarPrecioInstancia = async () => {
-    if (!precioInstancia || guardandoPrecioInst) return;
-    const monto = Number(montoInstancia);
-    if (!Number.isFinite(monto) || monto < 0) return toast.error('Monto inválido');
-    setGuardandoPrecioInst(true);
-    try {
-      await mantenimientosService.actualizarPrecioServicio(precioInstancia.id_servicio, { monto });
-      toast.success('Precio del mantenimiento actualizado');
-      setPrecioInstancia(null);
-      recargarInstanciasPlan();
-      recargarPeriodos();
-      // La pestaña de instancias mantiene su propia página cargada aunque no
-      // esté visible, así que se refresca siempre para no dejarla desfasada.
-      recargarInstancias();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al actualizar el precio');
-    } finally {
-      setGuardandoPrecioInst(false);
-    }
-  };
-
   const iniciarEdicionGratuitos = () => {
     setNuevoCupoGratuitos(String(planDetalle?.cantidad_mantenimientos_gratuitos ?? 0));
     setEditandoGratuitos(true);
@@ -455,7 +500,7 @@ export default function Mantenimientos() {
     if (!planDetalle || guardandoGratuitos) return;
     const valor = Number(nuevoCupoGratuitos);
     const ejecutados = Number(planDetalle.mantenimientos_gratuitos_ejecutados || 0);
-    const cantTotal = Number(planDetalle.cantidad_mantenimientos || 1);
+    const cantTotal = Number(planDetalle.duracion_meses || 1);
     if (!Number.isInteger(valor) || valor < 0) {
       return toast.error('Debe ser un entero mayor o igual a 0');
     }
@@ -690,7 +735,7 @@ export default function Mantenimientos() {
                           ) : <span className="text-slate-400">no creado</span>}
                         </td>
                         <td className="table-td text-xs">{it.tecnicos || '—'}</td>
-                        <td className="table-td text-xs">{formatFecha(it.fecha_programada)}</td>
+                        <td className="table-td text-xs" title={etiquetaProgramacion(it).detalle}>{etiquetaProgramacion(it).texto}</td>
                         <td className="table-td text-xs">{formatFechaHora(it.fecha_inicio_real)}</td>
                         <td className="table-td text-xs">{formatFechaHora(it.fecha_fin_real)}</td>
                         <td className="table-td text-xs text-center font-mono">{formatDiasEjecucion(it.dias_ejecucion)}</td>
@@ -731,7 +776,10 @@ export default function Mantenimientos() {
               <table className="table-base">
                 <thead><tr>
                   <th className="table-th">Edificio-Obra / Ascensor</th><th className="table-th">Tipo</th>
-                  <th className="table-th">Frecuencia</th><th className="table-th">Próx. fecha</th>
+                  <th className="table-th">Frecuencia</th>
+                  <th className="table-th text-center">Meses</th>
+                  {puedeVerPrecio && <th className="table-th text-right">Monto mensual</th>}
+                  <th className="table-th">Inicio</th>
                   <th className="table-th text-center">Gratis</th>
                   <th className="table-th text-center">Ejecutados</th>
                   <th className="table-th">Estado</th>
@@ -750,7 +798,15 @@ export default function Mantenimientos() {
                       <tr key={m.id} className="table-row-hover">
                         <td className="table-td text-xs"><div>{resumenAsc.edificio}</div><div className="font-mono text-slate-500">{codigosAsc.length ? codigosAsc.join(', ') : '—'}</div></td>
                         <td className="table-td text-xs">{m.tipo_servicio?.nombre}</td>
-                        <td className="table-td text-xs">{labelFrecuencia(m)} ({m.tipo_plan})</td>
+                        <td className="table-td text-xs">{labelFrecuencia(m)} <span className="text-slate-400">({m.tipo_plan})</span></td>
+                        <td className="table-td text-xs text-center font-mono">
+                          {m.tipo_plan === 'eventual' ? '—' : (m.duracion_meses ?? '—')}
+                        </td>
+                        {puedeVerPrecio && (
+                          <td className="table-td text-xs text-right font-mono">
+                            {formatMonto(m.monto_mensual, m.moneda)}
+                          </td>
+                        )}
                         <td className="table-td text-xs">{formatFecha(m.fecha_inicio)} {m.hora_programada || ''}</td>
                         <td className="table-td text-xs text-center">{aplicaGratuitos ? m.cantidad_mantenimientos_gratuitos : '—'}</td>
                         <td className="table-td text-xs text-center font-mono">
@@ -801,91 +857,80 @@ export default function Mantenimientos() {
                   <div className="text-slate-800">{nombreCliente(planDetalle.cliente) || '—'}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-2">
-                    Ascensores
-                    {puedeVerPrecio && puedeEditarPlan && !editandoPrecios && (planDetalle.ascensores || []).length > 0 && (
-                      <button type="button" onClick={iniciarEdicionPrecios}
-                        className="text-[10px] text-brand-700 hover:underline normal-case tracking-normal">
-                        Editar precios
-                      </button>
-                    )}
-                  </div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Ascensores y frecuencia</div>
                   {(planDetalle.ascensores || []).length === 0 ? (
                     <div className="text-slate-800">—</div>
-                  ) : editandoPrecios ? (
-                    <div className="mt-1 space-y-2">
-                      <div className="flex gap-3 text-[11px]">
-                        <label className="inline-flex items-center gap-1 cursor-pointer">
-                          <input type="radio" name="modo-precio-plan" checked={modoPrecio === 'ascensor'}
-                            onChange={() => setModoPrecio('ascensor')} disabled={guardandoPrecios} />
-                          Por ascensor
-                        </label>
-                        <label className="inline-flex items-center gap-1 cursor-pointer">
-                          <input type="radio" name="modo-precio-plan" checked={modoPrecio === 'total'}
-                            onChange={() => setModoPrecio('total')} disabled={guardandoPrecios} />
-                          Total global
-                        </label>
-                      </div>
-                      {modoPrecio === 'ascensor' ? (
-                        <>
-                          <ul className="space-y-1">
-                            {planDetalle.ascensores.filter(pa => pa.ascensor).map(pa => (
-                              <li key={pa.id} className="flex items-center justify-between gap-2">
-                                <span className="font-mono text-xs">{pa.ascensor.codigo}</span>
-                                <input type="number" min="0" step="0.01"
-                                  className="input w-28 text-right font-mono !py-1"
-                                  value={preciosForm[pa.ascensor.id] ?? ''}
-                                  disabled={guardandoPrecios}
-                                  onChange={e => setPreciosForm(f => ({ ...f, [pa.ascensor.id]: e.target.value }))} />
-                              </li>
-                            ))}
-                          </ul>
-                          <div className="flex items-center justify-between text-xs border-t border-slate-100 pt-1">
-                            <span className="text-slate-500">Total por periodo</span>
-                            <strong className="font-mono">{formatMonto(totalPreciosForm, planDetalle.ascensores[0]?.moneda)}</strong>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs text-slate-600">Total por periodo</span>
-                            <input type="number" min="0" step="0.01"
-                              className="input w-32 text-right font-mono !py-1"
-                              value={precioTotalForm}
-                              disabled={guardandoPrecios}
-                              onChange={e => setPrecioTotalForm(e.target.value)} />
-                          </div>
-                          <p className="text-[10px] text-slate-500">
-                            Se reparte entre los {planDetalle.ascensores.length} ascensores respetando la proporción de sus montos actuales.
-                          </p>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2 pt-1">
-                        <button type="button" onClick={guardarPrecios} disabled={guardandoPrecios}
-                          className="btn-primary text-xs !py-1 !px-2">
-                          {guardandoPrecios ? 'Guardando…' : 'Guardar'}
-                        </button>
-                        <button type="button" onClick={() => setEditandoPrecios(false)} disabled={guardandoPrecios}
-                          className="btn-secondary text-xs !py-1 !px-2">Cancelar</button>
-                      </div>
-                      <p className="text-[10px] text-slate-500">
-                        Aplica a las próximas ocurrencias y a los mantenimientos pendientes cuyo periodo aún no se aprobó para facturar.
-                      </p>
-                    </div>
                   ) : (
                     <ul className="text-slate-800 space-y-0.5">
-                      {planDetalle.ascensores.map(pa => (
-                        <li key={pa.id} className="flex items-center justify-between gap-3">
-                          <span className="font-mono">
-                            {pa.ascensor?.codigo}
-                            {pa.ascensor?.ubicacion && <span className="text-slate-500 font-sans"> · {pa.ascensor.ubicacion}</span>}
-                          </span>
-                          {puedeVerPrecio && <span className="font-mono text-slate-600">{formatMonto(pa.monto, pa.moneda)}</span>}
-                        </li>
-                      ))}
+                      {planDetalle.ascensores.map(pa => {
+                        const codFrec = pa.frecuencia || planDetalle.frecuencia;
+                        const etq = frecuencias.find(f => f.codigo === codFrec)?.etiqueta || codFrec || '—';
+                        const dias = pa.frecuencia_dias_custom ?? planDetalle.frecuencia_dias_custom;
+                        return (
+                          <li key={pa.id} className="flex items-center justify-between gap-3">
+                            <span className="font-mono">
+                              {pa.ascensor?.codigo}
+                              {pa.ascensor?.ubicacion && <span className="text-slate-500 font-sans"> · {pa.ascensor.ubicacion}</span>}
+                            </span>
+                            <span className="text-xs text-slate-600 shrink-0">
+                              {etq}{codFrec === 'custom' && dias ? ` (${dias} d)` : ''}
+                            </span>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
+                {puedeVerPrecio && (
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-2">
+                      Monto mensual
+                      {puedeEditarPlan && !editandoMonto && (
+                        <button type="button" onClick={iniciarEdicionMonto}
+                          className="text-[10px] text-brand-700 hover:underline normal-case tracking-normal">
+                          Editar
+                        </button>
+                      )}
+                    </div>
+                    {editandoMonto ? (
+                      <div className="mt-1 space-y-2">
+                        <input type="number" min="0" step="0.01"
+                          className="input w-36 text-right font-mono !py-1"
+                          value={montoMensualForm}
+                          disabled={guardandoMonto}
+                          onChange={e => setMontoMensualForm(e.target.value)} />
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={guardarMontoMensual} disabled={guardandoMonto}
+                            className="btn-primary text-xs !py-1 !px-2">
+                            {guardandoMonto ? 'Guardando…' : 'Guardar'}
+                          </button>
+                          <button type="button" onClick={() => setEditandoMonto(false)} disabled={guardandoMonto}
+                            className="btn-secondary text-xs !py-1 !px-2">Cancelar</button>
+                        </div>
+                        <p className="text-[10px] text-slate-500">
+                          Rige para los meses aún no facturados. Los meses ya facturados o con pagos conservan su importe.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="text-slate-800 font-mono text-base">
+                          {formatMonto(planDetalle.monto_mensual, planDetalle.moneda)}<span className="text-xs text-slate-500 font-sans"> / mes</span>
+                        </div>
+                        {planDetalle.tipo_plan === 'continuo' && planDetalle.duracion_meses > 0 && (() => {
+                          const tp = totalesDelPlan(planDetalle);
+                          return (
+                            <div className="text-[11px] text-slate-500">
+                              Total del plan: {formatMonto(tp.total, planDetalle.moneda)}
+                              {tp.meses_gratuitos > 0
+                                ? ` (${tp.meses_facturables} de ${tp.meses} meses · ${tp.meses_gratuitos} gratuito(s))`
+                                : ` (${tp.meses} meses)`}
+                            </div>
+                          );
+                        })()}
+                      </>
+                    )}
+                  </div>
+                )}
                 <div>
                   <div className="text-xs uppercase tracking-wide text-slate-500">Tipo de servicio</div>
                   <div className="text-slate-800">
@@ -902,11 +947,11 @@ export default function Mantenimientos() {
                   <div className="text-slate-800 capitalize">{planDetalle.tipo_plan}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-500">Frecuencia</div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Duración</div>
                   <div className="text-slate-800">
-                    {labelFrecuencia(planDetalle)}
-                    {planDetalle.frecuencia === 'custom' && planDetalle.frecuencia_dias_custom &&
-                      <span className="text-slate-500"> ({planDetalle.frecuencia_dias_custom} días)</span>}
+                    {planDetalle.tipo_plan === 'eventual'
+                      ? 'Eventual (una vez)'
+                      : `${planDetalle.duracion_meses ?? '—'} mes(es)`}
                   </div>
                 </div>
                 <div>
@@ -914,13 +959,20 @@ export default function Mantenimientos() {
                   <div className="text-slate-800">{formatFecha(planDetalle.fecha_inicio)} {planDetalle.hora_programada || ''}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-500">Cantidad de mantenimientos</div>
-                  <div className="text-slate-800 font-mono">{planDetalle.cantidad_mantenimientos ?? '—'}</div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Mantenimientos programados</div>
+                  <div className="text-slate-800 font-mono">
+                    {programacion ? `${programacion.total_activas} de ${programacion.total_visitas}` : (planDetalle.cantidad_mantenimientos ?? '—')}
+                    {programacion && programacion.total_visitas > programacion.total_activas && (
+                      <span className="text-xs text-amber-700 font-sans ml-1">
+                        ({programacion.total_visitas - programacion.total_activas} omitido(s))
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {!!planDetalle.tipo_servicio?.es_preventivo && (
                   <div>
                     <div className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-2">
-                      Mantenimientos gratuitos
+                      Meses gratuitos
                       {puedeEditarPlan && !editandoGratuitos && (
                         <button type="button" onClick={iniciarEdicionGratuitos}
                           className="text-[10px] text-brand-700 hover:underline normal-case tracking-normal">
@@ -931,7 +983,7 @@ export default function Mantenimientos() {
                     {editandoGratuitos ? (
                       <div className="mt-1 flex items-center gap-2">
                         <input type="number" min="0"
-                          max={planDetalle.tipo_plan === 'eventual' ? 1 : (planDetalle.cantidad_mantenimientos || 1)}
+                          max={planDetalle.tipo_plan === 'eventual' ? 1 : (planDetalle.duracion_meses || 1)}
                           step="1"
                           className="input w-24 text-center font-mono"
                           value={nuevoCupoGratuitos}
@@ -953,7 +1005,7 @@ export default function Mantenimientos() {
                     )}
                     {puedeEditarPlan && !editandoGratuitos && (
                       <p className="text-[10px] text-slate-500 mt-1">
-                        Aumentar el cupo marca como gratuitos a los próximos mantenimientos registrados.
+                        El cupo cuenta MESES del plan: los primeros N meses no generan cobro.
                       </p>
                     )}
                   </div>
@@ -966,53 +1018,147 @@ export default function Mantenimientos() {
                 )}
               </div>
 
+              {/* CRONOGRAMA. La vista por defecto agrupa por DÍA, no por
+                  ascensor: lo que decide la operación es a cuántos ascensores
+                  se atiende en una misma salida. Ver components/mantenimientos/
+                  CronogramaPlan.jsx. */}
+              <div className="border-t border-slate-100 pt-4">
+                <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                  <h4 className="font-medium text-slate-800">Programación</h4>
+                  {puedeCrear && idsVisitasSel.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-carbon-500">
+                        {idsVisitasSel.length} fecha(s) seleccionada(s)
+                      </span>
+                      <button type="button" disabled={guardandoProgramacion}
+                        onClick={() => setOmitiendo({ ids: idsVisitasSel, motivo: '' })}
+                        className="btn-secondary text-xs !py-1 !px-2">
+                        Omitir
+                      </button>
+                      <button type="button" disabled={guardandoProgramacion}
+                        onClick={() => cambiarActivoVisitas(idsVisitasSel, 1)}
+                        className="btn-secondary text-xs !py-1 !px-2">
+                        Reactivar
+                      </button>
+                      <button type="button" onClick={() => setVisitasSel({})}
+                        className="text-[11px] text-carbon-500 hover:text-carbon-700 hover:underline">
+                        Limpiar
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {cargandoProgramacion ? <Loader /> : (
+                  <CronogramaPlan
+                    programacion={programacion}
+                    seleccion={visitasSel}
+                    puedeEditar={puedeCrear}
+                    onToggle={(id) => setVisitasSel(sel => {
+                      const n = { ...sel };
+                      if (n[id]) delete n[id]; else n[id] = true;
+                      return n;
+                    })}
+                    onToggleVarias={(ids) => setVisitasSel(sel => {
+                      const n = { ...sel };
+                      const todas = ids.every(id => n[id]);
+                      ids.forEach(id => { if (todas) delete n[id]; else n[id] = true; });
+                      return n;
+                    })}
+                  />
+                )}
+              </div>
+
+
               {puedeVerPrecio && (
                 <div className="border-t border-slate-100 pt-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-medium text-slate-800">Periodos / Facturación</h4>
-                    <span className="text-[11px] text-slate-500 text-right">Una factura y un pago por el total de todos los ascensores de cada periodo.</span>
+                    <h4 className="font-medium text-slate-800">Facturación mensual</h4>
+                    <span className="text-[11px] text-slate-500 text-right">Un solo cobro y una sola factura por mes, con el detalle de todos los mantenimientos de ese mes.</span>
                   </div>
-                  {cargandoPeriodos ? <Loader /> : !periodos || (periodos.periodos || []).length === 0 ? (
-                    <p className="text-xs text-slate-500">Sin periodos aún.</p>
+                  {cargandoPeriodos ? <Loader /> : !periodos || (periodos.meses || []).length === 0 ? (
+                    <p className="text-xs text-slate-500">Sin meses aún.</p>
                   ) : !periodos.id_cobro ? (
-                    <p className="text-xs text-amber-600">Este plan usa el modelo anterior (cobro por servicio); no admite facturación por periodo.</p>
+                    <p className="text-xs text-amber-600">Este plan no tiene un cobro asociado; no admite facturación mensual.</p>
                   ) : (
                     <div className="overflow-x-auto scroll-thin">
                       <table className="table-base">
                         <thead><tr>
-                          <th className="table-th">#</th>
-                          <th className="table-th">Fecha</th>
+                          <th className="table-th">Mes</th>
+                          <th className="table-th">Periodo</th>
                           <th className="table-th text-center">Realizados</th>
-                          <th className="table-th text-right">Total</th>
+                          <th className="table-th text-right">Monto</th>
                           <th className="table-th">Estado</th>
                           <th className="table-th text-right">Acciones</th>
                         </tr></thead>
                         <tbody className="divide-y divide-slate-100">
-                          {periodos.periodos.map(p => (
-                            <tr key={p.ordinal} className="table-row-hover">
-                              <td className="table-td font-mono">{p.ordinal}</td>
-                              <td className="table-td">{formatFecha(p.fecha)}</td>
-                              <td className="table-td text-center font-mono">{p.done}/{p.total_servicios}</td>
-                              <td className="table-td text-right font-mono">
-                                {p.es_gratuito ? <span className="badge-green">Gratuito</span> : formatMonto(p.total_monto, p.moneda)}
-                              </td>
-                              <td className="table-td"><span className={badgeEstado(p.estado_periodo)}>{p.estado_periodo}</span></td>
-                              <td className="table-td text-right whitespace-nowrap">
-                                {puedeEditarPlan && !p.cuota && p.completo && (
-                                  <button type="button" onClick={() => aprobarPeriodoUI(p)} disabled={aprobandoPeriodo}
-                                    className="btn-primary text-xs !py-1 !px-2">Aprobar y facturar</button>
-                                )}
-                                {puedeEditarPlan && !p.cuota && !p.completo && (
-                                  <button type="button" onClick={() => { setForzando(p); setModoForzar('total'); }}
-                                    className="btn-secondary text-xs !py-1 !px-2">Forzar cierre</button>
-                                )}
-                                {puedeEditarPlan && p.cuota && p.estado_periodo === 'aprobado' && !p.es_gratuito && p.cuota.monto < p.total_monto && (
-                                  <button type="button" onClick={() => ajustarPeriodoUI(p)}
-                                    className="btn-secondary text-xs !py-1 !px-2">Ajustar al total</button>
-                                )}
-                                {p.cuota && <span className="text-[11px] text-slate-400 ml-1">cuota #{p.cuota.numero_cuota}</span>}
-                              </td>
-                            </tr>
+                          {periodos.meses.map(p => (
+                            <Fragment key={p.numero_mes}>
+                              <tr className="table-row-hover">
+                                <td className="table-td">
+                                  <button type="button" onClick={() => setMesExpandido(m => (m === p.numero_mes ? null : p.numero_mes))}
+                                    className="text-brand-700 hover:underline text-xs">
+                                    {mesExpandido === p.numero_mes ? '▾' : '▸'} {p.etiqueta}
+                                  </button>
+                                </td>
+                                <td className="table-td text-xs text-slate-500">{formatFecha(p.desde)} → {formatFecha(p.hasta)}</td>
+                                <td className="table-td text-center font-mono">
+                                  {p.realizadas}/{p.total_visitas}
+                                  {p.omitidas > 0 && <span className="text-[10px] text-amber-700 ml-1">+{p.omitidas} om.</span>}
+                                </td>
+                                <td className="table-td text-right font-mono">
+                                  {p.es_gratuito ? <span className="badge-green">Gratuito</span> : formatMonto(p.monto, p.moneda)}
+                                </td>
+                                <td className="table-td"><span className={badgeEstado(p.estado_periodo)}>{p.estado_periodo}</span></td>
+                                <td className="table-td text-right whitespace-nowrap">
+                                  {/* Un mes gratuito se registra pero no se factura: su cuota
+                                      nace en 0 y saldada, y no entra a Gestión de cobros. */}
+                                  {puedeEditarPlan && !p.cuota && p.completo && (
+                                    <button type="button" onClick={() => aprobarPeriodoUI(p)} disabled={aprobandoPeriodo}
+                                      className="btn-primary text-xs !py-1 !px-2">
+                                      {p.es_gratuito ? 'Registrar mes' : 'Aprobar y facturar'}
+                                    </button>
+                                  )}
+                                  {puedeEditarPlan && !p.cuota && !p.completo && (
+                                    <button type="button" onClick={() => setForzando(p)}
+                                      className="btn-secondary text-xs !py-1 !px-2">Aprobar igual</button>
+                                  )}
+                                  {p.cuota && <span className="text-[11px] text-slate-400 ml-1">cuota #{p.cuota.numero_cuota}</span>}
+                                </td>
+                              </tr>
+                              {mesExpandido === p.numero_mes && (
+                                <tr className="bg-slate-50/70">
+                                  <td className="table-td" colSpan={6}>
+                                    {p.detalle.length === 0 ? (
+                                      <p className="text-xs text-slate-500">Sin mantenimientos programados este mes.</p>
+                                    ) : (
+                                      <div className="text-xs space-y-1">
+                                        <div className="text-slate-500 uppercase tracking-wide text-[10px]">
+                                          {p.es_gratuito
+                                            ? `Mes gratuito · ${p.total_visitas} mantenimiento(s) · no genera cobro`
+                                            : `Detalle del cobro · ${p.total_visitas} mantenimiento(s) · importe fijo ${formatMonto(p.monto, p.moneda)}`}
+                                        </div>
+                                        <ul className="space-y-0.5">
+                                          {p.detalle.map(d => (
+                                            <li key={d.id_ascensor} className="flex items-start justify-between gap-3">
+                                              <span className="font-mono text-slate-800">
+                                                {d.codigo} <span className="text-slate-500 font-sans">× {d.visitas}</span>
+                                                {d.edificio && <span className="text-slate-400 font-sans"> · {d.edificio}</span>}
+                                              </span>
+                                              <span className="text-slate-600 text-right">
+                                                {d.fechas.map(x => (
+                                                  <span key={x.id_programacion} className={x.realizada ? 'text-emerald-700' : ''}>
+                                                    {formatFecha(x.fecha)}{x.codigo_servicio ? ` (${x.codigo_servicio})` : ''}{' '}
+                                                  </span>
+                                                ))}
+                                              </span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
                           ))}
                         </tbody>
                       </table>
@@ -1043,7 +1189,6 @@ export default function Mantenimientos() {
                         <th className="table-th">Inicio</th>
                         <th className="table-th">Término</th>
                         <th className="table-th text-center">Días</th>
-                        {puedeVerPrecio && <th className="table-th text-right">Precio</th>}
                         <th className="table-th">Estado</th>
                         <th className="table-th text-right">Acciones</th>
                       </tr></thead>
@@ -1060,28 +1205,11 @@ export default function Mantenimientos() {
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_inicio_real)}</td>
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_fin_real)}</td>
                             <td className="table-td text-xs text-center font-mono">{formatDiasEjecucion(it.dias_ejecucion)}</td>
-                            {puedeVerPrecio && (
-                              <td className="table-td text-xs text-right font-mono">
-                                {it.es_mantenimiento_gratuito
-                                  ? <span className="text-slate-400">—</span>
-                                  : (it.id_servicio ? formatMonto(it.precio_interno, it.moneda) : <span className="text-slate-400">—</span>)}
-                              </td>
-                            )}
                             <td className="table-td"><span className={badgeEstado(it.estado_ejecucion)}>{it.estado_ejecucion}</span></td>
                             <td className="table-td text-right whitespace-nowrap">
                               {it.id_servicio ? (
                                 <>
                                   <Link to={`/servicios/${it.id_servicio}`} className="text-brand-700 text-xs hover:underline">Ver</Link>
-                                  {/* El precio de una ocurrencia se corrige aquí: el módulo Proyectos
-                                      no aplica a los mantenimientos de un plan. El backend rechaza el
-                                      cambio si ya salió a campo o si su periodo fue aprobado. */}
-                                  {puedeVerPrecio && puedeEditarPlan && !it.es_mantenimiento_gratuito && it.estado_ejecucion === 'Pendiente' && (
-                                    <>
-                                      <span className="text-slate-300 mx-1.5">·</span>
-                                      <button type="button" onClick={() => abrirPrecioInstancia(it)}
-                                        className="text-brand-700 text-xs hover:underline">Precio</button>
-                                    </>
-                                  )}
                                 </>
                               ) : <span className="text-slate-400 text-xs">—</span>}
                             </td>
@@ -1097,63 +1225,65 @@ export default function Mantenimientos() {
         })()}
       </Modal>
 
-      <Modal open={!!precioInstancia} onClose={() => setPrecioInstancia(null)} title="Precio del mantenimiento" size="sm"
-        footer={<>
-          <button type="button" className="btn-secondary" onClick={() => setPrecioInstancia(null)} disabled={guardandoPrecioInst}>Cancelar</button>
-          <button type="button" className="btn-primary" onClick={guardarPrecioInstancia} disabled={guardandoPrecioInst}>
-            {guardandoPrecioInst ? 'Guardando…' : 'Guardar'}
-          </button>
-        </>}>
-        {precioInstancia && (
-          <div className="space-y-3 text-sm">
-            <div className="text-xs text-slate-600">
-              <div><span className="font-mono">{precioInstancia.codigo_servicio}</span> · {precioInstancia.ascensor_codigo}</div>
-              <div>Programado: {formatFecha(precioInstancia.fecha_programada)}</div>
+      {/* Omitir fechas del cronograma. El monto mensual NO cambia: es lo pactado. */}
+      <Modal open={!!omitiendo} onClose={() => setOmitiendo(null)} title="Omitir fechas del plan" size="md">
+        {omitiendo && (
+          <div className="space-y-4 text-sm">
+            <p className="text-slate-700">
+              Se van a omitir <strong>{omitiendo.ids.length} fecha(s)</strong> del cronograma. Dejarán de programarse y no aparecerán
+              en el detalle de su mes.
+            </p>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs p-3">
+              El <strong>monto mensual no cambia</strong>: el mes se sigue cobrando por el importe pactado aunque se realicen menos mantenimientos.
+              Si alguna fecha ya tiene un mantenimiento pendiente creado, se dará de baja; las que ya salieron a campo no se pueden omitir.
             </div>
             <div>
-              <label className="label">Precio de esta ocurrencia</label>
-              <input type="number" min="0" step="0.01" className="input text-right font-mono"
-                value={montoInstancia} disabled={guardandoPrecioInst}
-                onChange={e => setMontoInstancia(e.target.value)} />
+              <label className="label">Motivo (opcional)</label>
+              <input className="input" value={omitiendo.motivo} disabled={guardandoProgramacion}
+                placeholder="Ej.: acordado con el cliente"
+                onChange={e => setOmitiendo(o => ({ ...o, motivo: e.target.value }))} />
             </div>
-            <p className="text-[11px] text-slate-500">
-              Solo afecta a este mantenimiento: el precio pactado del plan y el resto de ocurrencias no cambian.
-              El total del periodo se recalcula con este monto.
-            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setOmitiendo(null)} disabled={guardandoProgramacion}>Cancelar</button>
+              <button type="button" className="btn-primary" disabled={guardandoProgramacion}
+                onClick={() => cambiarActivoVisitas(omitiendo.ids, 0, omitiendo.motivo)}>
+                {guardandoProgramacion ? 'Omitiendo…' : 'Omitir fechas'}
+              </button>
+            </div>
           </div>
         )}
       </Modal>
 
-      <Modal open={!!forzando} onClose={() => setForzando(null)} title="Forzar cierre del periodo" size="md">
+      <Modal open={!!forzando} onClose={() => setForzando(null)} title="Aprobar el mes con mantenimientos pendientes" size="md">
         {forzando && (
           <div className="space-y-4 text-sm">
             <p className="text-slate-700">
-              El periodo <strong>#{forzando.ordinal}</strong> ({formatFecha(forzando.fecha)}) tiene{' '}
-              <strong>{forzando.done} de {forzando.total_servicios}</strong> mantenimientos realizados. Elija por cuánto facturarlo:
+              <strong>{forzando.etiqueta}</strong> tiene{' '}
+              <strong>{forzando.realizadas} de {forzando.total_visitas}</strong> mantenimientos realizados.
             </p>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="modo-forzar" checked={modoForzar === 'total'} onChange={() => setModoForzar('total')} />
-                <span>Total del periodo — <strong className="font-mono">{formatMonto(forzando.total_monto, forzando.moneda)}</strong></span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="modo-forzar" checked={modoForzar === 'equivalente'} onChange={() => setModoForzar('equivalente')} />
-                <span>
-                  Equivalente proporcional ({forzando.done}/{forzando.total_servicios}) —{' '}
-                  <strong className="font-mono">
-                    {formatMonto(forzando.total_servicios > 0 ? Math.round(forzando.total_monto * forzando.done / forzando.total_servicios * 100) / 100 : 0, forzando.moneda)}
-                  </strong>
-                </span>
-              </label>
+            <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Importe del mes</span>
+                <strong className="font-mono text-slate-900">
+                  {forzando.es_gratuito ? 'Gratuito' : formatMonto(forzando.monto, forzando.moneda)}
+                </strong>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {forzando.es_gratuito
+                  ? 'Es un mes gratuito del plan: queda registrado en 0 y no pasa a cobro.'
+                  : 'El monto mensual es fijo: no se prorratea por los mantenimientos pendientes.'}
+              </p>
             </div>
             <p className="text-[11px] text-slate-500">
-              Se genera una sola cuota por este periodo; un único pago continúa el flujo. Si luego se completa el mantenimiento faltante podrás ajustar el monto al total.
+              {forzando.es_gratuito
+                ? 'No se emite factura ni se abre gestión de cobros para este mes.'
+                : 'Se genera una sola cuota por este mes; una factura y un pago continúan el flujo.'}
             </p>
             <div className="flex justify-end gap-2">
               <button type="button" className="btn-secondary" onClick={() => setForzando(null)}>Cancelar</button>
               <button type="button" className="btn-primary" disabled={aprobandoPeriodo}
-                onClick={() => aprobarPeriodoUI(forzando, { forzar: true, modo: modoForzar })}>
-                {aprobandoPeriodo ? 'Aprobando…' : 'Aprobar forzado'}
+                onClick={() => aprobarPeriodoUI(forzando, { forzar: true })}>
+                {aprobandoPeriodo ? 'Aprobando…' : 'Aprobar el mes'}
               </button>
             </div>
           </div>
@@ -1164,7 +1294,7 @@ export default function Mantenimientos() {
         footer={
           <>
             <button type="button" className="btn-secondary" onClick={cerrarModal} disabled={guardando}>Cancelar</button>
-            <button type="submit" form={FORM_ID} className="btn-primary" disabled={guardando || (!editando && !sumaOk)}>
+            <button type="submit" form={FORM_ID} className="btn-primary" disabled={guardando || (!editando && !seleccionOk)}>
               {guardando
                 ? (editando ? 'Guardando…' : 'Creando…')
                 : (editando ? 'Guardar cambios' : 'Crear')}
@@ -1193,23 +1323,43 @@ export default function Mantenimientos() {
             <select className="select" required value={form.id_tipo_servicio} onChange={e => cambiarSubtipoPlan(e.target.value)} disabled={!!editando}><option value="">—</option>{tiposF.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Ascensores *</label>
-            <p className="text-[11px] text-slate-500 -mt-1 mb-1.5">Un plan puede cubrir varios ascensores (incluso de distintos edificios). Cada periodo se factura por la suma de todos, en una sola factura y un solo pago. Todos deben usar la misma moneda.</p>
-            <AscensoresChecklist
+            <label className="label">Ascensores y su frecuencia *</label>
+            <p className="text-[11px] text-slate-500 -mt-1 mb-1.5">
+              Un plan puede cubrir varios ascensores (incluso de distintos edificios) y <strong>cada uno puede tener su propia frecuencia</strong>. El cobro es único por mes, por el monto mensual pactado, con el detalle de todos los mantenimientos de ese mes.
+            </p>
+            <AscensoresFrecuenciaChecklist
               ascensores={ascensoresF}
               seleccion={form.ascensores_seleccion}
-              idTipoServicio={form.id_tipo_servicio}
+              frecuencias={frecuencias}
+              duracionMeses={esContinuo ? form.duracion_meses : 1}
               onToggle={toggleAscensorPlan}
-              disabled={!!editando}
-              single={false}
+              onCambiarFrecuencia={cambiarFrecuenciaAscensor}
+              soloFrecuencia={!!editando}
               hayCliente={!!form.id_cliente}
-              onGuardarPrecio={puedeCrear && puedeVerPrecio ? guardarPrecioAscensor : undefined}
             />
-            {puedeVerPrecio && ascensoresSeleccionados.length > 0 && (
+            {ascensoresSeleccionados.length > 0 && (
               <div className="mt-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-sm flex flex-wrap items-center gap-3">
-                <span className="text-slate-600">{ascensoresSeleccionados.length} ascensor(es) · total por periodo:</span>
-                <strong className="font-mono text-slate-900 ml-auto">{formatMonto(sumaActual, monedaSel)}</strong>
+                <span className="text-slate-600">
+                  {ascensoresSeleccionados.length} ascensor(es) · {totalVisitasPrevistas} mantenimiento(s) en {esContinuo ? `${form.duracion_meses || 0} mes(es)` : '1 vez'}
+                </span>
+                {puedeVerPrecio && Number(form.monto_mensual) > 0 && esContinuo && (
+                  <span className="ml-auto text-right">
+                    <strong className="font-mono text-slate-900 block">
+                      {formatMonto(totalesForm.monto_mensual, 'PEN')}/mes · total {formatMonto(totalesForm.total, 'PEN')}
+                    </strong>
+                    {totalesForm.meses_gratuitos > 0 && (
+                      <span className="text-[11px] text-emerald-700">
+                        {totalesForm.meses_facturables} mes(es) facturable(s) · {totalesForm.meses_gratuitos} gratuito(s)
+                      </span>
+                    )}
+                  </span>
+                )}
               </div>
+            )}
+            {!!editando && (
+              <p className="text-[11px] text-amber-700 mt-1">
+                Los ascensores del plan no se pueden añadir ni quitar, pero sí puede corregir la frecuencia de cada uno: el cronograma futuro se recalcula.
+              </p>
             )}
           </div>
           <div>
@@ -1223,38 +1373,56 @@ export default function Mantenimientos() {
           {esContinuo && (
             <>
               <div>
-                <label className="label">Frecuencia *</label>
+                <label className="label">Duración del plan (meses) *</label>
+                <input type="number" min="1" max="120" step="1" className="input" required
+                  value={form.duracion_meses}
+                  onChange={e => setForm(f => ({ ...f, duracion_meses: e.target.value }))} />
+                <p className="text-xs text-slate-500 mt-1">
+                  Cada ascensor recibirá tantos mantenimientos como resulte de cruzar su frecuencia con estos meses.
+                </p>
+              </div>
+              <div>
+                <label className="label">Frecuencia por defecto *</label>
                 <select className="select" required value={form.frecuencia} onChange={e => setForm(f => ({ ...f, frecuencia: e.target.value }))}>
                   {frecuencias.map(fr => <option key={fr.codigo} value={fr.codigo}>{fr.etiqueta}</option>)}
                 </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  Es la que se propone al marcar un ascensor. Cada uno puede cambiarla arriba.
+                </p>
               </div>
               {esFrecuenciaCustom && (
                 <div>
-                  <label className="label">Días entre mantenimientos *</label>
+                  <label className="label">Días entre mantenimientos (por defecto) *</label>
                   <input type="number" min="1" step="1" className="input" required
                     value={form.frecuencia_dias_custom}
                     onChange={e => setForm(f => ({ ...f, frecuencia_dias_custom: e.target.value }))} />
                 </div>
               )}
-              <div>
-                <label className="label">Cantidad de mantenimientos *</label>
-                <input type="number" min="1" step="1" className="input" required
-                  value={form.cantidad_mantenimientos}
-                  onChange={e => setForm(f => ({ ...f, cantidad_mantenimientos: e.target.value }))} />
-              </div>
             </>
+          )}
+
+          {puedeVerPrecio && (
+            <div>
+              <label className="label">Monto mensual *</label>
+              <input type="number" min="0" step="0.01" className="input text-right font-mono"
+                value={form.monto_mensual}
+                onChange={e => setForm(f => ({ ...f, monto_mensual: e.target.value }))} />
+              <p className="text-xs text-slate-500 mt-1">
+                Importe global que se cobra <strong>cada mes</strong>, sin importar cuántos mantenimientos caigan en él.
+              </p>
+            </div>
           )}
 
           {esTipoPreventivo && (
             <div>
-              <label className="label">Mantenimientos gratuitos</label>
+              <label className="label">Meses gratuitos</label>
               <input
                 type="number" min="0" max={cupoMaximoGratuitos} step="1" className="input"
                 value={form.cantidad_mantenimientos_gratuitos}
                 onChange={e => setForm(f => ({ ...f, cantidad_mantenimientos_gratuitos: e.target.value }))}
               />
               <p className="text-xs text-slate-500 mt-1">
-                Los primeros N mantenimientos no generan cobro. Máx: {cupoMaximoGratuitos}.
+                Los primeros N meses no generan cobro. Máx: {cupoMaximoGratuitos}.
               </p>
             </div>
           )}
@@ -1262,7 +1430,7 @@ export default function Mantenimientos() {
           <div><label className="label">Fecha inicio *</label><input type="date" className="input" required value={form.fecha_inicio} onChange={e => setForm(f => ({ ...f, fecha_inicio: e.target.value }))} /></div>
           <div><label className="label">Hora</label><input type="time" className="input" value={form.hora_programada} onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>
           <div className="sm:col-span-2 text-xs text-slate-500 bg-slate-50 ring-1 ring-slate-200 rounded-md px-3 py-2">
-            El precio del mantenimiento es el que tiene configurado el ascensor para este subtipo de servicio. Si falta o cambió, edítelo desde la misma lista de arriba: se guarda en la ficha del ascensor.
+            Al guardar se genera el cronograma completo: todas las fechas de cada ascensor para los meses del plan. Podrá revisarlas y <strong>omitir</strong> las que no se ejecutarán desde el detalle del plan; el monto mensual no cambia por omitir fechas.
           </div>
           <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={form.observaciones} onChange={e => setForm(f => ({ ...f, observaciones: e.target.value }))} /></div>
         </form>
