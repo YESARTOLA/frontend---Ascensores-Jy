@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { serviciosService, archivosService } from '../../services';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
+import SeccionColapsable from '../common/SeccionColapsable.jsx';
 import { useToast } from '../common/Toast.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import { formatFechaHora } from '../../utils/formatters.js';
@@ -183,17 +184,17 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
   const sinFotoSeleccionadas = items.filter(o => seleccionadas.includes(o.id) && !o.id_archivo).length;
 
   return (
-    <div className="card">
-      <div className="card-header flex items-center justify-between gap-2">
-        <h3 className="card-title">
-          Observaciones técnicas
-          {items.length > 0 && (
-            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-100 text-orange-800 ring-1 ring-orange-200">
-              {pendientes} pendiente{pendientes === 1 ? '' : 's'} · {items.length} total
-            </span>
-          )}
-        </h3>
-      </div>
+    // El técnico las registra al detectar algo durante el mantenimiento, pero no
+    // en cada servicio: plegada en móvil, con el número de pendientes a la vista
+    // para que una observación sin atender nunca pase desapercibida.
+    <SeccionColapsable
+      titulo="Observaciones técnicas"
+      cuerpo={false}
+      resumen={items.length > 0
+        ? <span className={pendientes > 0 ? 'badge-amber' : 'badge-green'}>
+            {pendientes > 0 ? `${pendientes} pendiente${pendientes === 1 ? '' : 's'} · ` : ''}{items.length} total
+          </span>
+        : <span className="badge-gray">0</span>}>
       <div className="card-body space-y-4">
         {puedeRegistrar && (
           <form onSubmit={guardar} className="rounded-lg ring-1 ring-slate-200 bg-slate-50/40 p-3 space-y-2">
@@ -385,6 +386,6 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
           </>
         )}
       </div>
-    </div>
+    </SeccionColapsable>
   );
 }

@@ -9,6 +9,7 @@ import Pagination, { usePaginatedList } from '../components/common/Pagination.js
 import CalendarioControles from '../components/common/CalendarioControles.jsx';
 import CalendarioMes from '../components/common/CalendarioMes.jsx';
 import PanelFiltros from '../components/common/PanelFiltros.jsx';
+import SeccionColapsable from '../components/common/SeccionColapsable.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFechaHora, nowDateTimeLocalLima, isoToDateTimeLocalLima, dateTimeLocalLimaToISO } from '../utils/formatters.js';
 import { CATALOGO_TIPOS_EVENTO, colorPorTipo } from '../utils/visibilidadCalendario.js';
@@ -473,18 +474,24 @@ export default function Recordatorios() {
         <div className="card"><EmptyState title="Sin recordatorios" subtitle="No hay recordatorios con los filtros aplicados" /></div>
       ) : (
         <div className="space-y-4">
+          {/* Cada grupo se pliega. En móvil llegan abiertos "Vencidos" y "Hoy"
+              —lo que hay que atender— y plegados los futuros, que de otro modo
+              empujan lo urgente fuera de la primera pantalla. */}
           {gruposOrdenados.map(([titulo, items]) => items.length === 0 ? null : (
-            <div key={titulo} className="card">
-              <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
-                <h3 className={`font-semibold text-sm ${titulo === 'Vencidos' ? 'text-rose-700' : titulo === 'Hoy' ? 'text-amber-700' : 'text-slate-700'}`}>
-                  {titulo}
-                </h3>
-                <span className="text-xs text-slate-500">{items.length}</span>
-              </div>
+            <SeccionColapsable
+              key={titulo}
+              titulo={titulo}
+              cuerpo={false}
+              inicialMovil={titulo === 'Vencidos' || titulo === 'Hoy' ? 'abierta' : 'cerrada'}
+              resumen={
+                <span className={titulo === 'Vencidos' ? 'badge-red' : titulo === 'Hoy' ? 'badge-amber' : 'badge-gray'}>
+                  {items.length}
+                </span>
+              }>
               <ul className="divide-y divide-slate-100">
                 {items.map(filaRecordatorio)}
               </ul>
-            </div>
+            </SeccionColapsable>
           ))}
           <div className="card">
             <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}

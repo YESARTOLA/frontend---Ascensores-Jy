@@ -9,6 +9,7 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { ListaMovil, FilaMovil, AccionFila } from '../components/common/ListaMovil.jsx';
 import PanelFiltros from '../components/common/PanelFiltros.jsx';
+import SeccionColapsable from '../components/common/SeccionColapsable.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
@@ -1190,11 +1191,16 @@ export default function Mantenimientos() {
                   ascensor: lo que decide la operación es a cuántos ascensores
                   se atiende en una misma salida. Ver components/mantenimientos/
                   CronogramaPlan.jsx. */}
-              <div className="border-t border-slate-100 pt-4">
-                <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-                  <h4 className="font-medium text-slate-800">Programación</h4>
-                  {puedeCrear && idsVisitasSel.length > 0 && (
-                    <div className="flex items-center gap-2">
+              {/* Los tres bloques del detalle se pliegan: en móvil el modal
+                  entero era un scroll de varias pantallas dentro de otra hoja
+                  que también scrollea. El cronograma llega abierto —es el
+                  contenido principal del plan— y los otros dos, plegados. */}
+              <SeccionColapsable
+                titulo="Programación"
+                variante="plano"
+                inicialMovil="abierta"
+                acciones={puedeCrear && idsVisitasSel.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[11px] text-carbon-500">
                         {idsVisitasSel.length} fecha(s) seleccionada(s)
                       </span>
@@ -1213,8 +1219,7 @@ export default function Mantenimientos() {
                         Limpiar
                       </button>
                     </div>
-                  )}
-                </div>
+                  )}>
                 {/* Plan sin cronograma: son los creados antes del modelo mensual,
                     cuya programación nació vacía. Se ven "0 de 0", sus meses van
                     "0/0" y aquí abajo solo aparecen los servicios ya creados, sin
@@ -1253,14 +1258,12 @@ export default function Mantenimientos() {
                     })}
                   />
                 )}
-              </div>
+              </SeccionColapsable>
 
 
               {puedeVerPrecio && (
-                <div className="border-t border-slate-100 pt-4">
-                  <div className="flex items-center justify-between mb-3 gap-3">
-                    <h4 className="font-medium text-slate-800">Facturación mensual</h4>
-                    <div className="text-right">
+                <SeccionColapsable titulo="Facturación mensual" variante="plano">
+                    <div className="text-right mb-3">
                       <span className="text-[11px] text-slate-500 block">Un solo cobro y una sola factura por mes, con el detalle de todos los mantenimientos de ese mes.</span>
                       {periodos?.id_cobro && (
                         <Link to={`/cobros/${periodos.id_cobro}`} className="text-[11px] text-brand-700 hover:underline">
@@ -1268,7 +1271,6 @@ export default function Mantenimientos() {
                         </Link>
                       )}
                     </div>
-                  </div>
                   {cargandoPeriodos ? <Loader /> : !periodos || (periodos.meses || []).length === 0 ? (
                     <p className="text-xs text-slate-500">Sin meses aún.</p>
                   ) : !periodos.id_cobro ? (
@@ -1367,20 +1369,19 @@ export default function Mantenimientos() {
                       </table>
                     </div>
                   )}
-                </div>
+                </SeccionColapsable>
               )}
 
-              <div className="border-t border-slate-100 pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium text-slate-800">Mantenimientos del plan</h4>
-                  {!cargandoInstanciasPlan && instanciasPlan.length > 0 && (
-                    <div className="flex gap-2 text-[11px]">
-                      <span className="badge-green">Realizados: {ejecutados}</span>
-                      {enCurso > 0 && <span className="badge-amber">En curso: {enCurso}</span>}
-                      <span className="badge-gray">Pendientes: {pendientes}</span>
-                    </div>
-                  )}
-                </div>
+              <SeccionColapsable
+                titulo="Mantenimientos del plan"
+                variante="plano"
+                resumen={!cargandoInstanciasPlan && instanciasPlan.length > 0 && (
+                  <>
+                    <span className="badge-green">Realizados: {ejecutados}</span>
+                    {enCurso > 0 && <span className="badge-amber">En curso: {enCurso}</span>}
+                    <span className="badge-gray">Pendientes: {pendientes}</span>
+                  </>
+                )}>
                 {cargandoInstanciasPlan ? <Loader /> : instanciasPlan.length === 0 ? (
                   <p className="text-xs text-slate-500">Sin mantenimientos registrados.</p>
                 ) : (
@@ -1457,7 +1458,7 @@ export default function Mantenimientos() {
                   </div>
                   </>
                 )}
-              </div>
+              </SeccionColapsable>
             </div>
           );
         })()}

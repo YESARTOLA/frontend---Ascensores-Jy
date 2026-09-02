@@ -21,6 +21,8 @@ import ObservacionesServicioPanel from '../components/servicios/ObservacionesSer
 import ChecklistFinalizacionPanel from '../components/servicios/ChecklistFinalizacionPanel.jsx';
 import InformePreviewModal from '../components/servicios/InformePreviewModal.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
+import SeccionColapsable from '../components/common/SeccionColapsable.jsx';
+import { useEsMovil } from '../hooks/useMediaQuery.js';
 import FichaTecnicaAscensor from '../components/ascensores/FichaTecnicaAscensor.jsx';
 import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
 import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
@@ -47,6 +49,11 @@ const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
 function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, onGuardarComentario }) {
   const [comentario, setComentario] = useState(ev.descripcion || '');
   const [guardando, setGuardando] = useState(false);
+  // Si el archivo no se puede descargar, el navegador pinta el texto alternativo
+  // —que aquí es la descripción entera— derramado por toda la miniatura, con el
+  // botón de eliminar encima. Se detecta el fallo y se muestra un marcador, que
+  // además dice la verdad: la foto no está disponible, no es que sea texto.
+  const [imagenRota, setImagenRota] = useState(false);
   const ruta = ev.archivo?.ruta_almacenamiento;
   const mime = ev.archivo?.mime_type || '';
   const esImagen = mime.startsWith('image/');
@@ -64,10 +71,19 @@ function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, 
   return (
     <div className="rounded-lg ring-1 ring-slate-100 overflow-hidden bg-white text-sm">
       <div className="relative aspect-square bg-slate-50">
-        {url && esImagen ? (
-          <button type="button" onClick={() => filePreview.open(ev.archivo)} className="block w-full h-full">
-            <img src={url} alt={ev.descripcion || ev.archivo.nombre_original} className="w-full h-full object-cover hover:scale-105 transition" />
+        {url && esImagen && !imagenRota ? (
+          <button type="button" onClick={() => filePreview.open(ev.archivo)} className="block w-full h-full overflow-hidden">
+            <img src={url} alt={ev.descripcion || ev.archivo.nombre_original}
+                 onError={() => setImagenRota(true)}
+                 className="w-full h-full object-cover hover:scale-105 transition" />
           </button>
+        ) : url && esImagen && imagenRota ? (
+          <div className="w-full h-full grid place-items-center gap-1 p-2 text-center text-slate-400">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" />
+            </svg>
+            <span className="text-[10px] leading-tight">Imagen no disponible</span>
+          </div>
         ) : url && esVideo ? (
           <button type="button" onClick={() => filePreview.open(ev.archivo)} className="relative block w-full h-full group" aria-label="Reproducir video">
             <video src={url} preload="metadata" muted playsInline className="w-full h-full object-cover bg-black" />
@@ -936,22 +952,17 @@ export default function ServicioDetalle() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Datos</h3>
-            <div className="flex items-center gap-2">
-              {puedeEditarDatosContacto && (
-                <button onClick={iniciarEditarDatos} className="btn-secondary !py-1 !px-2.5 !text-xs inline-flex items-center gap-1"
-                  title="Contacto en sitio y cuarto de máquinas">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                  </svg>
-                  Editar datos
-                </button>
-              )}
+        {/* El estado del servicio y los avisos de deuda documental van en el
+            `resumen`: siguen leyéndose con la sección plegada, que es su razón
+            de ser. Datos llega abierta también en móvil — es lo primero que se
+            consulta al llegar a la obra. */}
+        <SeccionColapsable
+          titulo="Datos"
+          inicialMovil="abierta"
+          cuerpo={false}
+          resumen={
+            <>
               <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
-              {/* Distintivo del cierre sin guía: mismo estado "Finalizado", pero
-                  reconocible de un vistazo y completable desde la tarjeta de guías. */}
               {finalizadoSinGuia && (
                 <span className="badge-amber" title="Se finalizó sin guía de salida. Cárgala en la tarjeta «Guía de salida» para completarlo.">
                   Sin guía
@@ -960,8 +971,17 @@ export default function ServicioDetalle() {
               {s.estado_servicio === ESTADO_SERVICIO_FINALIZADO && !tieneOt && (
                 <span className="badge-amber" title="Se finalizó sin orden de trabajo.">Sin OT</span>
               )}
-            </div>
-          </div>
+            </>
+          }
+          acciones={puedeEditarDatosContacto && (
+            <button onClick={iniciarEditarDatos} className="btn-secondary !py-1.5 !px-2.5 !text-xs inline-flex items-center gap-1"
+              title="Contacto en sitio y cuarto de máquinas">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+              Editar datos
+            </button>
+          )}>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
             <Info label="Tipo" value={s.tipo_registro} />
             {/* El técnico no ve nada de la cotización: ni el código, ni el enlace,
@@ -1097,10 +1117,15 @@ export default function ServicioDetalle() {
             )}
             <UbicacionCliente edificio={(s.ascensores || []).map(a => a.ascensor?.edificio).find(Boolean)} />
           </div>
-        </div>
+        </SeccionColapsable>
 
-        <div className="card lg:col-span-2">
-          <div className="card-header"><h3 className="card-title">Asignaciones · {s.asignaciones?.length || 0} técnico(s)</h3></div>
+        {/* Quién más está en el trabajo: útil, pero no es lo que se consulta con
+            el ascensor delante. Plegada en móvil, con el número a la vista. */}
+        <SeccionColapsable
+          titulo="Asignaciones"
+          className="lg:col-span-2"
+          cuerpo={false}
+          resumen={<span className="badge-gray">{s.asignaciones?.length || 0} técnico(s)</span>}>
           <div className="card-body">
             {s.asignaciones?.length === 0 ? <p className="text-sm text-slate-500">Sin técnicos asignados</p> : (
               <div className="grid sm:grid-cols-2 gap-3">
@@ -1120,7 +1145,7 @@ export default function ServicioDetalle() {
               </div>
             )}
           </div>
-        </div>
+        </SeccionColapsable>
 
         {/* FICHA TÉCNICA de cada ascensor del servicio: marca, modelo, capacidad,
             cuarto de máquinas, contacto en sitio y cómo llegar. Es lo que el
@@ -1132,11 +1157,14 @@ export default function ServicioDetalle() {
           <FichaTecnicaAscensor
             key={sa.ascensor.id}
             ascensor={sa.ascensor}
-            titulo={`Ficha técnica · ${sa.ascensor.codigo}`}
+            // Plegada, el código del ascensor ya lo pone el resumen de la
+            // sección: repetirlo en el título dejaba "Ficha técnica · VIL-CHI-ALM
+            // VIL-CHI-ALM" en la cabecera.
+            titulo="Ficha técnica"
             // El mini-mapa ya está en la card de datos del servicio; aquí basta
             // con la dirección y el acceso directo a Google Maps.
             mostrarMapa={false}
-            className="card" />
+            colapsable />
         ))}
 
         {/* Adjuntos de la cotización de origen: SOLO para roles con visibilidad
@@ -1151,11 +1179,10 @@ export default function ServicioDetalle() {
           const esImagen = a => (a.archivo.mime_type || '').startsWith('image/');
           if (visibles.length === 0) return null;
           return (
-            <div className="card lg:col-span-3">
-              <div className="card-header">
-                <h3 className="card-title">Adjuntos de la cotización · {visibles.length}</h3>
-              </div>
-              <div className="card-body">
+            <SeccionColapsable
+              titulo="Adjuntos de la cotización"
+              className="lg:col-span-3"
+              resumen={<span className="badge-gray">{visibles.length}</span>}>
                 <div className="flex flex-wrap gap-3">
                   {visibles.map(a => esImagen(a)
                     ? <a key={a.id} href={assetUrl(a.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer"
@@ -1170,8 +1197,7 @@ export default function ServicioDetalle() {
                       </a>
                   )}
                 </div>
-              </div>
-            </div>
+            </SeccionColapsable>
           );
         })()}
 
@@ -1185,12 +1211,18 @@ export default function ServicioDetalle() {
           const itemsCot = ver?.items || [];
           if (itemsCot.length === 0) return null;
           return (
-            <div className="card lg:col-span-3">
-              <div className="card-header">
-                <h3 className="card-title">{esTecnico ? 'Ítems a atender' : 'Ítems de la cotización'} · {itemsCot.length}</h3>
-                {!esTecnico && cotOrigen?.codigo && <span className="text-xs text-slate-500 font-mono">{cotOrigen.codigo}</span>}
-              </div>
-              <div className="card-body">
+            // Para el técnico esto es EL trabajo a realizar: llega abierta
+            // también en móvil, a diferencia del resto de secciones de contexto.
+            <SeccionColapsable
+              titulo={esTecnico ? 'Ítems a atender' : 'Ítems de la cotización'}
+              className="lg:col-span-3"
+              inicialMovil="abierta"
+              resumen={
+                <>
+                  <span className="badge-gray">{itemsCot.length}</span>
+                  {!esTecnico && cotOrigen?.codigo && <span className="text-xs text-slate-500 font-mono">{cotOrigen.codigo}</span>}
+                </>
+              }>
                 <p className="text-xs text-slate-500 mb-3">{esTecnico ? 'Trabajo a realizar y la foto de referencia de cada ítem.' : 'Detalle de lo cotizado y la foto de referencia de cada ítem.'}</p>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {itemsCot.map(it => (
@@ -1208,8 +1240,7 @@ export default function ServicioDetalle() {
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
+            </SeccionColapsable>
           );
         })()}
 
@@ -1223,15 +1254,15 @@ export default function ServicioDetalle() {
             ? (s.ascensores || []).find(sa => sa.ascensor?.id === s.correctivo.id_ascensor)?.ascensor?.codigo
             : null;
           return (
-            <div className="card lg:col-span-3">
-              <div className="card-header">
-                <h3 className="card-title">
-                  Historial de correctivos de este ascensor
-                  {codigoAscensor && <span className="ml-2 font-mono text-xs text-slate-500">{codigoAscensor}</span>}
-                  <span className="ml-2 text-xs text-slate-500 font-normal">· {previos.length}</span>
-                </h3>
-              </div>
-              <div className="card-body">
+            <SeccionColapsable
+              titulo="Historial de correctivos"
+              className="lg:col-span-3"
+              resumen={
+                <>
+                  {codigoAscensor && <span className="font-mono text-xs text-slate-500">{codigoAscensor}</span>}
+                  <span className="badge-gray">{previos.length}</span>
+                </>
+              }>
                 {previos.length === 0 ? (
                   <p className="text-sm text-slate-500">
                     Es el primer correctivo registrado para este ascensor.
@@ -1284,20 +1315,22 @@ export default function ServicioDetalle() {
                     </ul>
                   </>
                 )}
-              </div>
-            </div>
+            </SeccionColapsable>
           );
         })()}
 
         {/* La guía de salida no aplica al técnico: solo presenta evidencias y la OT
             (evita confundir la guía con la Orden de Trabajo). */}
-        {!esTecnico && <div className="card lg:col-span-2">
-          <div className="card-header">
-            <h3 className="card-title">Guía de salida</h3>
-            {puedeGestionarGuias && (
-              <button onClick={abrirGuiaNueva} className="btn-secondary">+ Agregar guía</button>
-            )}
-          </div>
+        {!esTecnico && <SeccionColapsable
+          titulo="Guía de salida"
+          className="lg:col-span-2"
+          cuerpo={false}
+          resumen={(s.guias?.length || 0) > 0
+            ? <span className="badge-green">{s.guias.length}</span>
+            : <span className="badge-amber">Sin guía</span>}
+          acciones={puedeGestionarGuias && (
+            <button onClick={abrirGuiaNueva} className="btn-secondary">+ Agregar guía</button>
+          )}>
           <div className="card-body grid sm:grid-cols-2 gap-3">
             {!s.guias?.length && <p className="text-sm text-slate-500">Aún no se ha registrado guía de salida.</p>}
             {s.guias?.map(g => (
@@ -1336,18 +1369,21 @@ export default function ServicioDetalle() {
               </div>
             ))}
           </div>
-        </div>}
+        </SeccionColapsable>}
 
         {/* ORDEN DE TRABAJO. Junto a la guía de salida y con el mismo peso: es el
             documento que el técnico trae firmado de la obra. Se sube aquí, durante
             la ejecución, y de aquí lo toman el cierre, Contabilidad y los cobros. */}
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Orden de trabajo</h3>
-            {tieneOt
-              ? <span className="badge-green">Registrada</span>
-              : <span className="badge-amber">Pendiente</span>}
-          </div>
+        {/* La OT es obligatoria para que el técnico cierre: mientras falte, la
+            sección se abre sola en móvil; una vez registrada, se pliega y basta
+            con el badge "Registrada". */}
+        <SeccionColapsable
+          titulo="Orden de trabajo"
+          cuerpo={false}
+          inicialMovil={tieneOt ? 'cerrada' : 'abierta'}
+          resumen={tieneOt
+            ? <span className="badge-green">Registrada</span>
+            : <span className="badge-amber">Pendiente</span>}>
           <div className="card-body space-y-3">
             {tieneOt ? (
               <>
@@ -1407,15 +1443,24 @@ export default function ServicioDetalle() {
               </div>
             )}
           </div>
-        </div>
+        </SeccionColapsable>
 
         {esMultidia && (
-          <div className="card lg:col-span-3">
-            <div className="card-header">
-              <h3 className="card-title">Días del servicio · {dias.length}</h3>
-              <span className="text-xs text-slate-500">Se espera 1 evidencia por día</span>
-            </div>
-            <div className="card-body">
+          // Abierta en móvil: en un trabajo de varios días, saber qué día
+          // queda sin evidencia es parte de la faena diaria.
+          <SeccionColapsable
+            titulo="Días del servicio"
+            className="lg:col-span-3"
+            inicialMovil="abierta"
+            resumen={(() => {
+              const sinEvidencia = dias.filter(d => !(evidenciasPorDia[d.id] > 0)).length;
+              return (
+                <>
+                  <span className="badge-gray">{dias.length}</span>
+                  {sinEvidencia > 0 && <span className="badge-amber">{sinEvidencia} sin evidencia</span>}
+                </>
+              );
+            })()}>
               {dias.length === 0 ? (
                 <p className="text-sm text-slate-500">Aún no se han generado los días. Programe la fecha del servicio.</p>
               ) : (
@@ -1442,8 +1487,7 @@ export default function ServicioDetalle() {
                   })}
                 </div>
               )}
-            </div>
-          </div>
+          </SeccionColapsable>
         )}
 
         {s.estado_servicio === 'En curso' && (esSuperAdmin || esAdmin || esTecnicoResponsable) && (
@@ -1465,24 +1509,27 @@ export default function ServicioDetalle() {
             || (esTecnico && !estaServicioFinalizado(s.estado_servicio));
           const subiendoEsta = subiendoMomento === sec.key;
           return (
-            <div key={sec.key} className="card lg:col-span-3">
-              <div className="card-header">
-                <h3 className="card-title">Evidencias del trabajo · {sec.titulo} · {sec.lista.length}</h3>
-                {puedeGestionar && (
-                  <div className="flex flex-wrap gap-2">
-                    <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
-                      📷 Tomar foto
-                      <input type="file" className="hidden" accept="image/*" capture="environment" onChange={e => agregarFotosMomento(e, sec.key)} />
-                    </label>
-                    <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
-                      📎 Adjuntar fotos
-                      <input type="file" className="hidden" accept="image/*" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
-                    </label>
-                    {subiendoEsta && <span className="text-xs text-slate-500 self-center">Subiendo…</span>}
-                  </div>
-                )}
-              </div>
-              <div className="card-body">
+            // Las evidencias son el trabajo del técnico en obra: abiertas en
+            // móvil, con el número de fotos visible aunque se plieguen.
+            <SeccionColapsable
+              key={sec.key}
+              titulo={`Evidencias · ${sec.titulo}`}
+              className="lg:col-span-3"
+              inicialMovil="abierta"
+              resumen={<span className={sec.lista.length ? 'badge-blue' : 'badge-gray'}>{sec.lista.length}</span>}
+              acciones={puedeGestionar && (
+                <>
+                  <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
+                    📷 Tomar foto
+                    <input type="file" className="hidden" accept="image/*" capture="environment" onChange={e => agregarFotosMomento(e, sec.key)} />
+                  </label>
+                  <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
+                    📎 Adjuntar fotos
+                    <input type="file" className="hidden" accept="image/*" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
+                  </label>
+                  {subiendoEsta && <span className="text-xs text-slate-500 self-center">Subiendo…</span>}
+                </>
+              )}>
                 {!sec.lista.length ? (
                   <p className="text-sm text-slate-500">Sin evidencias registradas.</p>
                 ) : (
@@ -1501,18 +1548,16 @@ export default function ServicioDetalle() {
                     ))}
                   </div>
                 )}
-              </div>
-            </div>
+            </SeccionColapsable>
           );
         })}
 
         {s.entregas?.length > 0 || puedeGestionarEntregas ? (
-          <div className="card lg:col-span-3">
-            <div className="card-header">
-              <h3 className="card-title">Entregas · {s.entregas?.length || 0}</h3>
-              {puedeGestionarEntregas && <button onClick={() => setOpenEntrega(true)} className="btn-secondary">+ Nueva entrega</button>}
-            </div>
-            <div className="card-body">
+          <SeccionColapsable
+            titulo="Entregas"
+            className="lg:col-span-3"
+            resumen={<span className="badge-gray">{s.entregas?.length || 0}</span>}
+            acciones={puedeGestionarEntregas && <button onClick={() => setOpenEntrega(true)} className="btn-secondary">+ Nueva entrega</button>}>
               {!s.entregas?.length ? <p className="text-sm text-slate-500">Sin entregas registradas</p> : (
                 <>
                 <div className="hidden sm:block overflow-x-auto scroll-thin">
@@ -1557,8 +1602,7 @@ export default function ServicioDetalle() {
                 </ul>
                 </>
               )}
-            </div>
-          </div>
+          </SeccionColapsable>
         ) : null}
 
         {/* Contabilidad no ve las observaciones técnicas (ni comentario ni imagen):
@@ -1568,21 +1612,23 @@ export default function ServicioDetalle() {
         )}
 
         {s.finalizacion_checklist?.archivo_pdf && (
-          <div className="card">
-            <div className="card-header flex items-center justify-between">
-              <h3 className="card-title">Informe de finalización</h3>
+          <SeccionColapsable
+            titulo="Informe de finalización"
+            acciones={
               <FileLink archivo={s.finalizacion_checklist.archivo_pdf} className="text-brand-700 hover:underline text-sm inline-flex items-center gap-1">
                 📄 Ver / descargar PDF
               </FileLink>
-            </div>
-            <div className="card-body text-xs text-slate-500">
+            }>
+            <p className="text-xs text-slate-500">
               Generado el {formatFechaHora(s.finalizacion_checklist.date_time_registration)} a partir del checklist de finalización.
-            </div>
-          </div>
+            </p>
+          </SeccionColapsable>
         )}
 
-        <div className="card">
-          <div className="card-header"><h3 className="card-title">Historial</h3></div>
+        <SeccionColapsable
+          titulo="Historial"
+          cuerpo={false}
+          resumen={<span className="badge-gray">{s.historial_estados?.length || 0}</span>}>
           <ol className="card-body space-y-3 max-h-96 overflow-y-auto scroll-thin">
             {s.historial_estados?.length === 0 && <p className="text-sm text-slate-500">Sin cambios</p>}
             {s.historial_estados?.map(h => (
@@ -1596,8 +1642,13 @@ export default function ServicioDetalle() {
               </li>
             ))}
           </ol>
-        </div>
+        </SeccionColapsable>
       </div>
+
+      {/* Colchón para el botón flotante. Sin él, al llegar al final de la página
+          el botón queda montado sobre la última tarjeta y tapa su contenido: el
+          padding inferior del layout solo reserva sitio para la nav. */}
+      {accionPrincipalMovil && <div className="lg:hidden h-16" aria-hidden="true" />}
 
       <Modal open={openAsignar} onClose={() => setOpenAsignar(false)} title="Asignar técnicos y programar" size="xl"
         footer={<><button className="btn-secondary" onClick={() => setOpenAsignar(false)}>Cancelar</button><button className="btn-primary" onClick={guardarAsignacion}>Guardar</button></>}>
@@ -2049,10 +2100,17 @@ function Info({ label, value, cols = 1 }) {
  * mapa fuera obligatorio, muestra solo el texto disponible y la nota.
  */
 function UbicacionCliente({ edificio }) {
+  // El mapa incrustado son 220px que en el teléfono empujan medio card "Datos"
+  // fuera de pantalla, y para ir a la obra se usa Google Maps, no la miniatura.
+  // Así que en móvil llega plegado tras "Ver mapa" —la dirección y el enlace, que
+  // es lo que se usa, quedan siempre visibles— y en escritorio se pinta directo.
+  const esMovil = useEsMovil();
+  const [verMapa, setVerMapa] = useState(false);
   if (!edificio) return null;
   const coords = coordsDe(edificio);
   const direccionPartes = [edificio.direccion, edificio.distrito].filter(Boolean);
   const direccionTexto = direccionPartes.join(' · ') || 'Sin dirección registrada';
+  const mapaVisible = !esMovil || verMapa;
   return (
     <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -2070,11 +2128,26 @@ function UbicacionCliente({ edificio }) {
       </div>
       <div className="text-sm text-slate-800 mb-2">{direccionTexto}</div>
       {coords ? (
-        <MapaUbicacion
-          valor={edificio}
-          alto="220px"
-          mostrarLinkMaps={false}
-        />
+        <>
+          {esMovil && (
+            <button type="button" onClick={() => setVerMapa(v => !v)}
+              className="inline-flex items-center gap-1.5 min-h-[36px] text-xs font-semibold text-brand-700">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6"
+                   strokeLinecap="round" strokeLinejoin="round"
+                   className={`transition-transform ${verMapa ? 'rotate-90' : ''}`}>
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              {verMapa ? 'Ocultar mapa' : 'Ver mapa'}
+            </button>
+          )}
+          {mapaVisible && (
+            <MapaUbicacion
+              valor={edificio}
+              alto="220px"
+              mostrarLinkMaps={false}
+            />
+          )}
+        </>
       ) : (
         <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
           Ubicación no registrada en el mapa para este edificio.

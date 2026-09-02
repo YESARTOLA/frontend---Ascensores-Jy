@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { serviciosService, archivosService, assetUrl } from '../../services';
+import SeccionColapsable from '../common/SeccionColapsable.jsx';
 import { useToast } from '../common/Toast.jsx';
 import { coordsDe, linkGoogleMaps, formatCoords } from '../../utils/mapa.js';
 import { formatFecha, toYMDLima, hoyISO } from '../../utils/formatters.js';
@@ -146,14 +147,16 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
   if (cargando) return null;
   if (!data || data.plantilla_vacia) {
     return (
-      <div className="card lg:col-span-3">
-        <div className="card-header"><h3 className="card-title">Checklist de finalización</h3></div>
-        <div className="card-body text-sm text-slate-600 bg-slate-50/60">
+      // Sin plantilla no hay nada que rellenar: llega plegada en móvil para no
+      // gastar pantalla en un aviso informativo.
+      <SeccionColapsable titulo="Checklist de finalización" className="lg:col-span-3"
+        resumen={<span className="badge-gray">Sin plantilla</span>}>
+        <p className="text-sm text-slate-600">
           Esta categoría no tiene una plantilla de checklist configurada. El checklist de finalización es
           <strong> opcional</strong>: puedes finalizar el servicio sin él. Si deseas usarlo, un administrador
           puede configurarlo en <strong>Configuración → Checklist de finalización</strong>.
-        </div>
-      </div>
+        </p>
+      </SeccionColapsable>
     );
   }
 
@@ -171,25 +174,29 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
   }
 
   return (
-    <div className="card lg:col-span-3">
-      <div className="card-header flex-wrap gap-2">
-        <h3 className="card-title">
-          Checklist de finalización
-          <span className="ml-2 text-xs font-normal text-slate-500">
-            {resumen.respondidos}/{resumen.total} respondidos
-            {resumen.faltanFotos > 0 && <span className="text-rose-600"> · faltan fotos en {resumen.faltanFotos}</span>}
-            {resumen.completo && <span className="text-emerald-600"> · completo ✓</span>}
-          </span>
-        </h3>
-        {esMultidia && puedeEditar && dias.length > 0 && (
-          <label className="text-xs text-slate-600 flex items-center gap-2 w-full sm:w-auto">
-            <span className="shrink-0">Día de la foto:</span>
-            <select className="input-compacto !w-auto flex-1 sm:flex-none" value={diaActivo} onChange={e => setDiaActivo(e.target.value)}>
-              {dias.map(d => <option key={d.id} value={d.id}>Día {d.orden} · {formatFecha(d.fecha)}</option>)}
-            </select>
-          </label>
-        )}
-      </div>
+    // Es la tarea del técnico en obra: abierta también en móvil. El avance
+    // (respondidos / fotos que faltan) va en el resumen, de modo que si se
+    // pliega para llegar antes a las evidencias, no se pierde de vista.
+    <SeccionColapsable
+      titulo="Checklist de finalización"
+      className="lg:col-span-3"
+      inicialMovil="abierta"
+      cuerpo={false}
+      resumen={
+        <span className={`badge ${resumen.completo ? 'badge-green' : resumen.faltanFotos > 0 ? 'badge-red' : 'badge-gray'}`}>
+          {resumen.respondidos}/{resumen.total}
+          {resumen.faltanFotos > 0 && ` · faltan ${resumen.faltanFotos} fotos`}
+          {resumen.completo && ' ✓'}
+        </span>
+      }
+      acciones={esMultidia && puedeEditar && dias.length > 0 && (
+        <label className="text-xs text-slate-600 flex items-center gap-2 w-full sm:w-auto">
+          <span className="shrink-0">Día de la foto:</span>
+          <select className="input-compacto !w-auto flex-1 sm:flex-none" value={diaActivo} onChange={e => setDiaActivo(e.target.value)}>
+            {dias.map(d => <option key={d.id} value={d.id}>Día {d.orden} · {formatFecha(d.fecha)}</option>)}
+          </select>
+        </label>
+      )}>
       <div className="card-body space-y-4">
         {!puedeEditar && (
           <p className="text-xs text-slate-500">Vista de solo lectura. Solo el técnico responsable de documentación puede completar este checklist.</p>
@@ -292,7 +299,7 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
           </div>
         ))}
       </div>
-    </div>
+    </SeccionColapsable>
   );
 }
 

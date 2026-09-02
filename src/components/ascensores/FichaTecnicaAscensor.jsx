@@ -1,4 +1,5 @@
 import MapaUbicacion from '../common/MapaUbicacion.jsx';
+import SeccionColapsable from '../common/SeccionColapsable.jsx';
 import { coordsDe, linkGoogleMaps } from '../../utils/mapa.js';
 import { formatFecha, badgeEstado } from '../../utils/formatters.js';
 import { useClasificaciones } from '../../hooks/useClasificaciones.js';
@@ -19,12 +20,17 @@ import { useClasificaciones } from '../../hooks/useClasificaciones.js';
  *     detalle del servicio lo desactiva porque ya tiene un mapa en su card de
  *     datos y no tiene sentido repetirlo por cada ascensor.
  *   - titulo: encabezado de la tarjeta
+ *   - colapsable: convierte la tarjeta en una sección plegable. El detalle del
+ *     servicio la activa porque puede mostrar una ficha POR ascensor, y en
+ *     móvil tres fichas seguidas son metros de scroll entre el checklist y las
+ *     evidencias. El historial del ascensor la deja fija: allí es el contenido.
  *   - className
  */
 export default function FichaTecnicaAscensor({
   ascensor,
   mostrarMapa = true,
   titulo = 'Ficha técnica',
+  colapsable = false,
   className = 'card'
 }) {
   const clasificaciones = useClasificaciones();
@@ -37,13 +43,8 @@ export default function FichaTecnicaAscensor({
   const coords = coordsDe(edificio);
   const direccion = [edificio?.direccion, edificio?.distrito].filter(Boolean).join(' · ');
 
-  return (
-    <div className={className}>
-      <div className="card-header">
-        <h3 className="card-title">{titulo}</h3>
-        <span className="font-mono text-xs text-brand-700">{ascensor.codigo}</span>
-      </div>
-      <div className="card-body grid grid-cols-2 gap-3 text-sm">
+  const campos = (
+    <div className="card-body grid grid-cols-2 gap-3 text-sm">
         <Info label="Estado" value={
           ascensor.estado_operativo
             ? <span className={badgeEstado(ascensor.estado_operativo)}>{ascensor.estado_operativo}</span>
@@ -112,7 +113,28 @@ export default function FichaTecnicaAscensor({
             </div>
           )}
         </div>
+    </div>
+  );
+
+  if (colapsable) {
+    return (
+      <SeccionColapsable
+        titulo={titulo}
+        className={className === 'card' ? '' : className}
+        cuerpo={false}
+        resumen={<span className="font-mono text-xs text-brand-700">{ascensor.codigo}</span>}>
+        {campos}
+      </SeccionColapsable>
+    );
+  }
+
+  return (
+    <div className={className}>
+      <div className="card-header">
+        <h3 className="card-title">{titulo}</h3>
+        <span className="font-mono text-xs text-brand-700">{ascensor.codigo}</span>
       </div>
+      {campos}
     </div>
   );
 }
