@@ -16,10 +16,40 @@ import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
 import { ESTADOS_FACTURACION, esFacturaActiva } from '../utils/estadoFactura.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
+import { etiquetaMoneda } from '../utils/excelNumeros.js';
 
 const FILTROS_INICIALES = {
-  q: '', tipo_categoria: '', situacion: '', estado_cobro: '', estado_facturacion: '', desde: '', hasta: ''
+  q: '', tipo_categoria: '', situacion: '', estado_cobro: '', estado_facturacion: '',
+  grupo_facturacion: '', desde: '', hasta: ''
 };
+
+// Los dos grupos que resume Contabilidad. Esta lista es a la vez las TARJETAS
+// del encabezado y los BOTONES de filtro: una sola definición (título, criterio
+// y tono) para que lo que se cuenta y lo que se filtra se describan igual.
+//
+// `value` viaja al backend como `grupo_facturacion` y allí se traduce con
+// whereGrupoFacturacion(), el MISMO predicado con el que se calculan los
+// contadores del resumen (backend/utils/estadoFactura.js). Por eso pulsar un
+// botón deja en la tabla exactamente los servicios que su tarjeta cuenta.
+// `value` coincide además con la clave del resumen que envía el backend.
+const GRUPOS_FACTURACION = [
+  {
+    value: 'por_facturar',
+    titulo: 'Por facturar',
+    ayuda: 'Servicios que requieren comprobante y aún no lo tienen emitido por completo (incluye los parcialmente facturados). No cuenta los marcados «Sin factura» ni los gratuitos.',
+    tono: 'amber',
+    btnOn: 'bg-amber-100 text-amber-900 ring-amber-300',
+    btnOff: 'bg-white text-amber-700 ring-amber-200 hover:bg-amber-50'
+  },
+  {
+    value: 'facturado',
+    titulo: 'Facturado',
+    ayuda: 'Servicios con la emisión completa (Facturado o Enviada).',
+    tono: 'green',
+    btnOn: 'bg-emerald-100 text-emerald-900 ring-emerald-300',
+    btnOff: 'bg-white text-emerald-700 ring-emerald-200 hover:bg-emerald-50'
+  }
+];
 
 // Opciones del filtro de situación de pago (espejo de la columna "Situación").
 const SITUACIONES = [
@@ -61,7 +91,10 @@ const ESTADOS_ADMIN_NO_HABILITA = ['En ejecución', 'Pendiente revisión', 'Obse
 function motivoNoFacturable(r) {
   const s = r.servicio;
   if (!s) return 'Sin servicio asociado';
-  if (s.id_mantenimiento_plan) return 'Pertenece a un plan: se factura una vez al mes, desde el cobro del plan';
+  // Servicio de plan del modelo mensual (sin cobro propio): factura el PLAN.
+  // Un servicio de plan legacy CON cobro propio (modelo anterior) sí factura
+  // por servicio — sigue las reglas normales de abajo (espejo del backend).
+  if (s.id_mantenimiento_plan && !s.cobro) return 'Pertenece a un plan: se factura una sola vez al mes. Emita desde Mantenimientos → detalle del plan → Facturación mensual, o en Gestión de cobros → Por facturar';
   if (s.estado_servicio === 'Cancelado') return 'Servicio cancelado';
   if (s.sin_cobro === 1) return 'Servicio sin cobro (gratuito)';
   if (s.requiere_factura === 0) return 'Marcado como "Sin factura"';
@@ -105,7 +138,12 @@ const situacionPago = (r) => {
   return COBRO_CANCELADO.includes(r.estado_cobro) ? 'Cancelado' : 'Pendiente';
 };
 
+// Moneda del servicio (por defecto soles, como el resto del módulo).
+const monedaDe = (r) => r.servicio?.moneda || 'PEN';
+
 // Columnas del export (espejo de la tabla, sin la columna de acciones).
+// Los importes llevan `num`: en Excel son celdas numéricas sumables, y la
+// columna "Moneda" permite filtrar/segmentar soles y dólares por separado.
 const COLUMNAS_EXPORT = [
   { header: 'Fecha servicio', get: r => (r.estado_administrativo === EN_EJECUCION ? '' : formatFecha(r.fecha_realizacion)) },
   { header: 'Fecha comprobante', get: r => { const f = fechaComprobante(r); return f ? formatFecha(f) : ''; } },
@@ -116,8 +154,13 @@ const COLUMNAS_EXPORT = [
   { header: 'Ascensor', get: r => resumenAscensores(r.servicio) },
   { header: 'Tipo de servicio', get: r => tipoServicioLabel(r) },
   { header: 'Etapa', badge: true, get: r => r.estado_administrativo || '' },
-  { header: 'Moneda', get: r => r.servicio?.moneda || '' },
-  { header: 'Total', align: 'right', get: r => (esGratuito(r) ? 'Sin costo' : formatMonto(r.servicio?.precio_interno, r.servicio?.moneda)) },
+  { header: 'Moneda', get: r => (esGratuito(r) ? '' : etiquetaMoneda(monedaDe(r))) },
+  {
+    header: 'Total',
+    align: 'right',
+    get: r => (esGratuito(r) ? 'Sin costo' : formatMonto(r.servicio?.precio_interno, monedaDe(r))),
+    num: r => (esGratuito(r) ? null : Number(r.servicio?.precio_interno))
+  },
   { header: 'Estado cobro', badge: true, get: r => (esGratuito(r) ? 'Sin cobro' : r.estado_cobro) },
   { header: 'Estado factura', badge: true, get: r => r.estado_facturacion },
   { header: 'Situación', badge: true, get: r => situacionPago(r) }
@@ -156,6 +199,7 @@ export default function Contabilidad() {
     if (filtros.situacion) p.push(`Situación: ${SITUACIONES.find(s => s.value === filtros.situacion)?.label || filtros.situacion}`);
     if (filtros.estado_cobro) p.push(`Estado cobro: ${filtros.estado_cobro}`);
     if (filtros.estado_facturacion) p.push(`Estado factura: ${filtros.estado_facturacion}`);
+    if (filtros.grupo_facturacion) p.push(`Facturación: ${GRUPOS_FACTURACION.find(g => g.value === filtros.grupo_facturacion)?.titulo || filtros.grupo_facturacion}`);
     if (filtros.desde) p.push(`Realización desde: ${filtros.desde}`);
     if (filtros.hasta) p.push(`Realización hasta: ${filtros.hasta}`);
     return p;
@@ -255,6 +299,26 @@ export default function Contabilidad() {
       <PageHeader title="Contabilidad" subtitle={`${total.toLocaleString('es-PE')} servicio(s) realizado(s)`}
         actions={
           <>
+            {/* Filtro rápido por grupo de facturación: el mismo criterio de las
+                tarjetas. Es un interruptor — volver a pulsarlo lo quita. */}
+            <div className="flex items-center gap-2 sm:mr-2" role="group" aria-label="Filtrar por facturación">
+              {GRUPOS_FACTURACION.map(g => {
+                const activo = filtros.grupo_facturacion === g.value;
+                return (
+                  <button
+                    key={g.value}
+                    type="button"
+                    aria-pressed={activo}
+                    title={activo ? `Quitar el filtro «${g.titulo}»` : g.ayuda}
+                    onClick={() => setF('grupo_facturacion', activo ? '' : g.value)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${activo ? g.btnOn : g.btnOff}`}
+                  >
+                    {g.titulo}
+                    {activo && <span aria-hidden="true" className="text-xs opacity-70">✕</span>}
+                  </button>
+                );
+              })}
+            </div>
             <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || total === 0}>Exportar Excel</button>
             <button onClick={() => exportar('pdf')} className="btn-primary" disabled={exportando || total === 0}>Exportar PDF</button>
           </>
@@ -263,22 +327,17 @@ export default function Contabilidad() {
 
       {resumen && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
-          <CardMetrica
-            titulo="Por facturar"
-            ayuda="Servicios que requieren comprobante y aún no lo tienen emitido por completo (incluye los parcialmente facturados). No cuenta los marcados «Sin factura» ni los gratuitos."
-            cantidad={resumen.por_facturar?.cantidad}
-            montos={resumen.por_facturar?.montos}
-            unidad="servicio(s)"
-            tono="amber"
-          />
-          <CardMetrica
-            titulo="Facturado"
-            ayuda="Servicios con la emisión completa (Facturado o Enviada)."
-            cantidad={resumen.facturado?.cantidad}
-            montos={resumen.facturado?.montos}
-            unidad="servicio(s)"
-            tono="green"
-          />
+          {GRUPOS_FACTURACION.map(g => (
+            <CardMetrica
+              key={g.value}
+              titulo={g.titulo}
+              ayuda={g.ayuda}
+              cantidad={resumen[g.value]?.cantidad}
+              montos={resumen[g.value]?.montos}
+              unidad="servicio(s)"
+              tono={g.tono}
+            />
+          ))}
         </div>
       )}
 

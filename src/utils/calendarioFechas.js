@@ -17,6 +17,15 @@ export function mesLabelLima(cursor) {
 }
 
 /**
+ * Igual que `mesLabelLima` pero con el mes abreviado ("set. 2026"). Lo usa la
+ * barra de navegación del calendario en móvil, donde "Setiembre De 2026" no
+ * cabe entre las dos flechas y se cortaba a mitad de palabra.
+ */
+export function mesLabelCortoLima(cursor) {
+  return new Intl.DateTimeFormat('es-PE', { month: 'short', year: 'numeric', timeZone: TZ }).format(cursor);
+}
+
+/**
  * "YYYY-MM-DD" del cursor interpretado como día de Lima. cursor es un Date
  * (instante absoluto); lo formateamos en Lima para tener un YMD estable
  * independiente de la TZ del navegador.

@@ -196,7 +196,10 @@ export default function Dashboard() {
           <KpiCard label="Hoy"              value={data.tecnico?.misHoy || 0}              tone="brand"  icon={Icons.cal}     delay={0} href="/panel-tecnico" />
           <KpiCard label="Pendientes"       value={data.tecnico?.misPendientes || 0}       tone="amber"  icon={Icons.pending} delay={60} href="/panel-tecnico" />
           <KpiCard label="En curso"         value={data.tecnico?.misEnCurso || 0}          tone="violet" icon={Icons.check}   delay={120} href="/panel-tecnico" />
-          <KpiCard label="Finalizados sem." value={data.tecnico?.misFinalizadosSemana || 0} tone="green" icon={Icons.check}   delay={180} href="/panel-tecnico" />
+          {/* "Finalizados sem." no cabe en la mitad de una pantalla de 390px y se
+              cortaba con puntos suspensivos: en móvil se abrevia. */}
+          <KpiCard label={<><span className="sm:hidden">Finalizados</span><span className="hidden sm:inline">Finalizados sem.</span></>}
+                   value={data.tecnico?.misFinalizadosSemana || 0} tone="green" icon={Icons.check} delay={180} href="/panel-tecnico" />
         </div>
       ) : esCoordinador ? (
         <>

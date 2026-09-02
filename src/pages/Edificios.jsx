@@ -168,15 +168,18 @@ export default function Edificios() {
             <option value="">Todos los distritos</option>
             {distritos.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
+          {/* Filtran por la columna "Área", que es el área del edificio: la
+              heredada del contrato de su cliente más aquella en la que sus
+              ascensores ya tengan actividad. */}
           <select className="select max-w-[160px]" value={servicios} onChange={e => setServicios(e.target.value)}>
-            <option value="">Servicios: todos</option>
-            <option value="con">Con servicios</option>
-            <option value="sin">Sin servicios</option>
+            <option value="">Área: todas</option>
+            <option value="con">De servicios</option>
+            <option value="sin">No es de servicios</option>
           </select>
           <select className="select max-w-[160px]" value={proyectos} onChange={e => setProyectos(e.target.value)}>
-            <option value="">Proyectos: todos</option>
-            <option value="con">Con proyectos</option>
-            <option value="sin">Sin proyectos</option>
+            <option value="">Área: todas</option>
+            <option value="con">De proyectos</option>
+            <option value="sin">No es de proyectos</option>
           </select>
           {esSuperAdmin && (
             <select className="select max-w-[160px]" value={estadoFiltro} onChange={e => setEstadoFiltro(e.target.value)}>
@@ -325,7 +328,8 @@ function BadgeInactivo() {
   );
 }
 
-/** Pills que indican si el edificio participa en servicios y/o proyectos. */
+/** Pills del área del edificio: la heredada de su cliente más la que le dé
+ *  la actividad de sus ascensores. '—' solo si su cliente no tiene contrato. */
 function BadgesActividad({ ed }) {
   if (!ed.tiene_servicios && !ed.tiene_proyectos) return <span className="text-xs text-slate-400">—</span>;
   return (

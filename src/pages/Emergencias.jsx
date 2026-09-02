@@ -7,6 +7,8 @@ import Modal from '../components/common/Modal.jsx';
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import { ListaMovil, FilaMovil, AccionFila } from '../components/common/ListaMovil.jsx';
+import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
@@ -206,8 +208,10 @@ export default function Emergencias() {
     <>
       <PageHeader title="Emergencias" subtitle={`${total} emergencia(s)`} actions={puedeCrear && <button onClick={abrirNuevo} className="btn-danger">+ Nueva emergencia</button>} />
 
-      <div className="card mb-4">
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+      <PanelFiltros
+        activos={Object.values(filtros).filter(Boolean).length}
+        onLimpiar={() => setFiltros({ q: '', estado_emergencia: '', nivel_urgencia: '' })}>
+        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
           <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
             value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_emergencia}
@@ -221,11 +225,12 @@ export default function Emergencias() {
             {NIVELES_URGENCIA.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
-      </div>
+      </PanelFiltros>
 
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin emergencias" /> : (
-          <div className="overflow-x-auto scroll-thin">
+          <>
+          <div className="hidden md:block overflow-x-auto scroll-thin">
             <table className="table-base">
               <thead><tr>
                 <th className="table-th">Reportada</th>
@@ -311,6 +316,51 @@ export default function Emergencias() {
               </tbody>
             </table>
           </div>
+
+          {/* MÓVIL. Una emergencia se atiende con el teléfono en la mano: la
+              tarjeta muestra motivo, sitio y estado sin arrastrar la tabla, y
+              conserva el contador de adjuntos y todas las acciones. */}
+          <ListaMovil>
+            {data.map(e => {
+              const editable = puedeEditar
+                && !esEmergenciaCerrada(e.estado_emergencia)
+                && (!e.servicio || esServicioEditable(e.servicio.estado_servicio));
+              const cotizable = (esSuperAdmin || esAdmin)
+                && e.servicio
+                && estaServicioFinalizado(e.servicio.estado_servicio)
+                && !e.servicio.id_cotizacion;
+              const tecnicos = (e.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ');
+              const adjuntos = e._count?.archivos || 0;
+              return (
+                <FilaMovil
+                  key={e.id}
+                  to={e.servicio ? `/servicios/${e.servicio.id}` : undefined}
+                  destacado={!esEmergenciaCerrada(e.estado_emergencia)}
+                  codigo={e.servicio?.codigo}
+                  titulo={e.motivo}
+                  subtitulo={[nombreEdificio(e.ascensor?.edificio) || nombreCliente(e.cliente), e.ascensor?.codigo].filter(Boolean).join(' · ')}
+                  badge={<span className={badgeEstado(e.estado_emergencia)}>{e.estado_emergencia}</span>}
+                  chips={adjuntos > 0 ? <span className="badge-blue text-[10px]">📎 {adjuntos} adjunto{adjuntos > 1 ? 's' : ''}</span> : null}
+                  datos={[
+                    ['Reportada', formatFechaHora(e.fecha_reporte)],
+                    ['Programada', etiquetaProgramacion(e.servicio).texto],
+                    ['Estimada término', e.servicio?.fecha_estimada_entrega ? formatFecha(e.servicio.fecha_estimada_entrega) : null],
+                    ['Técnico', tecnicos || 'Sin asignar']
+                  ]}
+                  acciones={
+                    <>
+                      {e.servicio && <AccionFila to={`/servicios/${e.servicio.id}`}>Ver detalle</AccionFila>}
+                      <AccionFila onClick={() => setAdjuntosDe(e)}>📎 Adjuntos ({adjuntos})</AccionFila>
+                      {cotizable && <AccionFila to={`/cotizaciones?nuevo=1&emergencia=${e.id}`}>Cotizar</AccionFila>}
+                      {editable && <AccionFila onClick={() => abrirEditar(e)}>Editar</AccionFila>}
+                      {puedeEliminar && <AccionFila tono="rose" onClick={() => setAEliminar(e)}>Eliminar</AccionFila>}
+                    </>
+                  }
+                />
+              );
+            })}
+          </ListaMovil>
+          </>
         )}
         {!loading && data.length > 0 && (
           <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}

@@ -30,6 +30,14 @@ import {
 
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
 const TIPOS_EVIDENCIA = ['Foto', 'Video', 'Documento', 'Otro'];
+
+// Iconos del botón flotante de acción principal (solo móvil).
+const ICONO_CHECK = (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+);
+const ICONO_USUARIO = (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+);
 const TIPOS_ENTREGA = ['Entrega parcial', 'Entrega final', 'Entrega documental', 'Entrega técnica'];
 const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
 
@@ -847,6 +855,17 @@ export default function ServicioDetalle() {
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
+  // Acción que el usuario ha venido a hacer en esta pantalla, según su rol y el
+  // estado del servicio. Solo se usa para el botón flotante de móvil: en la
+  // cabecera siguen apareciendo todas, esta es un atajo, no un recorte.
+  const accionPrincipalMovil =
+      puedeFinalizar ? { texto: 'Finalizar', onClick: iniciarFinalizacion, icono: ICONO_CHECK }
+    : puedeRevisar   ? { texto: 'Revisar',   onClick: () => abrirRevisar('aprobado'), icono: ICONO_CHECK }
+    : puedePromover  ? { texto: 'Promover',  onClick: promover, icono: ICONO_CHECK }
+    : (puedeAsignar && !s.asignaciones?.length)
+                     ? { texto: 'Asignar',   onClick: iniciarAsignar, icono: ICONO_USUARIO }
+    : null;
+
   return (
     <>
       <PageHeader title={`${s.codigo} · ${s.titulo}`}
@@ -1495,7 +1514,8 @@ export default function ServicioDetalle() {
             </div>
             <div className="card-body">
               {!s.entregas?.length ? <p className="text-sm text-slate-500">Sin entregas registradas</p> : (
-                <div className="overflow-x-auto scroll-thin">
+                <>
+                <div className="hidden sm:block overflow-x-auto scroll-thin">
                   <table className="table-base">
                     <thead><tr>
                       <th className="table-th">Fecha</th><th className="table-th">Tipo</th>
@@ -1515,6 +1535,27 @@ export default function ServicioDetalle() {
                     </tbody>
                   </table>
                 </div>
+                {/* Móvil: las cinco columnas no caben sin arrastrar; cada entrega
+                    pasa a ser una tarjeta con la misma información y el mismo
+                    acceso al archivo. */}
+                <ul className="sm:hidden space-y-2.5">
+                  {s.entregas.map(en => (
+                    <li key={en.id} className="rounded-lg ring-1 ring-slate-200 p-3">
+                      <div className="flex items-start justify-between gap-2 flex-wrap">
+                        <span className="badge-blue">{en.tipo_entrega}</span>
+                        <span className={badgeEstado(en.estado_entrega)}>{en.estado_entrega}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1.5">{formatFecha(en.fecha_entrega)}</div>
+                      {en.descripcion && <p className="text-sm text-slate-800 mt-1 break-words">{en.descripcion}</p>}
+                      {en.archivo && (
+                        <FileLink archivo={en.archivo} className="text-brand-700 text-xs hover:underline mt-1.5 inline-block">
+                          📎 Ver archivo
+                        </FileLink>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                </>
               )}
             </div>
           </div>
@@ -1956,6 +1997,23 @@ export default function ServicioDetalle() {
         </form>
       </Modal>
 
+      {/* ACCIÓN PRINCIPAL EN MÓVIL.
+          Esta pantalla es larguísima: checklist, dos galerías de evidencias,
+          observaciones, historial… Después de documentar el trabajo, el técnico
+          tenía que volver hasta el encabezado para pulsar "Finalizar". El botón
+          flotante lo deja siempre a mano, por encima de la nav inferior. En
+          escritorio no aparece: allí la cabecera está a la vista. */}
+      {accionPrincipalMovil && (
+        <div className="lg:hidden fixed right-4 z-30 [bottom:calc(5.75rem+env(safe-area-inset-bottom,0px))]">
+          <button
+            type="button"
+            onClick={accionPrincipalMovil.onClick}
+            className="btn-primary !rounded-full !px-5 shadow-lifted animate-rise-sm">
+            {accionPrincipalMovil.icono}
+            {accionPrincipalMovil.texto}
+          </button>
+        </div>
+      )}
     </>
   );
 }

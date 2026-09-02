@@ -9,14 +9,26 @@
  * DOM renderizado (que solo contiene la página visible).
  *
  * Definición de columna:
- *   { header: string, get: (row, index) => any, align?: 'right', badge?: boolean }
- *     - get:   extrae/formatea el valor de la fila (ya formateado: montos, fechas…).
- *              `index` es la posición 0-based dentro del set exportado (para "#").
- *     - align: 'right' alinea a la derecha (montos).
- *     - badge: renderiza el valor como insignia de estado (color por `badgeEstado`).
+ *   { header, get, align?, badge?, num?, formato? }
+ *     - get:     extrae/formatea el valor de la fila (ya formateado: montos, fechas…).
+ *                `index` es la posición 0-based dentro del set exportado (para "#").
+ *     - align:   'right' alinea a la derecha (montos).
+ *     - badge:   renderiza el valor como insignia de estado (color por `badgeEstado`).
+ *     - num:     (row, index) => number|null. Valor CRUDO para Excel: la celda se
+ *                exporta como número (sumable y filtrable), no como texto. El
+ *                texto de `get` se sigue usando en pantalla y en el PDF.
+ *     - formato: máscara de Excel de la celda numérica (por defecto #,##0.00).
+ *
+ * El importe viaja SIN símbolo de moneda: la divisa va en su propia columna
+ * (`etiquetaMoneda`), para poder filtrar y totalizar soles y dólares por
+ * separado. Las columnas de importe que no declaren `num` se convierten igual al
+ * serializar (`excelNumeros.prepararTablaExcel` reconoce "S/ 1,234.56"), pero
+ * declararlo es preferible: no depende del formateo y permite exportar
+ * cantidades sin símbolo (días de mora, número de cuotas).
  */
 import { generarReportePDF } from './pdfReport.js';
 import { badgeEstado } from './formatters.js';
+import { marcarCeldaNumerica, tablaHTMLParaExcel, FORMATO_EXCEL } from './excelNumeros.js';
 
 const TZ_LIMA = 'America/Lima';
 const EXCEL_MIME = 'application/vnd.ms-excel;charset=utf-8';
@@ -29,6 +41,12 @@ const fechaHoraLima = () => new Date().toLocaleString('es-PE', { timeZone: TZ_LI
 
 function textoCelda(valor) {
   return valor === null || valor === undefined || valor === '' ? PLACEHOLDER_VACIO : String(valor);
+}
+
+/** Máscara de Excel de una columna numérica: la declarada, o decimal. */
+function formatoDeColumna(col, row) {
+  if (col.formato) return typeof col.formato === 'function' ? col.formato(row) : col.formato;
+  return FORMATO_EXCEL.decimal;
 }
 
 /**
@@ -67,6 +85,8 @@ export function construirTablaExport(columnas, filas) {
       } else {
         if (col.align === 'right') td.setAttribute('style', 'text-align:right');
         td.textContent = texto;
+        // Valor crudo para que Excel reciba un número, no una cadena.
+        if (col.num) marcarCeldaNumerica(td, col.num(row, index), formatoDeColumna(col, row));
       }
       tr.appendChild(td);
     }
@@ -115,7 +135,9 @@ function descargarBlob(blob, archivo) {
  */
 export function exportarExcelTabla({ titulo, columnas, filas, filtros = [], archivo }) {
   const tabla = construirTablaExport(columnas, filas);
-  const html = plantillaExcel(titulo, tabla.outerHTML, filtros);
+  // `tablaHTMLParaExcel` trabaja sobre un clon: convierte las celdas marcadas
+  // (y los importes detectados) en celdas numéricas antes de serializar.
+  const html = plantillaExcel(titulo, tablaHTMLParaExcel(tabla), filtros);
   descargarBlob(new Blob([BOM_UTF8, html], { type: EXCEL_MIME }), archivo);
 }
 

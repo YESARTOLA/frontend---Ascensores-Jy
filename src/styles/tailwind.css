@@ -46,6 +46,27 @@
   }
 
   h1, h2, h3, h4 { font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.01em; }
+
+  /* ---------- MÓVIL: reglas base ----------
+     El técnico trabaja en obra desde el teléfono: estas reglas son el piso
+     mínimo de usabilidad táctil, y aplican a TODA la app sin tocar cada vista. */
+  @media (max-width: 767px) {
+    /* Safari iOS hace zoom automático al enfocar un campo de menos de 16px y
+       deja la vista descuadrada. 16px exactos lo evitan. */
+    input, select, textarea { font-size: 16px !important; }
+    /* …salvo donde el 16px rompería una celda (chips, notas del checklist):
+       esas usan .input-compacto, que conserva 16px pero con menos alto. */
+    input[type="checkbox"], input[type="radio"] { font-size: inherit !important; }
+
+    /* NO poner aquí `html, body { overflow-x: hidden }`: con `h-full` en ambos,
+       eso convierte al body en el contenedor de scroll en vez del viewport, y
+       se pierden el scroll-to-top al navegar y el auto-ocultado de la barra de
+       direcciones del navegador móvil. El scroll horizontal se evita en el
+       origen: cada tabla ancha va dentro de su propio `.overflow-x-auto`. */
+
+    /* Momentum nativo en los contenedores que sí scrollean en horizontal. */
+    .overflow-x-auto { -webkit-overflow-scrolling: touch; }
+  }
 }
 
 @layer components {
@@ -56,7 +77,14 @@
            transition-[transform,box-shadow,background,color] duration-300 will-change-transform
            disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
     letter-spacing: -0.005em;
+    /* Target táctil mínimo recomendado: con guantes en obra, 44px es el piso. */
+    min-height: 44px;
+    touch-action: manipulation;
   }
+  @media (min-width: 640px) { .btn { min-height: 0; } }
+  /* Feedback táctil: en móvil no hay hover, así que el `:active` es la única
+     confirmación de que el toque se registró. */
+  .btn:active { transform: scale(.97); }
   .btn-primary {
     @apply btn text-white shadow-ember;
     background-image: linear-gradient(135deg, #e8853a 0%, #d2702e 45%, #ad5826 100%);
@@ -92,11 +120,14 @@
     box-shadow: 0 4px 12px -2px rgba(40,62,73,0.10), 0 16px 36px -10px rgba(40,62,73,0.16);
     transform: translateY(-2px);
   }
+  /* La cabecera envuelve en móvil: un título largo + 2 botones no caben en una
+     línea de 360px y, sin wrap, el botón se salía de la tarjeta. */
   .card-header {
-    @apply px-5 py-4 border-b border-carbon-100/80 flex items-center justify-between gap-3;
+    @apply px-4 sm:px-5 py-3.5 sm:py-4 border-b border-carbon-100/80
+           flex flex-wrap items-center justify-between gap-2 sm:gap-3;
   }
-  .card-title { @apply text-base font-semibold text-carbon-900 tracking-tight; font-family: 'Bricolage Grotesque', sans-serif; }
-  .card-body { @apply p-5; }
+  .card-title { @apply text-[15px] sm:text-base font-semibold text-carbon-900 tracking-tight; font-family: 'Bricolage Grotesque', sans-serif; }
+  .card-body { @apply p-4 sm:p-5; }
 
   /* ---------- INPUTS ---------- */
   .input,
@@ -187,6 +218,62 @@
     100% { background-position:  200% 0; }
   }
 
+  /* ================================================================
+     MÓVIL · componentes de la vista de obra
+     El rol Técnico trabaja desde el teléfono: estas piezas son las que
+     reemplazan a las tablas y a las barras de acciones del escritorio.
+     ================================================================ */
+
+  /* Fila de una lista en móvil: sustituye a una <tr> cuando la tabla no cabe.
+     Toda la fila es tocable (el enlace ocupa el bloque completo). */
+  .fila-movil {
+    @apply block w-full text-left px-4 py-3.5 transition
+           active:bg-ember-50/60;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Par etiqueta/valor dentro de una fila móvil. */
+  .dato-movil { @apply flex items-baseline justify-between gap-3 text-xs; }
+  .dato-movil > dt { @apply text-carbon-400 shrink-0; }
+  .dato-movil > dd { @apply text-carbon-700 text-right min-w-0 truncate; }
+
+  /* Barra de acciones horizontal: en vez de apilar 6 botones y empujar el
+     contenido fuera de pantalla, se deslizan lateralmente. */
+  .barra-acciones {
+    @apply flex items-center gap-2 overflow-x-auto scroll-thin;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+  .barra-acciones::-webkit-scrollbar { display: none; }
+  .barra-acciones > * { @apply shrink-0; scroll-snap-align: start; }
+
+  /* Barra de acción primaria fija al pie (sobre la nav inferior). Solo móvil:
+     el técnico llega a "Finalizar" sin recorrer una pantalla de tres metros. */
+  .barra-fija {
+    @apply lg:hidden fixed left-0 right-0 z-30 px-3 pt-2
+           bg-ivory-50/92 backdrop-blur-xl border-t border-carbon-200/70;
+    bottom: 0;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+
+  /* Segmentado táctil (Sí / No / N/A del checklist). Radios de 13px son
+     imposibles de acertar con el dedo; esto los convierte en botones. */
+  .segmento {
+    @apply flex-1 inline-flex items-center justify-center rounded-lg px-2 py-2
+           text-[13px] font-semibold ring-1 ring-carbon-200 bg-white text-carbon-600
+           transition cursor-pointer select-none;
+    min-height: 40px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .segmento:active { transform: scale(.96); }
+  .segmento-si   { @apply ring-emerald-500 bg-emerald-50 text-emerald-800; }
+  .segmento-no   { @apply ring-rose-500 bg-rose-50 text-rose-800; }
+  .segmento-na   { @apply ring-carbon-400 bg-carbon-100 text-carbon-800; }
+
+  /* Input compacto que conserva los 16px anti-zoom de iOS. */
+  .input-compacto { @apply input !py-1.5 !px-2.5 !text-[13px] sm:!text-xs; }
+  @media (max-width: 767px) { .input-compacto { font-size: 16px !important; } }
+
   /* chevron marca-ascensor (▲▼ del logo) */
   .chevs {
     @apply inline-flex flex-col items-center gap-[3px] leading-none;
@@ -212,6 +299,17 @@
 
   .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
   .scroll-thin::-webkit-scrollbar-thumb { background: rgba(77,128,147,0.35); border-radius: 99px; }
+
+  /* Zona segura del dispositivo (barra de gestos del iPhone, notch). Sin esto,
+     la nav inferior y los footers de los modales quedan bajo el indicador. */
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .mb-safe { margin-bottom: env(safe-area-inset-bottom, 0px); }
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+
+  /* Alto del viewport que descuenta la barra de direcciones móvil. `dvh` con
+     `vh` de respaldo para navegadores viejos. */
+  .h-dvh { height: 100vh; height: 100dvh; }
+  .max-h-dvh { max-height: 100vh; max-height: 100dvh; }
 
   /* gradiente texto teal→ámbar */
   .text-gradient {

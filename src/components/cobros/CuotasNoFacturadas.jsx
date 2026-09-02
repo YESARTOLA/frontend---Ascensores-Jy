@@ -10,6 +10,7 @@ import { useToast } from '../common/Toast.jsx';
 import { formatFecha, formatFechaHora, formatMonto, hoyISO } from '../../utils/formatters.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../../utils/exportTabla.js';
+import { etiquetaMoneda } from '../../utils/excelNumeros.js';
 
 // Espejo de las opciones del filtro por tipo de servicio de Cobros.jsx.
 const TIPOS_CATEGORIA = [
@@ -53,6 +54,11 @@ const FILTROS_INIT = {
 };
 
 // Columnas del export (espejo de la tabla).
+// Moneda de la cuota: la del cobro al que pertenece (soles por defecto).
+const monedaDe = (f) => f.cobro?.moneda || 'PEN';
+
+// Columnas del export. Los importes van con `num` (celdas numéricas en Excel) y
+// "Moneda" permite filtrar soles / dólares por separado.
 const COLUMNAS_EXPORT = [
   { header: 'Cliente', get: f => f.cliente?.nombre },
   { header: 'DNI / RUC', get: f => (docCliente(f) === '—' ? '' : docCliente(f)) },
@@ -63,8 +69,9 @@ const COLUMNAS_EXPORT = [
   { header: 'Cuota', get: f => etiquetaCuota(f) },
   { header: 'Fecha de vencimiento', get: f => (f.fecha_vencimiento ? formatFecha(f.fecha_vencimiento) : '') },
   { header: 'Fecha de registro', get: f => (f.fecha_registro ? formatFecha(f.fecha_registro) : '') },
-  { header: 'Monto cuota', align: 'right', get: f => formatMonto(f.monto, f.cobro?.moneda) },
-  { header: 'Pagado', align: 'right', get: f => (Number(f.monto_pagado) > 0 ? formatMonto(f.monto_pagado, f.cobro?.moneda) : '') },
+  { header: 'Moneda', get: f => etiquetaMoneda(monedaDe(f)) },
+  { header: 'Monto cuota', align: 'right', get: f => formatMonto(f.monto, monedaDe(f)), num: f => Number(f.monto) },
+  { header: 'Pagado', align: 'right', get: f => (Number(f.monto_pagado) > 0 ? formatMonto(f.monto_pagado, monedaDe(f)) : ''), num: f => (Number(f.monto_pagado) > 0 ? Number(f.monto_pagado) : null) },
   { header: 'Estado', badge: true, get: f => estadoCuota(f, hoyISO()).texto }
 ];
 

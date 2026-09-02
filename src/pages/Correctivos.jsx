@@ -7,6 +7,8 @@ import Modal from '../components/common/Modal.jsx';
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import { ListaMovil, FilaMovil, AccionFila } from '../components/common/ListaMovil.jsx';
+import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
@@ -239,8 +241,10 @@ export default function Correctivos() {
         actions={puedeCrear && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo correctivo</button>}
       />
 
-      <div className="card mb-4">
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+      <PanelFiltros
+        activos={Object.values(filtros).filter(Boolean).length}
+        onLimpiar={() => setFiltros({ q: '', estado_correctivo: '', nivel_urgencia: '' })}>
+        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
           <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
             value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_correctivo}
@@ -253,11 +257,12 @@ export default function Correctivos() {
             {NIVELES.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
-      </div>
+      </PanelFiltros>
 
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin correctivos" /> : (
-          <div className="overflow-x-auto scroll-thin">
+          <>
+          <div className="hidden lg:block overflow-x-auto scroll-thin">
             <table className="table-base">
               <thead>
                 <tr>
@@ -353,6 +358,68 @@ export default function Correctivos() {
               </tbody>
             </table>
           </div>
+
+          {/* MÓVIL. La tabla tiene quince columnas: en un teléfono obligaba a
+              arrastrar de lado perdiendo de vista el edificio. Cada correctivo
+              pasa a ser una tarjeta con los MISMOS datos y las mismas acciones. */}
+          <ListaMovil hasta="lg">
+            {data.map(c => {
+              const ej = c.ejecucion || {};
+              const editable = puedeEditar
+                && !esCorrectivoCerrado(c.estado_correctivo)
+                && (!c.servicio || esServicioEditable(c.servicio.estado_servicio));
+              const tecnicos = (c.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ');
+              return (
+                <FilaMovil
+                  key={c.id}
+                  to={c.servicio ? `/servicios/${c.servicio.id}` : undefined}
+                  destacado={c.nivel_urgencia === 'alta' && !esCorrectivoCerrado(c.estado_correctivo)}
+                  codigo={c.servicio?.codigo}
+                  titulo={c.falla}
+                  subtitulo={[nombreEdificio(c.ascensor?.edificio) || nombreCliente(c.cliente), c.ascensor?.codigo].filter(Boolean).join(' · ')}
+                  badge={<span className={badgeEstado(c.estado_correctivo)}>{c.estado_correctivo}</span>}
+                  chips={
+                    <>
+                      <span className={`badge ${badgeUrgencia(c.nivel_urgencia)}`}>{c.nivel_urgencia}</span>
+                      {ej.estado_ejecucion && <span className={badgeEstado(ej.estado_ejecucion)}>{ej.estado_ejecucion}</span>}
+                      {c.servicio?.sin_cobro === 1 && <span className="badge-amber text-[10px]">Gratuito</span>}
+                      {c.servicio && (
+                        <span className={`text-[10px] ${c.servicio.sin_cobro === 1 || c.servicio.requiere_factura === 0 ? 'badge-gray' : 'badge-blue'}`}>
+                          {c.servicio.sin_cobro === 1 || c.servicio.requiere_factura === 0 ? 'Sin factura' : 'Con factura'}
+                        </span>
+                      )}
+                    </>
+                  }
+                  datos={[
+                    ['Reportado', formatFechaHora(c.fecha_reporte)],
+                    ['Programada', etiquetaProgramacion(c.servicio).texto],
+                    ['Estimada término', c.servicio?.fecha_estimada_entrega ? formatFecha(c.servicio.fecha_estimada_entrega) : null],
+                    ['Técnico', tecnicos || 'Sin asignar'],
+                    ['Inicio', ej.fecha_inicio_real ? formatFechaHora(ej.fecha_inicio_real) : null],
+                    ['Término', ej.fecha_fin_real ? formatFechaHora(ej.fecha_fin_real) : null],
+                    ['Duración', formatDuracion(ej.fecha_inicio_real, ej.fecha_fin_real) !== '—' ? formatDuracion(ej.fecha_inicio_real, ej.fecha_fin_real) : null],
+                    ['Observaciones', c.observaciones]
+                  ]}
+                  acciones={(c.servicio || editable || puedeEliminar) && (
+                    <>
+                      {c.servicio && <AccionFila to={`/servicios/${c.servicio.id}`}>Ver detalle</AccionFila>}
+                      {editable && <AccionFila onClick={() => abrirEditar(c)}>Editar</AccionFila>}
+                      {/* El interruptor con/sin factura vive aquí y no entre los
+                          chips: dentro del enlace de la fila sería un botón
+                          anidado en un <a>, que ni es válido ni se puede tocar. */}
+                      {puedeEditar && c.servicio && c.servicio.sin_cobro !== 1 && (
+                        <AccionFila onClick={() => toggleRequiereFactura(c)}>
+                          {c.servicio.requiere_factura === 0 ? 'Marcar con factura' : 'Marcar sin factura'}
+                        </AccionFila>
+                      )}
+                      {puedeEliminar && <AccionFila tono="rose" onClick={() => setAEliminar(c)}>Eliminar</AccionFila>}
+                    </>
+                  )}
+                />
+              );
+            })}
+          </ListaMovil>
+          </>
         )}
         {!loading && data.length > 0 && (
           <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}

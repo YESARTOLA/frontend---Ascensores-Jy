@@ -8,6 +8,8 @@ import Modal from '../components/common/Modal.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import { ListaMovil, FilaMovil, AccionFila } from '../components/common/ListaMovil.jsx';
+import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores } from '../utils/formatters.js';
 import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
@@ -100,9 +102,11 @@ export default function ServiciosRealizados() {
     <>
       <PageHeader title="Servicios realizados" subtitle={`${total.toLocaleString('es-PE')} servicio(s) finalizado(s)`} />
 
-      <div className="card mb-4">
-        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-          <input className="input lg:col-span-2"
+      <PanelFiltros
+        activos={Object.values(filtros).filter(Boolean).length}
+        onLimpiar={() => setFiltros(FILTROS_INICIALES)}>
+        <div className="p-3 sm:p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          <input className="input col-span-2"
             placeholder="Buscar por código de servicio o cliente…"
             value={filtros.q}
             onChange={e => setF('q', e.target.value)} />
@@ -130,13 +134,14 @@ export default function ServiciosRealizados() {
             onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, desde, hasta }))}
             placeholder="Rango de realización"
           />
-          <button onClick={() => setFiltros(FILTROS_INICIALES)} className="btn-secondary lg:col-span-6">Limpiar filtros</button>
+          <button onClick={() => setFiltros(FILTROS_INICIALES)} className="btn-secondary col-span-2 sm:col-span-3 lg:col-span-6">Limpiar filtros</button>
         </div>
-      </div>
+      </PanelFiltros>
 
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin servicios realizados" /> : (
-          <div className="overflow-x-auto scroll-thin">
+          <>
+          <div className="hidden lg:block overflow-x-auto scroll-thin">
             <table className="table-base">
               <thead><tr>
                 <th className="table-th">Fecha</th><th className="table-th">Código</th>
@@ -199,6 +204,64 @@ export default function ServiciosRealizados() {
               </tbody>
             </table>
           </div>
+
+          {/* MÓVIL. El técnico consulta aquí lo que ya cerró: qué entregó, si la
+              guía subió y en qué punto administrativo está. Los indicadores que
+              en la tabla son columnas numéricas (guía / evidencias / checklist)
+              se convierten en chips legibles de un vistazo. */}
+          <ListaMovil hasta="lg">
+            {data.map(r => {
+              const docu = r.servicio?.asignaciones?.find(a => a.responsable_documentacion === 1);
+              const guias = r.servicio?.guias || [];
+              const evidencias = r.servicio?.evidencias || [];
+              const checklist = r.servicio?.checklists?.[0]?.estado_checklist;
+              const tieneNotas = r.observaciones_tecnicas || r.descargo_tecnico;
+              return (
+                <FilaMovil
+                  key={r.id}
+                  to={`/servicios/${r.id_servicio}`}
+                  codigo={r.servicio?.codigo}
+                  titulo={r.servicio?.cliente?.nombre}
+                  subtitulo={[resumenAscensores(r.servicio), r.servicio?.tipo_servicio?.nombre].filter(Boolean).join(' · ')}
+                  badge={<span className={badgeEstado(r.estado_administrativo)}>{r.estado_administrativo}</span>}
+                  chips={
+                    <>
+                      {r.servicio?.id_cotizacion
+                        ? <span className="badge-violet text-[10px]">Cotización</span>
+                        : <span className="badge-gray text-[10px]">Operativo</span>}
+                      <span className={`text-[10px] ${guias.length > 0 ? 'badge-green' : 'badge-red'}`}>
+                        {guias.length > 0 ? `Guía · ${guias.length}` : 'Sin guía'}
+                      </span>
+                      <span className="badge-gray text-[10px]">Evid. {evidencias.length}</span>
+                      {checklist && <span className={badgeEstado(checklist)}>{checklist}</span>}
+                      {verCobroFactura && r.estado_cobro && <span className={badgeEstado(r.estado_cobro)}>{r.estado_cobro}</span>}
+                      {verCobroFactura && r.estado_facturacion && <span className={badgeEstado(r.estado_facturacion)}>{r.estado_facturacion}</span>}
+                    </>
+                  }
+                  datos={[
+                    ['Realizado', formatFecha(r.fecha_realizacion)],
+                    ['Técnicos', r.servicio?.asignaciones?.map(a => a.tecnico?.nombre).join(', ') || null],
+                    ['Resp. documental', docu?.tecnico?.nombre || null],
+                    ...(puedeVerPrecio ? [['Precio', formatMonto(r.servicio?.precio_interno, r.servicio?.moneda)]] : [])
+                  ]}
+                  acciones={(tieneNotas || (puedeRevisar && r.servicio?.estado_servicio === 'En revisión administrativa') || (guias[0]?.archivo)) && (
+                    <>
+                      {tieneNotas && <AccionFila onClick={() => setOpenDetalle(r)}>Ver notas técnicas</AccionFila>}
+                      {guias[0]?.archivo && (
+                        <FileLink archivo={guias[0].archivo} className="inline-flex items-center min-h-[36px] text-xs font-semibold text-brand-700">
+                          Ver guía
+                        </FileLink>
+                      )}
+                      {puedeRevisar && r.servicio?.estado_servicio === 'En revisión administrativa' && (
+                        <AccionFila tono="emerald" onClick={() => setRevisarEv(r)}>Revisar</AccionFila>
+                      )}
+                    </>
+                  )}
+                />
+              );
+            })}
+          </ListaMovil>
+          </>
         )}
         {!loading && data.length > 0 && (
           <Pagination page={page} pageSize={pageSize} total={total} totalPages={totalPages}

@@ -58,10 +58,10 @@ function Link({ to, icon, label, onClose }) {
     <NavLink
       to={to}
       onClick={onClose}
-      className={({ isActive }) => 'sidebar-link group' + (isActive ? ' sidebar-link-active' : '')}
+      className={({ isActive }) => 'sidebar-link group min-h-[44px] active:bg-carbon-100/70' + (isActive ? ' sidebar-link-active' : '')}
       end
     >
-      <span className="grid place-items-center h-7 w-7 rounded-lg ring-1 ring-transparent group-hover:ring-carbon-200 group-hover:bg-white transition">
+      <span className="grid place-items-center h-7 w-7 shrink-0 rounded-lg ring-1 ring-transparent group-hover:ring-carbon-200 group-hover:bg-white transition">
         {icon}
       </span>
       <span className="truncate">{label}</span>
@@ -79,7 +79,7 @@ export default function Sidebar({ open, onClose }) {
       {/* Drawer móvil */}
       <div className={`fixed inset-0 z-40 lg:hidden transition ${open ? 'pointer-events-auto' : 'pointer-events-none'}`}>
         <div className={`absolute inset-0 bg-carbon-900/35 backdrop-blur-[2px] transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0'}`} onClick={onClose} />
-        <aside className={`absolute inset-y-0 left-0 w-72 shadow-panel transform transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'} flex flex-col`}>
+        <aside className={`absolute inset-y-0 left-0 w-[85vw] max-w-xs shadow-panel transform transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'} flex flex-col`}>
           <SidebarSurface>
             <Header />
             <Nav onClose={onClose} visibleFor={visibleFor} rol={rol} {...alcance} />
@@ -139,7 +139,7 @@ function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
   // entrada (el guard de rutas de App.jsx lo refuerza por URL).
   if (rol === 'central_ventas') {
     return (
-      <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
+      <nav className="px-3 py-4 flex-1 overflow-y-auto overscroll-contain scroll-thin [padding-bottom:calc(1rem+env(safe-area-inset-bottom,0px))]">
         <Section label="Comercial" />
         <Link to="/leads" icon={ICONS.briefcase} label="Leads" onClose={onClose} />
       </nav>
@@ -149,7 +149,7 @@ function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
   // Calendario (solo lectura): su menú se reduce a esas dos entradas.
   if (rol === 'vendedora') {
     return (
-      <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
+      <nav className="px-3 py-4 flex-1 overflow-y-auto overscroll-contain scroll-thin [padding-bottom:calc(1rem+env(safe-area-inset-bottom,0px))]">
         <Section label="Comercial" />
         <Link to="/leads" icon={ICONS.briefcase} label="Mis leads" onClose={onClose} />
         <Link to="/calendario" icon={ICONS.calendar} label="Calendario" onClose={onClose} />
@@ -157,7 +157,7 @@ function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
     );
   }
   return (
-    <nav className="px-3 py-4 flex-1 overflow-y-auto scroll-thin">
+    <nav className="px-3 py-4 flex-1 overflow-y-auto overscroll-contain scroll-thin [padding-bottom:calc(1rem+env(safe-area-inset-bottom,0px))]">
       <Section label="Operación" />
       <Link to="/" icon={ICONS.dashboard} label="Dashboard" onClose={onClose} />
       {visibleFor('super_admin', 'admin', 'contabilidad') && (

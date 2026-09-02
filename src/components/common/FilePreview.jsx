@@ -91,15 +91,15 @@ function PreviewModal({ file, onClose }) {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button onClick={descargar}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-medium transition"
+                  className="inline-flex items-center gap-1.5 h-11 sm:h-9 px-3.5 rounded-lg bg-white/15 hover:bg-white/25 active:bg-white/30 text-white text-xs font-medium transition"
                   title="Descargar">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
             </svg>
             <span className="hidden sm:inline">Descargar</span>
           </button>
           <button onClick={onClose}
-                  className="grid place-items-center h-9 w-9 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
+                  className="grid place-items-center h-11 w-11 sm:h-9 sm:w-9 rounded-lg bg-white/15 hover:bg-white/25 active:bg-white/30 text-white transition"
                   aria-label="Cerrar">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -108,14 +108,20 @@ function PreviewModal({ file, onClose }) {
         </div>
       </div>
 
-      {/* Contenido */}
-      <div className="relative z-0 w-full h-full max-w-[1400px] max-h-[calc(100vh-32px)] flex items-center justify-center p-4 sm:p-12 animate-modal-in">
-        <div className="w-full h-full flex items-center justify-center">
+      {/* Contenido.
+          `pt-16` en móvil deja libre la barra de herramientas superior, que allí
+          se superpone al contenido; y la caja pasa a `overflow-auto` al ampliar
+          una imagen, para poder recorrerla arrastrando (antes se salía del
+          contenedor centrado y las partes fuera de pantalla eran inalcanzables). */}
+      <div className={`relative z-0 w-full h-full max-w-[1400px] max-h-dvh flex items-center justify-center
+                       pt-16 pb-4 px-3 sm:p-12 animate-modal-in ${imgZoom ? 'overflow-auto' : ''}`}>
+        <div className={`w-full h-full flex items-center justify-center ${imgZoom ? 'min-w-min min-h-min' : ''}`}>
           {tipo === 'imagen' && (
             <img
               src={url}
               alt={name}
               onClick={() => setImgZoom(z => !z)}
+              style={{ touchAction: 'pinch-zoom' }}
               className={`${imgZoom ? 'max-w-none max-h-none cursor-zoom-out' : 'max-w-full max-h-full cursor-zoom-in'} object-contain rounded-lg shadow-2xl transition-transform select-none`}
               draggable={false}
             />

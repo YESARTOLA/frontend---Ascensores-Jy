@@ -66,7 +66,10 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 max-w-sm w-[calc(100%-2rem)] sm:w-[24rem] pointer-events-none">
+      {/* En móvil el aviso baja por debajo de la barra superior (h-14): pegado a
+          `top-4` tapaba la campana y el menú justo cuando el usuario acababa de
+          tocarlos. */}
+      <div className="fixed top-[4.25rem] sm:top-4 right-4 z-[100] flex flex-col gap-2 max-w-sm w-[calc(100%-2rem)] sm:w-[24rem] pointer-events-none">
         {items.map(t => {
           const c = tone[t.type];
           return (

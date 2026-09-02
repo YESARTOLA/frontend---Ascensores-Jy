@@ -118,9 +118,14 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
             {TIPOS_DOCUMENTO.map(t => <option key={t.valor} value={t.valor}>{t.etiqueta}</option>)}
           </select>
         </div>
+        {/* El `pattern` usa [0-9] y no \d a propósito: se arma con un template
+            literal de JavaScript, donde `\d` se colapsa a una "d" suelta y el
+            atributo saldría como "d{8}" — ocho letras d, que ningún número
+            cumple, bloqueando el guardado. (Los `pattern` escritos más arriba
+            como cadena JSX sí conservan el \d: ahí no hay escape de JS.) */}
         <div className="sm:col-span-2"><label className="label">{docElegido.documento}</label><input
           className="input" inputMode="numeric" maxLength={String(docElegido.longitud)}
-          pattern={`\d{${docElegido.longitud}}`}
+          pattern={`[0-9]{${docElegido.longitud}}`}
           placeholder={`${docElegido.longitud} dígitos`}
           title={`${docElegido.documento} de ${docElegido.longitud} dígitos numéricos`}
           value={value.ruc} onChange={e => set({ ruc: e.target.value.replace(/\D/g, '') })}

@@ -182,9 +182,9 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
           </span>
         </h3>
         {esMultidia && puedeEditar && dias.length > 0 && (
-          <label className="text-xs text-slate-600 inline-flex items-center gap-1">
-            Día de la foto:
-            <select className="input !py-1 !text-xs !w-auto" value={diaActivo} onChange={e => setDiaActivo(e.target.value)}>
+          <label className="text-xs text-slate-600 flex items-center gap-2 w-full sm:w-auto">
+            <span className="shrink-0">Día de la foto:</span>
+            <select className="input-compacto !w-auto flex-1 sm:flex-none" value={diaActivo} onChange={e => setDiaActivo(e.target.value)}>
               {dias.map(d => <option key={d.id} value={d.id}>Día {d.orden} · {formatFecha(d.fecha)}</option>)}
             </select>
           </label>
@@ -205,25 +205,33 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
               const faltaFoto = esSi && (!r.fotos || r.fotos.length === 0);
               return (
                 <div key={it.id} className={`rounded-lg ring-1 p-3 bg-white ${faltaFoto ? 'ring-rose-200' : 'ring-slate-200'}`}>
-                  <div className="flex items-start justify-between gap-3 mb-2">
+                  {/* En móvil la pregunta ocupa el ancho y las respuestas van
+                      debajo como tres botones grandes; los radios de 13px eran
+                      imposibles de acertar con el dedo (y con guantes, peor).
+                      A partir de `sm` vuelve el layout de una sola línea. */}
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-3 mb-2">
                     <p className="text-sm text-slate-800 flex-1">{it.texto}</p>
-                    <div className="flex items-center gap-3 text-xs shrink-0">
-                      {[['si', 'Sí'], ['no', 'No'], ['na', 'N/A']].map(([val, lbl]) => (
-                        <label key={val} className={`inline-flex items-center gap-1 ${puedeEditar ? 'cursor-pointer' : 'opacity-60'}`}>
-                          <input type="radio" name={`r-${it.id}`} value={val} disabled={!puedeEditar}
-                            checked={r.respuesta === val}
-                            onChange={() => elegirRespuesta(it, val)} />
-                          <span className={r.respuesta === val
-                            ? val === 'si' ? 'font-semibold text-emerald-700'
-                            : val === 'no' ? 'font-semibold text-red-700'
-                            : 'font-semibold text-slate-700'
-                            : 'text-slate-600'}>{lbl}</span>
-                        </label>
-                      ))}
+                    <div className="flex items-stretch gap-2 sm:shrink-0 sm:w-auto">
+                      {[['si', 'Sí'], ['no', 'No'], ['na', 'N/A']].map(([val, lbl]) => {
+                        const activo = r.respuesta === val;
+                        const tono = activo
+                          ? (val === 'si' ? 'segmento-si' : val === 'no' ? 'segmento-no' : 'segmento-na')
+                          : '';
+                        return (
+                          <label key={val}
+                            className={`segmento sm:flex-none sm:min-w-[54px] ${tono} ${puedeEditar ? '' : 'opacity-60 pointer-events-none'}`}>
+                            <input type="radio" name={`r-${it.id}`} value={val} disabled={!puedeEditar}
+                              className="sr-only"
+                              checked={activo}
+                              onChange={() => elegirRespuesta(it, val)} />
+                            {lbl}
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  <input className="input !py-1 !text-xs" placeholder="Nota (opcional)"
+                  <input className="input-compacto" placeholder="Nota (opcional)"
                     defaultValue={r.nota}
                     disabled={!puedeEditar || !r.respuesta}
                     onBlur={e => guardarNota(it, e.target.value)} />
@@ -232,7 +240,7 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
                     <div className="mt-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {puedeEditar && (
-                          <label className={`btn-secondary cursor-pointer text-xs ${subiendo === it.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                          <label className={`btn-secondary cursor-pointer text-xs w-full sm:w-auto ${subiendo === it.id ? 'opacity-50 pointer-events-none' : ''}`}>
                             📷 Agregar foto
                             <input type="file" className="hidden" accept="image/*" capture="environment"
                               onChange={e => agregarFoto(it, e)} />
@@ -259,9 +267,15 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
                                     ? <a href={linkGoogleMaps(coords)} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline">📍 {formatCoords(coords)}</a>
                                     : <span className="text-slate-400">Sin ubicación</span>}
                                 </div>
+                                {/* Visible siempre en táctil: no hay `hover` en un
+                                    teléfono, así que con `opacity-0 group-hover`
+                                    la papelera nunca aparecía y no se podía
+                                    borrar una foto mal tomada desde la obra. */}
                                 {puedeEditar && (
                                   <button type="button" onClick={() => quitarFoto(it, f.id)}
-                                    className="absolute top-1 right-1 h-6 w-6 rounded-full bg-rose-600 text-white text-xs grid place-items-center opacity-0 group-hover:opacity-100 transition">
+                                    aria-label="Quitar foto"
+                                    className="absolute top-1 right-1 h-7 w-7 rounded-full bg-rose-600/90 text-white text-xs grid place-items-center shadow
+                                               opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition active:scale-90">
                                     ✕
                                   </button>
                                 )}

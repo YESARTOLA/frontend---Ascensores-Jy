@@ -14,6 +14,7 @@ import CuotasNoFacturadas from '../components/cobros/CuotasNoFacturadas.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
+import { etiquetaMoneda, FORMATO_EXCEL } from '../utils/excelNumeros.js';
 
 // Opciones del filtro por tipo de servicio (el value viaja al backend).
 const TIPOS_CATEGORIA = [
@@ -70,6 +71,11 @@ const cuentasAbonoTexto = (c) => (
 // sigue el "orden de registro" definido por administración: fecha de servicio →
 // emisión → factura → cliente → edificio → tipo y servicio → montos → estado; las
 // columnas de seguimiento (cuotas, vencimiento, mora) van al final.
+// Moneda del cobro (por defecto soles, igual que el resto del módulo).
+const monedaDe = (c) => c.moneda || 'PEN';
+
+// Columnas del export. Los importes llevan `num` para que Excel los reciba como
+// números (sumables) y "Moneda" permite filtrar soles / dólares por separado.
 const COLUMNAS_EXPORT = [
   { header: 'Fecha de servicio', get: c => { const f = fechaServicio(c); return f ? formatFecha(f) : ''; } },
   { header: 'Fecha de emisión', get: c => { const f = facturaReciente(c); return f?.fecha_emision ? formatFecha(f.fecha_emision) : ''; } },
@@ -80,14 +86,17 @@ const COLUMNAS_EXPORT = [
   { header: 'Tipo de servicio', get: c => (tipoServicioLabel(c) === '—' ? '' : tipoServicioLabel(c)) },
   { header: 'Servicio / Cotización', get: c => [c.servicio?.codigo, c.servicio?.cotizacion?.codigo].filter(Boolean).join(' · ') },
   { header: 'OT', get: c => c.servicio?.numero_ot || '' },
-  { header: 'Monto facturado', align: 'right', get: c => formatMonto(c.monto_total, c.moneda) },
-  { header: 'Abonos realizados', align: 'right', get: c => formatMonto(c.total_abonado, c.moneda) },
-  { header: 'Saldo pendiente', align: 'right', get: c => formatMonto(c.saldo_pendiente, c.moneda) },
+  { header: 'Moneda', get: c => etiquetaMoneda(monedaDe(c)) },
+  { header: 'Monto facturado', align: 'right', get: c => formatMonto(c.monto_total, monedaDe(c)), num: c => Number(c.monto_total) },
+  { header: 'Abonos realizados', align: 'right', get: c => formatMonto(c.total_abonado, monedaDe(c)), num: c => Number(c.total_abonado) },
+  { header: 'Saldo pendiente', align: 'right', get: c => formatMonto(c.saldo_pendiente, monedaDe(c)), num: c => Number(c.saldo_pendiente) },
   { header: 'Cuenta del abono', get: c => cuentasAbonoTexto(c) },
   { header: 'Estado de cobranza', badge: true, get: c => c.estado_cobro },
   { header: 'Cuotas (P/T)', get: c => `${c.cuotas_pagadas}/${c.numero_cuotas}` },
+  { header: 'Cuotas pagadas', align: 'right', get: c => c.cuotas_pagadas, num: c => Number(c.cuotas_pagadas), formato: FORMATO_EXCEL.entero },
+  { header: 'Cuotas totales', align: 'right', get: c => c.numero_cuotas, num: c => Number(c.numero_cuotas), formato: FORMATO_EXCEL.entero },
   { header: 'Fecha de vencimiento', get: c => formatFecha(c.fecha_proximo_abono) },
-  { header: 'Mora', align: 'right', get: c => (c.dias_mora > 0 ? c.dias_mora : '') }
+  { header: 'Días de mora', align: 'right', get: c => (c.dias_mora > 0 ? c.dias_mora : ''), num: c => (c.dias_mora > 0 ? Number(c.dias_mora) : null), formato: FORMATO_EXCEL.entero }
 ];
 
 const TZ = 'America/Lima';
@@ -140,7 +149,7 @@ export default function Cobros() {
   const [proyectos, setProyectos] = useState([]);
   const [cuentas, setCuentas] = useState([]); // cuentas bancarias (banco + N° cuenta)
   const [filtros, setFiltros] = useState({
-    q: '', situacion_cobro: '', tipo_categoria: '', id_cuenta_bancaria: '',
+    q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
     id_tipo_servicio: '', id_proyecto: '',
     monto_min: '', monto_max: '',
     fecha_proximo_desde: '', fecha_proximo_hasta: '',
@@ -161,6 +170,8 @@ export default function Cobros() {
   // visible). Los calcula el backend con los mismos filtros, así que se
   // recalculan solos en cada cambio de filtro.
   const resumen = meta?.resumen_cobranza;
+  // Filtro "Por cobrar" del encabezado: espejo del contador "Pendientes a cobrar".
+  const porCobrarActivo = filtros.por_cobrar === '1';
 
   useEffect(() => {
     Promise.all([
@@ -218,6 +229,7 @@ export default function Cobros() {
     const p = [];
     if (filtros.q) p.push(`Búsqueda: ${filtros.q}`);
     if (filtros.situacion_cobro) p.push(`Situación: ${SITUACIONES_COBRO.find(s => s.value === filtros.situacion_cobro)?.label || filtros.situacion_cobro}`);
+    if (filtros.por_cobrar === '1') p.push('Solo por cobrar (con saldo pendiente)');
     if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_CATEGORIA.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
     if (filtros.id_cuenta_bancaria) {
       const cu = cuentas.find(x => String(x.id) === String(filtros.id_cuenta_bancaria));
@@ -259,7 +271,7 @@ export default function Cobros() {
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
   const limpiar = () => setFiltros({
-    q: '', situacion_cobro: '', tipo_categoria: '', id_cuenta_bancaria: '',
+    q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
     id_tipo_servicio: '', id_proyecto: '',
     monto_min: '', monto_max: '',
     fecha_proximo_desde: '', fecha_proximo_hasta: '',
@@ -344,6 +356,31 @@ export default function Cobros() {
               onClick={() => setVistaModo('no-facturadas')}
               className={vistaModo === 'no-facturadas' ? 'btn-primary' : 'btn-secondary'}
             >Por facturar</button>
+            {/* Filtro rápido, no una vista: deja en la tabla los cobros que aún
+                tienen saldo — los mismos que cuenta la tarjeta "Pendientes a
+                cobrar" (backend: estaPorCobrar). Va en ámbar para no confundirlo
+                con los selectores de vista de al lado, y es un interruptor:
+                volver a pulsarlo lo quita. Si se activa desde el calendario o
+                desde "Por facturar", devuelve a la tabla, que es lo que filtra. */}
+            <button
+              type="button"
+              aria-pressed={porCobrarActivo}
+              title={porCobrarActivo
+                ? 'Quitar el filtro «Por cobrar»'
+                : 'Ver solo los cobros con saldo pendiente (los que cuenta «Pendientes a cobrar»)'}
+              onClick={() => {
+                setF('por_cobrar', porCobrarActivo ? '' : '1');
+                if (!porCobrarActivo) setVistaModo('tabla');
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${
+                porCobrarActivo
+                  ? 'bg-amber-100 text-amber-900 ring-amber-300'
+                  : 'bg-white text-amber-700 ring-amber-200 hover:bg-amber-50'
+              }`}
+            >
+              Por cobrar
+              {porCobrarActivo && <span aria-hidden="true" className="text-xs opacity-70">✕</span>}
+            </button>
             {vistaModo === 'tabla' && (
               <>
                 <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || data.length === 0}>Exportar Excel</button>

@@ -8,10 +8,11 @@ import Modal from '../components/common/Modal.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import CalendarioControles from '../components/common/CalendarioControles.jsx';
 import CalendarioMes from '../components/common/CalendarioMes.jsx';
+import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFechaHora, nowDateTimeLocalLima, isoToDateTimeLocalLima, dateTimeLocalLimaToISO } from '../utils/formatters.js';
 import { CATALOGO_TIPOS_EVENTO, colorPorTipo } from '../utils/visibilidadCalendario.js';
-import { rangoMes, ymdLima, mesLabelLima, fmtDiaLargo, fechaLima } from '../utils/calendarioFechas.js';
+import { rangoMes, ymdLima, mesLabelLima, mesLabelCortoLima, fmtDiaLargo, fechaLima } from '../utils/calendarioFechas.js';
 import { estaServicioFinalizado } from '../utils/estadoServicio.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { destinoRecordatorio, etiquetaDestinoRecordatorio } from '../utils/destinoRecordatorio.js';
@@ -240,6 +241,7 @@ export default function Recordatorios() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventosMes]);
   const mesLabel = mesLabelLima(cursor);
+  const mesLabelCorto = mesLabelCortoLima(cursor);
   const eventosDelDia = useMemo(
     () => (diaSel ? eventosMes.filter(r => ymdLima(new Date(r.fecha_recordatorio)) === diaSel.ymd) : []),
     [diaSel, eventosMes]
@@ -352,7 +354,11 @@ export default function Recordatorios() {
   const filaRecordatorio = (r) => {
     const link = vinculoEntidad(r);
     return (
-      <li key={r.id} className="p-4 flex items-start gap-3">
+      // En móvil las acciones bajan a una fila propia bajo el texto: apiladas a
+      // la derecha, sobre una columna de 60px, el título quedaba estrujado y los
+      // enlaces salían uno debajo de otro sin ancho para tocarlos.
+      <li key={r.id} className="p-4 flex flex-col sm:flex-row items-stretch sm:items-start gap-2 sm:gap-3">
+        <div className="flex items-start gap-3 flex-1 min-w-0">
         <div className="h-3 w-3 mt-1.5 rounded-full shrink-0" style={{ background: colorRecordatorio(r) }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -377,18 +383,20 @@ export default function Recordatorios() {
             <div className="text-xs text-slate-600 mt-2 p-2 bg-slate-50 rounded">{r.notas_seguimiento}</div>
           )}
         </div>
-        <div className="flex flex-col gap-1 shrink-0">
+        </div>
+        <div className="flex flex-row flex-wrap sm:flex-col gap-x-4 gap-y-1 shrink-0 pl-6 sm:pl-0
+                        [&>button]:min-h-[36px] sm:[&>button]:min-h-0">
           {r.estado_recordatorio === 'pendiente' && (
             <>
-              <button onClick={() => atender(r)} className="text-xs text-emerald-700 hover:underline">Atender</button>
-              <button onClick={() => descartar(r)} className="text-xs text-slate-500 hover:underline">Descartar</button>
-              {r.origen === 'manual' && <button onClick={() => abrirEdicion(r)} className="text-xs text-brand-700 hover:underline">Editar</button>}
+              <button onClick={() => atender(r)} className="text-xs font-semibold text-emerald-700 hover:underline">Atender</button>
+              <button onClick={() => descartar(r)} className="text-xs font-semibold text-slate-500 hover:underline">Descartar</button>
+              {r.origen === 'manual' && <button onClick={() => abrirEdicion(r)} className="text-xs font-semibold text-brand-700 hover:underline">Editar</button>}
             </>
           )}
           {r.estado_recordatorio !== 'pendiente' && (
-            <button onClick={() => reactivar(r)} className="text-xs text-brand-700 hover:underline">Reactivar</button>
+            <button onClick={() => reactivar(r)} className="text-xs font-semibold text-brand-700 hover:underline">Reactivar</button>
           )}
-          {r.origen === 'manual' && <button onClick={() => eliminar(r)} className="text-xs text-rose-700 hover:underline">Eliminar</button>}
+          {r.origen === 'manual' && <button onClick={() => eliminar(r)} className="text-xs font-semibold text-rose-700 hover:underline">Eliminar</button>}
         </div>
       </li>
     );
@@ -406,12 +414,16 @@ export default function Recordatorios() {
               onPrev={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() - 1); return d; })}
               onNext={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() + 1); return d; })}
               mesLabel={mesLabel}
+              mesLabelCorto={mesLabelCorto}
             />
             <button onClick={abrirNuevo} className="btn-primary">+ Nuevo recordatorio</button>
           </>
         } />
 
-      <div className="card mb-4">
+      <PanelFiltros
+        activos={[filtros.q, filtros.tipo, filtros.prioridad, filtros.id_cliente].filter(Boolean).length
+                 + (filtros.estado_recordatorio !== 'pendiente' ? 1 : 0)}
+        onLimpiar={() => setFiltros({ tipo: '', estado_recordatorio: 'pendiente', prioridad: '', id_cliente: '', q: '' })}>
         <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
             <label className="label">Buscar</label>
@@ -446,10 +458,17 @@ export default function Recordatorios() {
             </select>
           </div>
         </div>
-      </div>
+      </PanelFiltros>
 
       {!modoLista ? (
-        <CalendarioMes cursor={cursor} itemsPorDia={itemsPorDia} onSelectDay={setDiaSel} />
+        // Igual que en el Calendario: la cuadrícula del mes necesita siete
+        // columnas legibles, así que en pantallas estrechas se desplaza dentro
+        // de su caja en vez de comprimirse hasta ser ilegible.
+        <div className="overflow-x-auto scroll-thin -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="min-w-[620px] sm:min-w-0">
+            <CalendarioMes cursor={cursor} itemsPorDia={itemsPorDia} onSelectDay={setDiaSel} />
+          </div>
+        </div>
       ) : loading ? <Loader /> : data.length === 0 ? (
         <div className="card"><EmptyState title="Sin recordatorios" subtitle="No hay recordatorios con los filtros aplicados" /></div>
       ) : (

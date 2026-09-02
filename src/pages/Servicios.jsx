@@ -6,6 +6,7 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
+import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
@@ -335,8 +336,10 @@ export default function Servicios() {
         puedeCrear && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo proyecto</button>
       } />
 
-      <div className="card mb-4">
-        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+      <PanelFiltros
+        activos={[filtros.q, filtros.estado_servicio, filtros.id_tipo_servicio, filtros.desde, filtros.hasta].filter(Boolean).length}
+        onLimpiar={() => setFiltros(f => ({ ...f, q: '', estado_servicio: '', id_tipo_servicio: '', desde: '', hasta: '' }))}>
+        <div className="p-3 sm:p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input col-span-2" placeholder="Buscar por código, título, cliente, edificio/obra, tipo de ascensor o cotización…" value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_servicio} onChange={e => setFiltros(f => ({ ...f, estado_servicio: e.target.value }))}>
             {ESTADOS_FILTRO.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
@@ -348,7 +351,7 @@ export default function Servicios() {
           <input type="date" className="input" value={filtros.desde} onChange={e => setFiltros(f => ({ ...f, desde: e.target.value }))} />
           <input type="date" className="input" value={filtros.hasta} onChange={e => setFiltros(f => ({ ...f, hasta: e.target.value }))} />
         </div>
-      </div>
+      </PanelFiltros>
 
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin proyectos" /> : (

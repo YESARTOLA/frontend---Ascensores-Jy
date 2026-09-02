@@ -173,7 +173,12 @@ export default function Topbar({ onMenu }) {
             )}
           </button>
           {openBell && (
-            <div className="absolute right-0 mt-2 w-80 rounded-xl bg-white shadow-panel ring-1 ring-carbon-100 z-30 origin-top-right animate-rise-sm overflow-hidden">
+            // El panel mide 320px: anclado al botón con `right-0` se salía por
+            // el borde izquierdo en pantallas de 390px y cortaba el título. En
+            // móvil se fija a los márgenes de la ventana; desde `sm` vuelve a
+            // colgar del botón.
+            <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-[3.75rem] sm:top-auto
+                            mt-0 sm:mt-2 w-auto sm:w-80 rounded-xl bg-white shadow-panel ring-1 ring-carbon-100 z-30 origin-top-right animate-rise-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-carbon-100/80 flex items-center justify-between">
                 <div>
                   <div className="text-[13px] font-semibold text-carbon-900">
@@ -251,7 +256,7 @@ export default function Topbar({ onMenu }) {
           </button>
 
           {open && (
-            <div className="absolute right-0 mt-2 w-64 rounded-xl bg-white shadow-panel ring-1 ring-carbon-100 py-1.5 z-30 origin-top-right animate-rise-sm overflow-hidden">
+            <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl bg-white shadow-panel ring-1 ring-carbon-100 py-1.5 z-30 origin-top-right animate-rise-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-carbon-100/80 relative">
                 <div className="absolute inset-0 bg-mesh-warm opacity-30 pointer-events-none" />
                 <div className="relative flex items-center gap-3">

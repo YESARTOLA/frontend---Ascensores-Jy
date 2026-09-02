@@ -19,10 +19,11 @@ import {
   colorPorTipo,
   subtituloCalendario
 } from '../utils/visibilidadCalendario.js';
-import { TZ, fmtDiaLargo, ymdLima, fechaLima, rangoMes, mesLabelLima } from '../utils/calendarioFechas.js';
+import { TZ, fmtDiaLargo, ymdLima, fechaLima, rangoMes, mesLabelLima, mesLabelCortoLima } from '../utils/calendarioFechas.js';
 import { usePersistentState } from '../utils/usePersistentState.js';
 import CalendarioControles from '../components/common/CalendarioControles.jsx';
 import CalendarioMes from '../components/common/CalendarioMes.jsx';
+import PanelFiltros from '../components/common/PanelFiltros.jsx';
 
 const ESTADOS_EVENTO = [
   { value: '', label: 'Todos' },
@@ -62,7 +63,14 @@ export default function Calendario() {
   const [cursor, setCursor] = useState(new Date());
   const [eventos, setEventos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modoLista, setModoLista] = useState(false);
+  // En el teléfono la lista es el modo útil, así que arranca ahí; pero el
+  // botón «Vista mes» sigue funcionando y la cuadrícula se muestra con scroll
+  // horizontal. Antes se forzaba con `window.innerWidth < 768` leído durante
+  // el render: además de anular el botón en móvil, no reaccionaba al girar el
+  // dispositivo ni al redimensionar la ventana.
+  const [modoLista, setModoLista] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+  );
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   // Filtros persistidos: siguen activos al abrir un servicio/proyecto y volver.
   const [filtros, setFiltros] = usePersistentState('calendario:filtros', filtrosIniciales);
@@ -146,9 +154,21 @@ export default function Calendario() {
   useEffect(() => {
     Promise.all([
       clientesService.list().catch(() => []),
-      tecnicosService.list().catch(() => [])
+      // La cartera de técnicos solo se pide si el rol puede filtrar por ella:
+      // al técnico no se le muestra ese selector, así que no hay motivo para
+      // traerle la lista de sus compañeros.
+      verFiltroTecnico ? tecnicosService.list().catch(() => []) : Promise.resolve([])
     ]).then(([c, t]) => { setClientes(c); setTecnicos(t); });
-  }, []);
+  }, [verFiltroTecnico]);
+
+  // Los filtros se recuerdan mientras dure la pestaña (usePersistentState). Si el rol dejó de
+  // poder filtrar por técnico —o ya tenía uno elegido de antes— hay que soltar
+  // ese valor: sin el selector a la vista seguiría recortando la agenda en
+  // silencio, y el técnico vería menos eventos de los que tiene sin entender
+  // por qué.
+  useEffect(() => {
+    if (!verFiltroTecnico) setFiltros(p => (p.id_tecnico ? { ...p, id_tecnico: '' } : p));
+  }, [verFiltroTecnico, setFiltros]);
 
   const setF = (k, v) => setFiltros(p => ({ ...p, [k]: v }));
   const limpiarFiltros = () => setFiltros(filtrosIniciales);
@@ -240,6 +260,7 @@ export default function Calendario() {
   }, [eventosPorDia]);
 
   const mesLabel = mesLabelLima(cursor);
+  const mesLabelCorto = mesLabelCortoLima(cursor);
 
   const diaSelKey = diaSeleccionado?.ymd || null;
   const eventosDelDia = useMemo(() => {
@@ -261,10 +282,13 @@ export default function Calendario() {
             onPrev={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() - 1); return d; })}
             onNext={() => setCursor(c => { const d = new Date(c); d.setMonth(d.getMonth() + 1); return d; })}
             mesLabel={mesLabel}
+            mesLabelCorto={mesLabelCorto}
           />
         } />
 
-      <div className="card mb-4">
+      <PanelFiltros
+        activos={Object.values(filtros).filter(v => v !== '').length}
+        onLimpiar={limpiarFiltros}>
         <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
             <label className="label">Buscar</label>
@@ -306,10 +330,10 @@ export default function Calendario() {
         {hayFiltros && (
           <div className="px-3 pb-3 flex items-center justify-between text-xs text-slate-500">
             <span>{eventosFiltrados.length} de {eventos.length} eventos</span>
-            <button onClick={limpiarFiltros} className="text-brand-700 hover:underline">Limpiar filtros</button>
+            <button onClick={limpiarFiltros} className="text-brand-700 hover:underline min-h-[36px]">Limpiar filtros</button>
           </div>
         )}
-      </div>
+      </PanelFiltros>
 
       {leyendaColores.length > 0 && (
         <div className="card mb-3 p-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-600">
@@ -324,7 +348,7 @@ export default function Calendario() {
 
       {loading ? <Loader /> : eventosFiltrados.length === 0 ? (
         <div className="card"><EmptyState title={hayFiltros ? 'Sin eventos con esos filtros' : 'Sin eventos este mes'} /></div>
-      ) : modoLista || window.innerWidth < 768 ? (
+      ) : modoLista ? (
         <div className="card">
           <ul className="divide-y divide-slate-100">
             {eventosFiltrados.map(e => {
@@ -351,7 +375,13 @@ export default function Calendario() {
           </ul>
         </div>
       ) : (
-        <CalendarioMes cursor={cursor} itemsPorDia={itemsPorDia} onSelectDay={setDiaSeleccionado} />
+        // La cuadrícula necesita 7 columnas legibles: en pantallas estrechas
+        // se desplaza dentro de su caja en vez de comprimir los días a nada.
+        <div className="overflow-x-auto scroll-thin -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="min-w-[620px] sm:min-w-0">
+            <CalendarioMes cursor={cursor} itemsPorDia={itemsPorDia} onSelectDay={setDiaSeleccionado} />
+          </div>
+        </div>
       )}
 
       <Modal

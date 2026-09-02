@@ -15,15 +15,48 @@ import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatte
 import { ESTADOS_FACTURA, ESTADO_FACTURA_SIN, ESTADO_FACTURA_ENVIADA, esFacturaActiva } from '../utils/estadoFactura.js';
 import { TIPOS_COMPROBANTE, etiquetaTipoComprobante } from '../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
+import { etiquetaMoneda, FORMATO_EXCEL } from '../utils/excelNumeros.js';
 import CardMetricaDoble from '../components/common/CardMetricaDoble.jsx';
 
 const FILTROS_INICIALES = {
-  q: '', id_cliente: '', estado_factura: '', tipo_comprobante: '', cobertura: '', tipo_categoria: '', desde: '', hasta: '',
+  q: '', id_cliente: '', estado_factura: '', tipo_comprobante: '', cobertura: '', tipo_categoria: '',
+  situacion: '', desde: '', hasta: '',
   // Orden por defecto: serie y N° de factura, ascendente. Es el orden con el que
   // administración lleva el registro; el correlativo interno (#) sigue
   // disponible como columna ordenable.
   sort: 'numero_factura', dir: 'asc'
 };
+
+// Las dos situaciones que resume la cabecera. Esta lista es a la vez las
+// TARJETAS del resumen y los BOTONES de filtro rápido: una sola definición
+// (título, ayuda y tono) para que lo que se cuenta y lo que se filtra se
+// describan igual.
+//
+// `value` viaja al backend como `situacion` y allí se resuelve con el MISMO
+// análisis con el que se calculan los indicadores (facturasController.listar),
+// así que pulsar un botón deja en la tabla exactamente las facturas que su
+// tarjeta cuenta. `clave` es la del resumen que envía el backend.
+const SITUACIONES = [
+  {
+    value: 'facturado',
+    clave: 'facturado',
+    titulo: 'Facturado',
+    ayuda: 'Facturas que cumplen los filtros, con su importe emitido. No cuenta las anuladas.',
+    tono: 'green',
+    btnOn: 'bg-emerald-100 text-emerald-900 ring-emerald-300',
+    btnOff: 'bg-white text-emerald-700 ring-emerald-200 hover:bg-emerald-50'
+  },
+  {
+    value: 'pendiente_cobro',
+    clave: 'pendiente',
+    titulo: 'Pendiente de cobro',
+    ayuda: 'De esas mismas facturas, las que aún tienen saldo por cobrar y cuánto falta.',
+    nota: 'Del total facturado, lo que falta cobrar.',
+    tono: 'amber',
+    btnOn: 'bg-amber-100 text-amber-900 ring-amber-300',
+    btnOff: 'bg-white text-amber-700 ring-amber-200 hover:bg-amber-50'
+  }
+];
 
 // Tipo de servicio facturado (espejo del filtro de Cobros).
 const TIPOS_SERVICIO = [
@@ -60,8 +93,10 @@ const etiquetaTipoServicio = (f) => {
 };
 
 // Columnas del export (espejo de la tabla, sin la columna de archivo).
+// Columnas del export. `num` hace que Excel reciba números (sumables) en vez de
+// texto; "Moneda" permite filtrar y totalizar soles y dólares por separado.
 const COLUMNAS_EXPORT = [
-  { header: '#', get: (_f, i) => i + 1 },
+  { header: '#', get: (_f, i) => i + 1, num: (_f, i) => i + 1, formato: FORMATO_EXCEL.entero },
   { header: 'Emisión', get: f => formatFecha(f.fecha_emision) },
   { header: 'Inicio servicio', get: f => (f.fecha_inicio_servicio ? formatFecha(f.fecha_inicio_servicio) : '') },
   { header: 'Serie y N° de factura', get: f => f.numero_factura },
@@ -71,7 +106,8 @@ const COLUMNAS_EXPORT = [
   { header: 'Edificio', get: f => nombreEdificio(f) },
   { header: 'Servicio', get: f => f.servicio?.codigo },
   { header: 'Tipo de servicio', get: f => etiquetaTipoServicio(f) },
-  { header: 'Monto', align: 'right', get: f => formatMonto(f.monto, monedaDe(f)) },
+  { header: 'Moneda', get: f => etiquetaMoneda(monedaDe(f)) },
+  { header: 'Monto', align: 'right', get: f => formatMonto(f.monto, monedaDe(f)), num: f => Number(f.monto) },
   { header: 'Cobertura', get: f => (f.id_cuota ? `Cuota N° ${f.cuota?.numero_cuota ?? '?'}` : 'General') },
   { header: 'Estado', badge: true, get: f => f.estado_factura }
 ];
@@ -159,6 +195,7 @@ export default function Facturas() {
     if (filtros.estado_factura) p.push(`Estado: ${filtros.estado_factura}`);
     if (filtros.tipo_comprobante) p.push(`Comprobante: ${filtros.tipo_comprobante}`);
     if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_SERVICIO.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
+    if (filtros.situacion) p.push(`Situación: ${SITUACIONES.find(x => x.value === filtros.situacion)?.titulo || filtros.situacion}`);
     if (filtros.cobertura) p.push(`Cobertura: ${filtros.cobertura === 'cuota' ? 'Por cuota' : 'General'}`);
     if (filtros.desde) p.push(`Emisión desde: ${filtros.desde}`);
     if (filtros.hasta) p.push(`Emisión hasta: ${filtros.hasta}`);
@@ -205,6 +242,26 @@ export default function Facturas() {
       <PageHeader title="Facturas" subtitle={`${total.toLocaleString('es-PE')} factura(s)`}
         actions={
           <>
+            {/* Filtro rápido por situación: el mismo criterio de las tarjetas
+                del resumen. Es un interruptor — volver a pulsarlo lo quita. */}
+            <div className="flex items-center gap-2 sm:mr-2" role="group" aria-label="Filtrar por situación">
+              {SITUACIONES.map(sit => {
+                const activo = filtros.situacion === sit.value;
+                return (
+                  <button
+                    key={sit.value}
+                    type="button"
+                    aria-pressed={activo}
+                    title={activo ? `Quitar el filtro «${sit.titulo}»` : sit.ayuda}
+                    onClick={() => setF('situacion', activo ? '' : sit.value)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${activo ? sit.btnOn : sit.btnOff}`}
+                  >
+                    {sit.titulo}
+                    {activo && <span aria-hidden="true" className="text-xs opacity-70">✕</span>}
+                  </button>
+                );
+              })}
+            </div>
             <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || total === 0}>Exportar Excel</button>
             <button onClick={() => exportar('pdf')} className="btn-primary" disabled={exportando || total === 0}>Exportar PDF</button>
           </>
@@ -215,25 +272,15 @@ export default function Facturas() {
         <div className="mb-4">
           <CardMetricaDoble
             titulo="Resumen del filtro actual"
-            metricas={[
-              {
-                titulo: 'Facturado',
-                ayuda: 'Facturas que cumplen los filtros, con su importe emitido. No cuenta las anuladas.',
-                cantidad: resumen.facturado?.cantidad,
-                montos: resumen.facturado?.montos,
-                unidad: 'factura(s)',
-                tono: 'green'
-              },
-              {
-                titulo: 'Pendiente de cobro',
-                ayuda: 'De esas mismas facturas, las que aún tienen saldo por cobrar y cuánto falta.',
-                cantidad: resumen.pendiente?.cantidad,
-                montos: resumen.pendiente?.montos,
-                unidad: 'factura(s)',
-                tono: 'amber',
-                nota: 'Del total facturado, lo que falta cobrar.'
-              }
-            ]}
+            metricas={SITUACIONES.map(sit => ({
+              titulo: sit.titulo,
+              ayuda: sit.ayuda,
+              cantidad: resumen[sit.clave]?.cantidad,
+              montos: resumen[sit.clave]?.montos,
+              unidad: 'factura(s)',
+              tono: sit.tono,
+              nota: sit.nota
+            }))}
           />
         </div>
       )}
@@ -298,6 +345,12 @@ export default function Facturas() {
                       plan, no de la factura: se muestra pero no ordena. */}
                   <th className="table-th">Edificio</th>
                   <ThSort label="Servicio" {...propsTh('servicio')} />
+                  {/* Categoría del servicio facturado. No ordena: se deriva de
+                      tres cosas (tipo_registro del servicio, módulo de su
+                      subtipo, y si la factura es de un plan sin servicio), así
+                      que no hay una columna única por la que ordenarla. Para
+                      acotar por ella está el filtro "Todo tipo de servicio". */}
+                  <th className="table-th whitespace-nowrap">Tipo de servicio</th>
                   <ThSort label="Monto" {...propsTh('monto', 'right')} />
                   <ThSort label="Cobertura" {...propsTh('cobertura')} />
                   <ThSort label="Estado" {...propsTh('estado_factura')} />
@@ -339,8 +392,8 @@ export default function Facturas() {
                         {f.servicio
                           ? <Link to={`/servicios/${f.servicio.id}`} className="font-mono text-xs text-brand-700">{f.servicio.codigo}</Link>
                           : <span className="badge-blue text-[10px]">Plan de mant.{f.mantenimiento_plan ? ` #${f.mantenimiento_plan.id}` : ''}</span>}
-                        <div className="text-[11px] text-slate-500">{etiquetaTipoServicio(f)}</div>
                       </td>
+                      <td className="table-td text-xs whitespace-nowrap">{etiquetaTipoServicio(f) || '—'}</td>
                       <td className="table-td text-right font-mono whitespace-nowrap">{formatMonto(f.monto, monedaDe(f))}</td>
                       <td className="table-td text-xs">
                         {f.id_cuota

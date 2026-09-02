@@ -202,10 +202,12 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
               placeholder="Describe lo encontrado (ej. cable suelto en cuarto de máquinas, ruido al freno…)"
               value={texto}
               onChange={e => setTexto(e.target.value)} />
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="btn-ghost text-xs !py-1.5 !px-3 cursor-pointer">
-                {subiendo ? 'Subiendo…' : (archivo ? '📎 Reemplazar foto' : '+ Adjuntar foto')}
-                <input type="file" className="hidden" accept="image/*,application/pdf"
+            {/* En móvil los dos botones ocupan el ancho completo y se apilan: la
+                observación se escribe en obra, con una sola mano. */}
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
+              <label className="btn-ghost !ring-1 !ring-carbon-200 text-xs !py-2 !px-3 cursor-pointer w-full sm:w-auto">
+                {subiendo ? 'Subiendo…' : (archivo ? '📎 Reemplazar foto' : '📷 Adjuntar foto')}
+                <input type="file" className="hidden" accept="image/*,application/pdf" capture="environment"
                   disabled={subiendo || guardando} onChange={subirArchivo} />
               </label>
               {archivo && (
@@ -213,10 +215,10 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
                   <FileLink archivo={archivo} className="text-xs text-brand-700 hover:underline truncate min-w-0">
                     {archivo.nombre_original}
                   </FileLink>
-                  <button type="button" onClick={quitarArchivo} className="text-xs text-red-600 hover:underline shrink-0">Quitar</button>
+                  <button type="button" onClick={quitarArchivo} className="text-xs text-red-600 hover:underline shrink-0 min-h-[36px]">Quitar</button>
                 </div>
               )}
-              <button type="submit" className="btn-primary ml-auto text-xs !py-1.5 !px-3" disabled={guardando || subiendo}>
+              <button type="submit" className="btn-primary sm:ml-auto text-xs !py-2 !px-3 w-full sm:w-auto" disabled={guardando || subiendo}>
                 {guardando ? 'Guardando…' : 'Registrar observación'}
               </button>
             </div>
@@ -285,7 +287,9 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
           <ul className="space-y-3">
             {items.map(o => (
               <li key={o.id} className={`rounded-lg ring-1 p-3 ${o.atendida ? 'bg-emerald-50/30 ring-emerald-200' : 'bg-orange-50/30 ring-orange-200'}`}>
-                <div className="flex items-start justify-between gap-3 mb-1">
+                {/* En móvil las acciones bajan a su propia fila: junto a los
+                    badges dejaban la columna de texto en unos pocos píxeles. */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-start justify-between gap-2 sm:gap-3 mb-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     {esAdminUI && !o.id_cotizacion && (
                       <input type="checkbox" checked={seleccionadas.includes(o.id)}
@@ -326,19 +330,19 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
                     </span>
                     <span className="text-xs text-slate-400">{formatFechaHora(o.date_time_registration)}</span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-3 sm:gap-2 shrink-0 order-last sm:order-none">
                     {!o.atendida && puedeAtender && (
                       <button type="button" onClick={() => atender(o)} disabled={atendiendoId === o.id}
-                        className="btn-secondary text-xs !py-1 !px-2 whitespace-nowrap">
+                        className="btn-secondary text-xs !py-1.5 !px-3 whitespace-nowrap">
                         {atendiendoId === o.id ? 'Atendiendo…' : 'Marcar atendida'}
                       </button>
                     )}
                     {gestionaRegistros && editandoId !== o.id && (
                       <>
                         <button type="button" onClick={() => abrirEdicion(o)}
-                          className="text-xs text-brand-700 hover:underline whitespace-nowrap">Editar</button>
+                          className="text-xs font-semibold text-brand-700 hover:underline whitespace-nowrap min-h-[36px] sm:min-h-0">Editar</button>
                         <button type="button" onClick={() => eliminarObs(o)} disabled={eliminandoId === o.id}
-                          className="text-xs text-rose-700 hover:underline whitespace-nowrap">
+                          className="text-xs font-semibold text-rose-700 hover:underline whitespace-nowrap min-h-[36px] sm:min-h-0">
                           {eliminandoId === o.id ? 'Eliminando…' : 'Eliminar'}
                         </button>
                       </>

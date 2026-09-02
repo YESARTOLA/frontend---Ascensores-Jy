@@ -113,7 +113,9 @@ export default function App() {
         <Route path="/ascensores" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Ascensores /></RequireRole>} />
         <Route path="/edificios" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><Edificios /></RequireRole>} />
         <Route path="/ascensores/:id" element={<RequireRole allow={['super_admin','admin','contabilidad','coordinador']}><AscensorHistorial /></RequireRole>} />
-        <Route path="/tecnicos" element={<Tecnicos />} />
+        {/* Mismos roles que muestran el enlace en el menú. Sin esta guarda la
+            pantalla de gestión de la plantilla se abría escribiendo la URL. */}
+        <Route path="/tecnicos" element={<RequireRole allow={['super_admin','admin','coordinador']}><Tecnicos /></RequireRole>} />
         <Route path="/tipos-servicio" element={<TiposServicio />} />
         <Route path="/tipos-ascensor" element={<TiposAscensor />} />
         <Route path="/cotizaciones" element={<RequireRole allow={['super_admin','admin','contabilidad']}><Cotizaciones /></RequireRole>} />

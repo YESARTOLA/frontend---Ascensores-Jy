@@ -229,6 +229,10 @@ export const mantenimientosService = {
   programacion: (id) => api.get(`/mantenimientos/${id}/programacion`).then(r => r.data?.data ?? r.data),
   // Omite o reactiva fechas: { ids: [...], activo: 0|1, motivo? }.
   // Omitir NO cambia el monto mensual del plan.
+  // Repara el cronograma de planes creados antes del modelo mensual (nacieron
+  // sin programación): reconstruye las fechas enganchando los servicios ya creados.
+  reconstruirProgramacion: (id) =>
+    api.post(`/mantenimientos/${id}/programacion/reconstruir`).then(r => r.data?.data ?? r.data),
   cambiarActivoProgramacion: (id, body) =>
     api.put(`/mantenimientos/${id}/programacion`, body).then(r => r.data?.data ?? r.data),
   // Facturación por MES del plan: una factura y un pago por mes, por el monto

@@ -24,11 +24,16 @@ export default function AppLayout() {
 
         <div className="flex-1 min-w-0 flex flex-col lg:pl-64">
           <Topbar onMenu={() => setSidebarOpen(true)} />
+          {/* El colchón inferior deja pasar la nav flotante + la barra de gestos
+              del teléfono: sin él, la última fila de cualquier lista queda
+              tapada y es imposible de tocar. */}
           <main key={location.pathname}
-                className="flex-1 px-4 sm:px-6 lg:px-8 py-5 sm:py-8 pb-28 lg:pb-10 animate-rise">
+                className="flex-1 px-4 sm:px-6 lg:px-8 py-5 sm:py-8 lg:pb-10 animate-rise
+                           [padding-bottom:calc(6.5rem+env(safe-area-inset-bottom,0px))]
+                           lg:[padding-bottom:2.5rem]">
             <Outlet />
           </main>
-          <MobileNav />
+          <MobileNav onMas={() => setSidebarOpen(true)} />
         </div>
       </div>
     </FilePreviewProvider>

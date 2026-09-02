@@ -10,6 +10,7 @@ import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensores, resumenAscensores, hoyISO } from '../utils/formatters.js';
+import { prepararTablaExcel, insertarColumnaMoneda, celdaNumerica, etiquetaMoneda, FORMATO_EXCEL } from '../utils/excelNumeros.js';
 import { generarReportePDF } from '../utils/pdfReport.js';
 import { esFacturado } from '../utils/estadoFactura.js';
 import { ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
@@ -207,6 +208,13 @@ export default function Reportes() {
     const clon = tabla.cloneNode(true);
     clon.querySelectorAll('.row-vencido').forEach(tr => tr.setAttribute('style', 'background:#fef2f2'));
     clon.querySelectorAll('[class*="badge-"]').forEach(el => el.setAttribute('style', 'padding:1px 6px;border-radius:4px;font-size:10px;border:1px solid #cbd5e1'));
+    // Importes y cantidades salen como celdas NUMÉRICAS (sumables en Excel), no
+    // como el texto formateado que se ve en pantalla. Se aplica sobre el clon
+    // para no alterar la tabla que sigue en el DOM (ni la que usa el PDF).
+    // Columna "Moneda" derivada del símbolo de los importes: en Excel el número
+    // ya no lo lleva, y así se pueden filtrar y sumar soles y dólares aparte.
+    insertarColumnaMoneda(clon);
+    prepararTablaExcel(clon);
     return clon.outerHTML;
   };
 
@@ -818,11 +826,11 @@ function TablaMantPorCliente({ data }) {
                   {cli.cliente_nombre}
                   <span className="ml-2 font-normal text-slate-400">{cli.planes_total} plan(es)</span>
                 </td>
-                <td className="table-td text-center font-mono text-xs">{cli.programados}</td>
-                <td className="table-td text-center font-mono text-xs text-emerald-700">{cli.realizados}</td>
-                <td className="table-td text-center font-mono text-xs text-amber-700">{cli.faltan}</td>
-                <td className="table-td text-center font-mono text-xs">{cli.en_curso}</td>
-                <td className="table-td text-center font-mono text-xs text-slate-500">{cli.cancelados}</td>
+                <td className="table-td text-center font-mono text-xs" {...celdaNumerica(cli.programados, FORMATO_EXCEL.entero)}>{cli.programados}</td>
+                <td className="table-td text-center font-mono text-xs text-emerald-700" {...celdaNumerica(cli.realizados, FORMATO_EXCEL.entero)}>{cli.realizados}</td>
+                <td className="table-td text-center font-mono text-xs text-amber-700" {...celdaNumerica(cli.faltan, FORMATO_EXCEL.entero)}>{cli.faltan}</td>
+                <td className="table-td text-center font-mono text-xs" {...celdaNumerica(cli.en_curso, FORMATO_EXCEL.entero)}>{cli.en_curso}</td>
+                <td className="table-td text-center font-mono text-xs text-slate-500" {...celdaNumerica(cli.cancelados, FORMATO_EXCEL.entero)}>{cli.cancelados}</td>
                 <td className="table-td text-center text-xs text-slate-400">—</td>
               </tr>
               {(cli.planes || []).map(plan => (
@@ -834,11 +842,11 @@ function TablaMantPorCliente({ data }) {
                       {plan.ascensor_ubicacion ? ` · ${plan.ascensor_ubicacion}` : ''}
                     </div>
                   </td>
-                  <td className="table-td text-center font-mono text-xs">{plan.programados}</td>
-                  <td className="table-td text-center font-mono text-xs text-emerald-700">{plan.realizados}</td>
-                  <td className="table-td text-center font-mono text-xs text-amber-700">{plan.faltan}</td>
-                  <td className="table-td text-center font-mono text-xs">{plan.en_curso}</td>
-                  <td className="table-td text-center font-mono text-xs text-slate-500">{plan.cancelados}</td>
+                  <td className="table-td text-center font-mono text-xs" {...celdaNumerica(plan.programados, FORMATO_EXCEL.entero)}>{plan.programados}</td>
+                  <td className="table-td text-center font-mono text-xs text-emerald-700" {...celdaNumerica(plan.realizados, FORMATO_EXCEL.entero)}>{plan.realizados}</td>
+                  <td className="table-td text-center font-mono text-xs text-amber-700" {...celdaNumerica(plan.faltan, FORMATO_EXCEL.entero)}>{plan.faltan}</td>
+                  <td className="table-td text-center font-mono text-xs" {...celdaNumerica(plan.en_curso, FORMATO_EXCEL.entero)}>{plan.en_curso}</td>
+                  <td className="table-td text-center font-mono text-xs text-slate-500" {...celdaNumerica(plan.cancelados, FORMATO_EXCEL.entero)}>{plan.cancelados}</td>
                   <td className="table-td text-center font-mono text-xs">{plan.gratuitos_ejecutados}/{plan.gratuitos_cupo}</td>
                 </tr>
               ))}
@@ -927,7 +935,7 @@ function TablaCobrosVencidos({ data }) {
             <td className="table-td text-xs">{c.cliente?.nombre}</td>
             <td className="table-td font-mono text-xs">{c.servicio?.codigo}</td>
             <td className="table-td text-xs">{formatFecha(c.fecha_proximo_abono)}</td>
-            <td className="table-td text-center"><span className={c.en_mora ? 'text-rose-700 font-semibold' : 'text-amber-700'}>{c.dias_vencido}</span></td>
+            <td className="table-td text-center" {...celdaNumerica(c.dias_vencido, FORMATO_EXCEL.entero)}><span className={c.en_mora ? 'text-rose-700 font-semibold' : 'text-amber-700'}>{c.dias_vencido}</span></td>
             <td className="table-td text-right font-mono text-rose-700">{formatMonto(c.saldo_pendiente, c.moneda)}</td>
             <td className="table-td">{c.en_mora ? <span className="badge-red">En mora</span> : <span className="badge-amber">Vencido</span>}</td>
           </tr>
@@ -967,7 +975,7 @@ function TablaMora({ data }) {
         {data.map((g, idx) => (
           <tr key={idx}>
             <td className="table-td">{g.cliente?.nombre}</td>
-            <td className="table-td text-center">{g.casos}</td>
+            <td className="table-td text-center" {...celdaNumerica(g.casos, FORMATO_EXCEL.entero)}>{g.casos}</td>
             <td className="table-td text-right font-mono font-medium text-rose-700">{formatMonto(g.total_saldo)}</td>
             <td className="table-td text-xs">{(g.servicios || []).map(s => `${s.codigo} (${formatMonto(s.saldo)})`).join(' · ')}</td>
           </tr>
@@ -1041,8 +1049,8 @@ function TablaIngresosPorBanco({ data }) {
             <td className="table-td text-xs">{g.tipo_cuenta || '—'}</td>
             <td className="table-td font-mono text-xs">{g.numero_cuenta || '—'}{g.cci ? <div className="text-slate-400 text-[10px]">CCI: {g.cci}</div> : null}</td>
             <td className="table-td text-xs">{g.titular || '—'}</td>
-            <td className="table-td text-center text-xs">{g.moneda || '—'}</td>
-            <td className="table-td text-center font-mono text-xs">{g.cantidad_pagos}</td>
+            <td className="table-td text-center text-xs">{etiquetaMoneda(g.moneda) || '—'}</td>
+            <td className="table-td text-center font-mono text-xs" {...celdaNumerica(g.cantidad_pagos, FORMATO_EXCEL.entero)}>{g.cantidad_pagos}</td>
             <td className="table-td text-right font-mono font-semibold text-emerald-700">{formatMonto(g.total, g.moneda || 'PEN')}</td>
             <td className="table-td text-xs">
               <details>
@@ -1086,9 +1094,9 @@ function TablaTecnicos({ data }) {
           <tr key={t.id ?? `row-${idx}`}>
             <td className="table-td">{t.nombre}</td>
             <td className="table-td"><span className={badgeEstado(t.estado_operativo)}>{t.estado_operativo}</span></td>
-            <td className="table-td text-center">{t.asignados}</td>
-            <td className="table-td text-center">{t.enCurso}</td>
-            <td className="table-td text-center">{t.finalizados}</td>
+            <td className="table-td text-center" {...celdaNumerica(t.asignados, FORMATO_EXCEL.entero)}>{t.asignados}</td>
+            <td className="table-td text-center" {...celdaNumerica(t.enCurso, FORMATO_EXCEL.entero)}>{t.enCurso}</td>
+            <td className="table-td text-center" {...celdaNumerica(t.finalizados, FORMATO_EXCEL.entero)}>{t.finalizados}</td>
           </tr>
         ))}
       </tbody>
@@ -1229,8 +1237,8 @@ function TablaAscensores({ data }) {
             <td className="table-td font-mono text-xs">{a.codigo}</td>
             <td className="table-td text-xs">{a.cliente?.nombre}</td>
             <td className="table-td"><span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span></td>
-            <td className="table-td text-center">{a._count?.servicios || 0}</td>
-            <td className="table-td text-center">{a._count?.emergencias || 0}</td>
+            <td className="table-td text-center" {...celdaNumerica(a._count?.servicios || 0, FORMATO_EXCEL.entero)}>{a._count?.servicios || 0}</td>
+            <td className="table-td text-center" {...celdaNumerica(a._count?.emergencias || 0, FORMATO_EXCEL.entero)}>{a._count?.emergencias || 0}</td>
           </tr>
         ))}
       </tbody>
@@ -1264,9 +1272,9 @@ function TablaClientesEstadoEdificios({ data }) {
             <tr key={r.cliente?.id ?? `row-${idx}`}>
               <td className="table-td">{r.cliente?.nombre}</td>
               <td className="table-td"><span className={`badge ${meta.clase}`}>{meta.label}</span></td>
-              <td className="table-td text-center text-emerald-700">{r.activos}</td>
-              <td className="table-td text-center text-rose-700">{r.inactivos}</td>
-              <td className="table-td text-center font-medium">{r.total}</td>
+              <td className="table-td text-center text-emerald-700" {...celdaNumerica(r.activos, FORMATO_EXCEL.entero)}>{r.activos}</td>
+              <td className="table-td text-center text-rose-700" {...celdaNumerica(r.inactivos, FORMATO_EXCEL.entero)}>{r.inactivos}</td>
+              <td className="table-td text-center font-medium" {...celdaNumerica(r.total, FORMATO_EXCEL.entero)}>{r.total}</td>
             </tr>
           );
         })}
@@ -1305,8 +1313,8 @@ function HistorialAscensor({ data, puedeVerPrecio }) {
                 <td className="table-td text-xs">{formatFecha(s.fecha_programada)}</td>
                 <td className="table-td text-xs">{s.asignaciones?.map(a => a.tecnico?.nombre).join(', ') || '—'}</td>
                 <td className="table-td"><span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span></td>
-                <td className="table-td text-center">{s.guias?.length || 0}</td>
-                <td className="table-td text-center">{s.evidencias?.length || 0}</td>
+                <td className="table-td text-center" {...celdaNumerica(s.guias?.length || 0, FORMATO_EXCEL.entero)}>{s.guias?.length || 0}</td>
+                <td className="table-td text-center" {...celdaNumerica(s.evidencias?.length || 0, FORMATO_EXCEL.entero)}>{s.evidencias?.length || 0}</td>
                 {puedeVerPrecio && <td className="table-td text-right font-mono">{formatMonto(s.precio_interno, s.moneda)}</td>}
               </tr>
             ))}

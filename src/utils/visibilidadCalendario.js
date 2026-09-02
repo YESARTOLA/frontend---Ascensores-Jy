@@ -83,10 +83,15 @@ export function muestraFiltroTipo(rol) {
   return tiposEventoVisibles(rol).length > 1;
 }
 
-// El selector de técnico solo tiene sentido para roles que ven eventos
-// operativos (servicios). Para contabilidad, técnicos no aplica.
+// El selector de técnico solo tiene sentido para roles que ven la agenda
+// COMPLETA y necesitan acotarla a un técnico. Quedan fuera los roles sin
+// eventos operativos y, sobre todo, el TÉCNICO: por definición solo ve los
+// servicios donde está asignado (operativos: 'asignados'), así que ofrecerle
+// el selector sugiere que puede consultar la programación de sus compañeros
+// —no puede: el backend le entrega únicamente los suyos— y elegir a otro
+// técnico le vacía su propia agenda sin explicación.
 export function muestraFiltroTecnico(rol) {
-  return incluyeOperativos(rol);
+  return incluyeOperativos(rol) && !soloOperativosAsignados(rol);
 }
 
 // El selector de cliente se muestra siempre que el rol vea algo: tanto los
