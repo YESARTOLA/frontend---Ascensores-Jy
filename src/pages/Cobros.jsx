@@ -10,8 +10,10 @@ import Combobox from '../components/common/Combobox.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
+import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoneda.jsx';
 import CuotasNoFacturadas from '../components/cobros/CuotasNoFacturadas.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import { useMonedas } from '../hooks/useMonedas.js';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 import { etiquetaMoneda, FORMATO_EXCEL } from '../utils/excelNumeros.js';
@@ -151,7 +153,7 @@ export default function Cobros() {
   const [filtros, setFiltros] = useState({
     q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
     id_tipo_servicio: '', id_proyecto: '',
-    monto_min: '', monto_max: '',
+    moneda: '', monto_min: '', monto_max: '',
     fecha_proximo_desde: '', fecha_proximo_hasta: '',
     orden: '', direccion: ''
   });
@@ -163,6 +165,9 @@ export default function Cobros() {
   const [otAbierta, setOtAbierta] = useState(null); // { numero, archivo } | null
   const [exportando, setExportando] = useState(false);
   const toast = useToast();
+  // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
+  // cabecera del export.
+  const monedas = useMonedas();
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar, meta } =
     usePaginatedList(cobrosService.paginate, filtros, { initialPageSize: 25 });
@@ -237,6 +242,7 @@ export default function Cobros() {
     }
     if (filtros.id_proyecto) p.push(`Proyecto: ${proyectos.find(pr => String(pr.id) === String(filtros.id_proyecto))?.titulo || filtros.id_proyecto}`);
     if (filtros.id_tipo_servicio) p.push(`Tipo: ${tipos.find(t => String(t.id) === String(filtros.id_tipo_servicio))?.nombre || filtros.id_tipo_servicio}`);
+    if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.monto_min) p.push(`Monto desde: ${filtros.monto_min}`);
     if (filtros.monto_max) p.push(`Monto hasta: ${filtros.monto_max}`);
     if (filtros.fecha_proximo_desde) p.push(`Venc. desde: ${filtros.fecha_proximo_desde}`);
@@ -273,7 +279,7 @@ export default function Cobros() {
   const limpiar = () => setFiltros({
     q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
     id_tipo_servicio: '', id_proyecto: '',
-    monto_min: '', monto_max: '',
+    moneda: '', monto_min: '', monto_max: '',
     fecha_proximo_desde: '', fecha_proximo_hasta: '',
     orden: '', direccion: ''
   });
@@ -473,6 +479,11 @@ export default function Cobros() {
               onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, fecha_proximo_desde: desde, fecha_proximo_hasta: hasta }))}
               placeholder="Vencimiento (rango)"
             />
+            {/* Va junto al rango de montos a propósito: la cartera mezcla PEN
+                y USD, y un "monto desde / hasta" sin moneda compara importes de
+                distinta divisa. Además deja los indicadores de la cabecera en
+                una sola moneda, que es como se leen. */}
+            <FiltroMoneda monedas={monedas} value={filtros.moneda} onChange={v => setF('moneda', v)} />
             <div className="flex gap-2">
               <input type="number" min="0" step="0.01" className="input" placeholder="Monto desde"
                 value={filtros.monto_min} onChange={e => setF('monto_min', e.target.value)} />

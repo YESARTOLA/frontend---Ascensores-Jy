@@ -33,6 +33,11 @@ import {
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
 const TIPOS_EVIDENCIA = ['Foto', 'Video', 'Documento', 'Otro'];
 
+// Sección del álbum reservada a la Oficina Técnica. Valor de `momento` en
+// tbl_servicios_evidencias; debe coincidir con el del backend
+// (evidenciasGuiasController.MOMENTO_COORDINACION).
+const MOMENTO_COORDINACION = 'Coordinacion';
+
 // Iconos del botón flotante de acción principal (solo móvil).
 const ICONO_CHECK = (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -43,10 +48,14 @@ const ICONO_USUARIO = (
 const TIPOS_ENTREGA = ['Entrega parcial', 'Entrega final', 'Entrega documental', 'Entrega técnica'];
 const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
 
-// Tarjeta de una foto de evidencia (secciones "Antes"/"Despues"). El comentario se
-// edita en línea y se registra DESPUÉS de subir la imagen; se puede eliminar mientras
-// el servicio no esté finalizado (`puedeGestionar`).
-function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, onGuardarComentario }) {
+// Tarjeta de una foto de evidencia. El comentario se edita en línea y se registra
+// DESPUÉS de subir la imagen; se puede eliminar mientras el servicio no esté
+// finalizado (`puedeGestionar`).
+//
+// `autor` sustituye al nombre del técnico en las secciones que no son suyas: la
+// fila guarda un id_tecnico obligatorio (es el técnico del servicio), así que en
+// la sección de Coordinación mostrarlo atribuiría la foto a quien no la tomó.
+function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, onGuardarComentario, autor }) {
   const [comentario, setComentario] = useState(ev.descripcion || '');
   const [guardando, setGuardando] = useState(false);
   // Si el archivo no se puede descargar, el navegador pinta el texto alternativo
@@ -110,7 +119,7 @@ function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, 
       </div>
       <div className="p-2 space-y-1">
         <div className="text-xs text-slate-500">{formatFechaHora(ev.fecha_carga)}</div>
-        <div className="text-xs text-slate-700 truncate">{ev.tecnico?.nombre}</div>
+        <div className="text-xs text-slate-700 truncate">{autor || ev.tecnico?.nombre}</div>
         {diaEv && <span className="badge-blue mt-0.5 inline-block">Día {diaEv.orden}</span>}
         {puedeGestionar ? (
           <div className="pt-0.5">
@@ -329,6 +338,20 @@ export default function ServicioDetalle() {
   // corrige desde el plan (Mantenimientos → detalle → Precio) y la fecha con
   // "Reprogramar".
   const esMantenimientoDePlan = !!s.id_mantenimiento_plan;
+  // Precio de un mantenimiento de plan. La visita NO tiene precio propio: nace
+  // con precio_interno = 0 porque el importe pactado es el monto MENSUAL del
+  // plan, que no cambia con cuántas visitas caigan en el mes (una sola factura
+  // al mes, contra la cuota del plan). Mostrar ese 0 hacía leer el mantenimiento
+  // como gratuito, así que se muestra el precio del plan, etiquetado como tal.
+  // Si la visita sí trae precio propio (planes del modelo anterior) manda el suyo.
+  const precioDelPlan = (esMantenimientoDePlan
+    && Number(s.precio_interno || 0) === 0
+    && s.mantenimiento_plan?.monto_mensual != null)
+    ? {
+        monto: Number(s.mantenimiento_plan.monto_mensual),
+        moneda: s.mantenimiento_plan.moneda || s.moneda
+      }
+    : null;
   // Reprogramar sí aplica a los mantenimientos del plan (mueve la fecha de esa
   // ocurrencia); la edición libre del formulario de Proyectos, no.
   const puedeReprogramar = (esSuperAdmin || esAdmin) && esServicioEditable(s.estado_servicio);
@@ -359,10 +382,22 @@ export default function ServicioDetalle() {
   // checklist de finalización (id_respuesta). Las fotos por ítem se ven y se
   // gestionan en el panel del checklist, no en la tarjeta de evidencias.
   const evidenciasGenerales = (s.evidencias || []).filter(ev => !ev.id_respuesta);
-  // Secciones "Antes" / "Despues" de la tarjeta de evidencias. Las evidencias sin
-  // momento (legado / cierre / fotos por día) se muestran junto a las de "Despues".
+  // Secciones del álbum. "Antes"/"Despues" son el trabajo del técnico en obra;
+  // "Coordinación" es el registro propio de la Oficina Técnica. Las evidencias
+  // sin momento (legado / cierre / fotos por día) se muestran junto a las de
+  // "Despues", que es la sección abierta históricamente.
   const evidenciasAntes = evidenciasGenerales.filter(ev => ev.momento === 'Antes');
-  const evidenciasDespues = evidenciasGenerales.filter(ev => ev.momento !== 'Antes');
+  const evidenciasCoordinacion = evidenciasGenerales.filter(ev => ev.momento === MOMENTO_COORDINACION);
+  const evidenciasDespues = evidenciasGenerales.filter(
+    ev => ev.momento !== 'Antes' && ev.momento !== MOMENTO_COORDINACION
+  );
+  // Escritura en la sección de Coordinación: solo el Coordinador y el Super
+  // Admin (que destraba cualquier caso). Ni Admin ni Contabilidad, aunque
+  // gestionen el resto del expediente. Espejo del backend
+  // (evidenciasGuiasController.puedeEscribirCoordinacion); el permiso real lo
+  // impone el servidor, aquí solo se decide si mostrar los botones.
+  const gestionaEvidenciaCoordinacion = (esCoordinador || esSuperAdmin)
+    && !esServicioPostRevision(s.estado_servicio);
   const evidenciasPorDia = evidenciasGenerales.reduce((acc, ev) => {
     if (ev.id_dia) acc[ev.id_dia] = (acc[ev.id_dia] || 0) + 1;
     return acc;
@@ -562,18 +597,21 @@ export default function ServicioDetalle() {
     if (guardandoFinalizar) return;
     if (!otOk) { toast.error('Registre la OT en su sección antes de finalizar'); return; }
     setGuardandoFinalizar(true);
+    // El try cubre SOLO la petición de cierre. Lo de después (avisos, limpieza
+    // del formulario, recarga) ocurre con el servicio ya finalizado en el
+    // servidor: si algo falla ahí no puede pintarse como "no se pudo finalizar",
+    // que es justo lo que pasaba cuando el bloque de éxito reventaba.
     try {
       await serviciosService.finalizar(id, {
         ...finalizarForm,
       });
-      toast.success('Servicio finalizado');
-      setOpenFinalizar(false);
-      setEvidenciasFinalizar([]);
-      setArchivoOtFinalizar(null);
-      setFinalizarForm({ observaciones_tecnicas: '', descargo_tecnico: '', codigo_guia: '', id_archivo_guia: null, finalizar_observado: false });
-      cargar();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error');
+      // Sin `response` no hubo respuesta del servidor (señal caída, timeout):
+      // se dice así en vez del "Error" a secas, que no orientaba al técnico.
+      toast.error(err.response?.data?.error
+        || (err.response
+          ? 'No se pudo finalizar el servicio'
+          : 'Sin conexión con el servidor: revisa la señal e inténtalo de nuevo'));
       // 409 = el servicio ya lo finalizó otro usuario (o esta misma pantalla
       // quedó desactualizada). Se cierra el modal y se recarga para que el
       // estado real se refleje y el botón "Finalizar" desaparezca.
@@ -581,8 +619,19 @@ export default function ServicioDetalle() {
         setOpenFinalizar(false);
         cargar();
       }
+      return;
     } finally {
       setGuardandoFinalizar(false);
+    }
+
+    toast.success('Servicio finalizado');
+    setOpenFinalizar(false);
+    setFinalizarForm({ observaciones_tecnicas: '', descargo_tecnico: '', codigo_guia: '', id_archivo_guia: null, finalizar_observado: false });
+    try {
+      await cargar();
+    } catch {
+      // El cierre se registró; solo falló el refresco de la pantalla.
+      toast.warn('Servicio finalizado. No se pudo actualizar la pantalla: vuelve a abrirla para ver el estado nuevo.');
     }
   };
 
@@ -632,9 +681,11 @@ export default function ServicioDetalle() {
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
-  // Adjunta fotos de forma masiva a una sección ("Antes"/"Despues"): sube cada
-  // archivo y crea su evidencia con ese momento. El comentario se registra luego,
-  // ya en la tarjeta (guardarComentarioEvidencia).
+  // Adjunta fotos de forma masiva a una sección ("Antes" / "Despues" /
+  // "Coordinacion"): sube cada archivo y crea su evidencia con ese momento. El
+  // comentario se registra luego, ya en la tarjeta (guardarComentarioEvidencia).
+  // El permiso de cada sección lo decide quien renderiza el botón, y lo vuelve a
+  // comprobar el backend.
   const agregarFotosMomento = async (e, momento) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
@@ -1032,15 +1083,31 @@ export default function ServicioDetalle() {
                           ? <span className="font-mono text-slate-800">{sa.ascensor?.codigo}</span>
                           : <Link to={`/ascensores/${sa.ascensor?.id}`} className="font-mono text-brand-700 hover:underline">{sa.ascensor?.codigo}</Link>}
                         <span className="text-xs text-slate-500 truncate flex-1">{sa.ascensor?.ubicacion || ''}</span>
-                        {puedeVerPrecio && <span className="font-mono text-xs">{formatMonto(sa.monto, sa.moneda || s.moneda)}</span>}
+                        {/* En un mantenimiento de plan el reparto por ascensor no
+                            existe (el precio es el mensual del plan): mostrar el 0
+                            de la fila solo repetía el "gratis" que no es. */}
+                        {puedeVerPrecio && (precioDelPlan
+                          ? <span className="text-xs text-slate-400">incluido en el plan</span>
+                          : <span className="font-mono text-xs">{formatMonto(sa.monto, sa.moneda || s.moneda)}</span>)}
                       </div>
                     ))}
                   </div>
             } cols={2} />
-            {puedeVerPrecio && <Info label="Precio total" value={
+            {puedeVerPrecio && <Info label={precioDelPlan ? 'Precio del plan' : 'Precio total'} value={
               s.sin_cobro === 1
                 ? <span className="badge-green">{s.es_mantenimiento_gratuito === 1 ? 'Sin costo (mantenimiento gratuito)' : 'Sin costo (cliente con cobertura)'}</span>
-                : <span className="font-mono">{formatMonto(s.precio_interno, s.moneda)}</span>
+                : precioDelPlan
+                  ? <div className="space-y-0.5">
+                      <div className="font-mono">
+                        {formatMonto(precioDelPlan.monto, precioDelPlan.moneda)}
+                        <span className="ml-1 text-xs text-slate-500 font-sans">al mes</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Importe pactado del plan #{s.mantenimiento_plan.id}: cubre todas las visitas
+                        del mes y se factura una sola vez, no por mantenimiento.
+                      </div>
+                    </div>
+                  : <span className="font-mono">{formatMonto(s.precio_interno, s.moneda)}</span>
             } cols={2} />}
             <Info label="Contacto" value={
               (sitioContactoNombre.valor || sitioContactoTelefono.valor)
@@ -1502,11 +1569,23 @@ export default function ServicioDetalle() {
         {[
           { key: 'Antes', titulo: 'Antes', lista: evidenciasAntes },
           { key: 'Despues', titulo: 'Después', lista: evidenciasDespues },
+          // Sección de la Oficina Técnica: la ve todo el que accede al servicio
+          // (incluido el técnico), pero solo el Coordinador y el Super Admin
+          // suben, comentan o eliminan en ella.
+          {
+            key: MOMENTO_COORDINACION,
+            titulo: 'Coordinación',
+            lista: evidenciasCoordinacion,
+            soloCoordinacion: true,
+            ayuda: 'Registro propio de la Oficina Técnica. Solo el Coordinador carga fotos en esta sección.'
+          },
         ].map(sec => {
           // El técnico sube mientras ejecuta; coordinación y administración
           // pueden además corregir después, hasta la revisión administrativa.
-          const puedeGestionar = gestionaRegistrosTecnico
-            || (esTecnico && !estaServicioFinalizado(s.estado_servicio));
+          // La sección de Coordinación tiene su propia regla, más estrecha.
+          const puedeGestionar = sec.soloCoordinacion
+            ? gestionaEvidenciaCoordinacion
+            : (gestionaRegistrosTecnico || (esTecnico && !estaServicioFinalizado(s.estado_servicio)));
           const subiendoEsta = subiendoMomento === sec.key;
           return (
             // Las evidencias son el trabajo del técnico en obra: abiertas en
@@ -1531,7 +1610,12 @@ export default function ServicioDetalle() {
                 </>
               )}>
                 {!sec.lista.length ? (
-                  <p className="text-sm text-slate-500">Sin evidencias registradas.</p>
+                  <p className="text-sm text-slate-500">
+                    Sin evidencias registradas.
+                    {/* En la sección de Coordinación se explica de quién es, para
+                        que quien no ve los botones sepa que no es un fallo. */}
+                    {sec.ayuda && <span className="block mt-1 text-xs text-slate-400">{sec.ayuda}</span>}
+                  </p>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {sec.lista.map(ev => (
@@ -1544,6 +1628,7 @@ export default function ServicioDetalle() {
                         filePreview={filePreview}
                         onEliminar={eliminarEvidencia}
                         onGuardarComentario={guardarComentarioEvidencia}
+                        autor={sec.soloCoordinacion ? 'Coordinación' : null}
                       />
                     ))}
                   </div>

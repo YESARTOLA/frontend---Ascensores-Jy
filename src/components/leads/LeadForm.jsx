@@ -56,9 +56,11 @@ export function leadAFormulario(l) {
 }
 
 // `vendedoras` = catálogo de usuarios con rol Vendedora (quién puede quedar
-// asignado al lead). `vendedorBloqueado` lo usa la propia Vendedora al editar
-// sus leads: ve a quién está asignado pero no puede reasignarlo.
-export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, tiposAscensor, tiposServicio, vendedoras = [], clientes, vendedorBloqueado = false }) {
+// asignado al lead). `vendedorBloqueado` lo usa la propia Vendedora, que no
+// asigna leads: al editar ve a quién está asignado sin poder reasignarlo, y al
+// dar de alta uno suyo el campo llega fijado a ella misma. `notaVendedor`
+// reemplaza el texto de ayuda cuando ese matiz cambia (alta propia vs. edición).
+export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, tiposAscensor, tiposServicio, vendedoras = [], clientes, vendedorBloqueado = false, notaVendedor = null }) {
   const set = (parche) => onChange({ ...value, ...parche });
   // Documento: la longitud y el placeholder salen del tipo elegido.
   const docElegido = tipoDocumentoDe(value.tipo_documento);
@@ -172,9 +174,10 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
           )}
         </select>
         <p className="text-[11px] text-slate-500 mt-0.5">
-          {vendedorBloqueado
-            ? 'La asignación la gestiona la Central de ventas.'
-            : 'Solo la vendedora asignada verá este lead y podrá convertirlo. Sin asignar, queda visible únicamente para la Central de ventas y administración.'}
+          {notaVendedor
+            || (vendedorBloqueado
+              ? 'La asignación la gestiona la Central de ventas.'
+              : 'Solo la vendedora asignada verá este lead y podrá convertirlo. Sin asignar, queda visible únicamente para la Central de ventas y administración.')}
         </p>
         {!vendedorBloqueado && vendedoras.length === 0 && (
           <p className="text-[11px] text-ember-700 mt-0.5">

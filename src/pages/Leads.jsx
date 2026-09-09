@@ -74,13 +74,14 @@ export default function Leads() {
   const [catalogosConv, setCatalogosConv] = useState(null);
   const toast = useToast();
   const navigate = useNavigate();
-  const { esSuperAdmin, esAdmin, esCoordinador, esVendedora, esCentralVentas, puedeVerPrecio } = useAuth();
+  const { user, esSuperAdmin, esAdmin, esCoordinador, esVendedora, esCentralVentas, puedeVerPrecio } = useAuth();
   // Ciclo comercial del lead (cambiar estado, descartar, adjuntar cotizaciones):
   // administración y la Central de ventas. La Vendedora NO lo gestiona.
   const puedeGestionar = esSuperAdmin || esAdmin || esCoordinador || esCentralVentas;
   // Alta de leads: la Central de ventas es el punto de captura (con el
-  // superadministrador). La Vendedora solo trabaja los que le asignan.
-  const puedeAltaLead = esSuperAdmin || esCentralVentas;
+  // superadministrador) y la Vendedora registra los prospectos que consigue
+  // ella misma, que nacen asignados a su usuario (lo impone el backend).
+  const puedeAltaLead = esSuperAdmin || esCentralVentas || esVendedora;
   // Edición de datos: los anteriores + la Vendedora sobre SUS leads (la lista
   // que recibe ya viene acotada por el backend a los suyos).
   const puedeEditar = puedeGestionar || esVendedora;
@@ -119,6 +120,14 @@ export default function Leads() {
   );
 
   const ascensoresF = convForm.id_cliente ? ascensores.filter(a => String(a.edificio?.cliente?.id) === String(convForm.id_cliente)) : ascensores;
+
+  // El formulario de alta arranca limpio; para la Vendedora, con ella misma
+  // como asignada: es la asignación que el backend va a imponer de todos modos,
+  // y así el campo no aparece vacío como si quedara por decidir.
+  const abrirNuevo = () => {
+    setForm(esVendedora ? { ...leadFormInicial, id_vendedor: String(user?.id ?? '') } : leadFormInicial);
+    setOpen(true);
+  };
 
   const guardar = async (e) => {
     e.preventDefault();
@@ -360,7 +369,7 @@ export default function Leads() {
       <PageHeader
         title={esVendedora ? 'Mis leads' : 'Leads'}
         subtitle={esVendedora ? `${total} lead(s) asignado(s)` : `${total} lead(s)`}
-        actions={puedeAltaLead && <button onClick={() => setOpen(true)} className="btn-primary">+ Nuevo lead</button>}
+        actions={puedeAltaLead && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo lead</button>}
       />
 
       <PadreTabs
@@ -511,7 +520,9 @@ export default function Leads() {
         footer={<><button className="btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn-primary" type="submit" form="lead-form">Guardar</button></>}>
         <LeadForm formId="lead-form" value={form} onChange={setForm} onSubmit={guardar}
           ubigeo={ubigeo} tiposAscensor={tiposAscensor} tiposServicio={tipos}
-          vendedoras={catalogoVendedoras} clientes={clientes} />
+          vendedoras={catalogoVendedoras} clientes={clientes}
+          vendedorBloqueado={esVendedora}
+          notaVendedor={esVendedora ? 'El lead queda asignado a ti: podrás editarlo y convertirlo desde «Mis leads».' : null} />
       </Modal>
 
       {/* Al editar, el aviso solo comprueba los datos que esta edición cambia

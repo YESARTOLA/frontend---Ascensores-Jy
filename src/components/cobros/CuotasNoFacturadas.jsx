@@ -4,9 +4,11 @@ import { cobrosService, facturasService, archivosService } from '../../services'
 import Loader from '../common/Loader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
 import Combobox from '../common/Combobox.jsx';
+import FiltroMoneda, { etiquetaDeMoneda } from '../common/FiltroMoneda.jsx';
 import Modal from '../common/Modal.jsx';
 import Pagination from '../common/Pagination.jsx';
 import { useToast } from '../common/Toast.jsx';
+import { useMonedas } from '../../hooks/useMonedas.js';
 import { formatFecha, formatFechaHora, formatMonto, hoyISO } from '../../utils/formatters.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../../utils/exportTabla.js';
@@ -49,7 +51,7 @@ const proyectoTitulo = (f) =>
   f.servicio?.titulo || (f.mantenimiento_plan ? 'Plan de mantenimiento' : '—');
 
 const FILTROS_INIT = {
-  q: '', id_cliente: '', id_proyecto: '', tipo_categoria: '',
+  q: '', id_cliente: '', id_proyecto: '', tipo_categoria: '', moneda: '',
   fecha_desde: '', fecha_hasta: '', orden: '', direccion: ''
 };
 
@@ -75,8 +77,21 @@ const COLUMNAS_EXPORT = [
   { header: 'Estado', badge: true, get: f => estadoCuota(f, hoyISO()).texto }
 ];
 
-export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
-  const [filtros, setFiltros] = useState(FILTROS_INIT);
+// Bandeja de cuotas pendientes de facturar. Es el MISMO componente que montan
+// "Gestión de cobros → Por facturar" y "Contabilidad → Por facturar": una sola
+// tabla, un solo modal y un solo endpoint de emisión (POST /facturas), para que
+// facturar desde un módulo u otro sea literalmente la misma operación.
+//
+// Props opcionales de integración:
+//   · filtrosIniciales — filtros precargados al montar (p. ej. saltar desde una
+//     fila de Contabilidad directamente a las cuotas de ese cliente);
+//   · focoKey — cambia para volver a aplicar `filtrosIniciales` sin remontar;
+//   · onFacturaEmitida — aviso al contenedor tras emitir, para que refresque sus
+//     propias listas (en Contabilidad, la tabla de servicios y sus contadores).
+export default function CuotasNoFacturadas({
+  clientes = [], proyectos = [], filtrosIniciales = null, focoKey = null, onFacturaEmitida
+}) {
+  const [filtros, setFiltros] = useState(() => ({ ...FILTROS_INIT, ...(filtrosIniciales || {}) }));
   const [data, setData] = useState([]);
   const [resumen, setResumen] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -91,6 +106,9 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
   const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
+  // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
+  // cabecera del export.
+  const monedas = useMonedas();
 
   const filtrosKey = JSON.stringify(filtros);
   const hoyKey = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
@@ -114,6 +132,17 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
   // Al cambiar filtros, volver a la primera página.
   useEffect(() => { setPage(1); }, [filtrosKey]);
 
+  // Foco pedido por el contenedor: reaplica `filtrosIniciales` cada vez que
+  // cambia `focoKey`. Así, pulsar "Facturar mes" en una fila de Contabilidad
+  // deja la bandeja mostrando las cuotas de ese cliente, incluso si el usuario
+  // ya había tocado los filtros o repite el salto sobre otra fila.
+  const filtrosInicialesKey = JSON.stringify(filtrosIniciales || {});
+  useEffect(() => {
+    if (focoKey === null || focoKey === undefined) return;
+    setFiltros({ ...FILTROS_INIT, ...JSON.parse(filtrosInicialesKey) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focoKey]);
+
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
   const limpiar = () => setFiltros(FILTROS_INIT);
 
@@ -136,6 +165,7 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
     if (filtros.id_cliente) p.push(`Cliente: ${clientes.find(c => String(c.id) === String(filtros.id_cliente))?.nombre || filtros.id_cliente}`);
     if (filtros.id_proyecto) p.push(`Proyecto: ${proyectos.find(pr => String(pr.id) === String(filtros.id_proyecto))?.titulo || filtros.id_proyecto}`);
     if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_CATEGORIA.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
+    if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.fecha_desde) p.push(`Venc. desde: ${filtros.fecha_desde}`);
     if (filtros.fecha_hasta) p.push(`Venc. hasta: ${filtros.fecha_hasta}`);
     return p;
@@ -216,6 +246,10 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
       toast.success(`Cuota N° ${cu.numero_cuota} facturada`);
       setFacturarCuota(null);
       recargar();
+      // El comprobante recién emitido cambia el estado de facturación del cobro
+      // y de los servicios que cubre: se avisa al contenedor para que refresque
+      // sus tablas y contadores en el mismo gesto (sin recargar la página).
+      onFacturaEmitida?.(cu);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error al facturar la cuota');
     } finally {
@@ -262,6 +296,9 @@ export default function CuotasNoFacturadas({ clientes = [], proyectos = [] }) {
             placeholder="Todos los proyectos"
             emptyLabel="Sin proyectos que coincidan"
           />
+          {/* La cuota hereda la moneda de su cobro: filtrar por ella deja la
+              tabla y los totales del pie en una sola divisa. */}
+          <FiltroMoneda monedas={monedas} value={filtros.moneda} onChange={v => setF('moneda', v)} />
           <input type="date" className="input" title="Vencimiento desde" value={filtros.fecha_desde} onChange={e => setF('fecha_desde', e.target.value)} />
           <input type="date" className="input" title="Vencimiento hasta" value={filtros.fecha_hasta} onChange={e => setF('fecha_hasta', e.target.value)} />
           <button onClick={limpiar} className="btn-secondary col-span-2 sm:col-span-1">Limpiar</button>

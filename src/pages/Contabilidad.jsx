@@ -1,16 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { serviciosService, facturasService, archivosService } from '../services';
+import { serviciosService, facturasService, archivosService, clientesService, cobrosService } from '../services';
+import CuotasNoFacturadas from '../components/cobros/CuotasNoFacturadas.jsx';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Modal from '../components/common/Modal.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
+import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoneda.jsx';
 import OtModal from '../components/common/OtModal.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
+import { useMonedas } from '../hooks/useMonedas.js';
 import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores, nombreEdificioDeAscensores, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
 import { ESTADOS_FACTURACION, esFacturaActiva } from '../utils/estadoFactura.js';
@@ -20,7 +23,7 @@ import { etiquetaMoneda } from '../utils/excelNumeros.js';
 
 const FILTROS_INICIALES = {
   q: '', tipo_categoria: '', situacion: '', estado_cobro: '', estado_facturacion: '',
-  grupo_facturacion: '', desde: '', hasta: ''
+  grupo_facturacion: '', moneda: '', desde: '', hasta: ''
 };
 
 // Los dos grupos que resume Contabilidad. Esta lista es a la vez las TARJETAS
@@ -76,35 +79,70 @@ const EN_EJECUCION = 'En ejecución';
 // backend/utils/elegibilidadContable.js (ESTADOS_ADMIN_NO_HABILITA).
 const ESTADOS_ADMIN_NO_HABILITA = ['En ejecución', 'Pendiente revisión', 'Observado', 'Rechazado'];
 
+// Servicio de plan del modelo mensual (sin cobro propio): el comprobante no es
+// del servicio sino del PLAN — uno por mes, contra la cuota del cobro del plan.
+// No es un "no facturable": se emite en la pestaña "Por facturar" de esta misma
+// página (misma bandeja y mismo POST /facturas que Gestión de cobros y que el
+// detalle del plan en Mantenimientos).
+//
+// Un servicio de plan legacy CON cobro propio (modelo anterior) sí factura por
+// servicio — sigue las reglas normales de motivoNoFacturable (espejo del backend).
+const facturaPorCuotaDelPlan = (r) => !!(r.servicio?.id_mantenimiento_plan && !r.servicio?.cobro);
+
 // ¿Se puede emitir la factura GENERAL del servicio desde esta pantalla?
 // Espejo en el front de las validaciones de facturasController.crear, para no
 // ofrecer un botón que el backend va a rechazar. El backend sigue siendo la
 // autoridad: aquí solo se decide si mostrar la acción.
 //
-// Queda fuera (se factura en otro sitio o no se factura):
-//   · mantenimientos de un PLAN → una sola factura por MES, desde el cobro
-//     del plan (Cobros → Por facturar), por el monto mensual pactado;
+// Queda fuera (se factura en la pestaña "Por facturar" o no se factura):
+//   · mantenimientos de un PLAN → una sola factura por MES contra la cuota del
+//     plan, por el monto mensual pactado (facturaPorCuotaDelPlan);
 //   · servicios marcados "Sin factura" (requiere_factura = 0) y los gratuitos;
 //   · servicios aún no aprobados por la revisión administrativa;
-//   · cobros que ya facturan POR CUOTA (la emisión va en Cobros → Por facturar);
+//   · cobros que ya facturan POR CUOTA (la emisión va en "Por facturar");
 //   · servicios que ya tienen su factura general emitida.
 function motivoNoFacturable(r) {
   const s = r.servicio;
   if (!s) return 'Sin servicio asociado';
-  // Servicio de plan del modelo mensual (sin cobro propio): factura el PLAN.
-  // Un servicio de plan legacy CON cobro propio (modelo anterior) sí factura
-  // por servicio — sigue las reglas normales de abajo (espejo del backend).
-  if (s.id_mantenimiento_plan && !s.cobro) return 'Pertenece a un plan: se factura una sola vez al mes. Emita desde Mantenimientos → detalle del plan → Facturación mensual, o en Gestión de cobros → Por facturar';
   if (s.estado_servicio === 'Cancelado') return 'Servicio cancelado';
   if (s.sin_cobro === 1) return 'Servicio sin cobro (gratuito)';
+  if (facturaPorCuotaDelPlan(r)) return 'Pertenece a un plan: se factura una sola vez al mes, contra la cuota del plan';
   if (s.requiere_factura === 0) return 'Marcado como "Sin factura"';
   if (!s.id_cotizacion && ESTADOS_ADMIN_NO_HABILITA.includes(r.estado_administrativo)) {
     return 'Aún no aprobado por la revisión administrativa';
   }
   const facturas = (s.cobro?.facturas || []).filter(esFacturaActiva);
-  if (facturas.some(f => f.id_cuota != null)) return 'Este cobro factura por cuota: emita desde Cobros → Por facturar';
+  if (facturas.some(f => f.id_cuota != null)) return 'Este cobro factura por cuota';
   if (facturas.some(f => f.id_cuota == null)) return 'Ya tiene factura emitida';
   return null;
+}
+
+// ¿El comprobante que le falta a esta fila se emite contra una CUOTA? Dos casos:
+// el mantenimiento de un plan (factura mensual del plan) y el cobro que ya viene
+// facturando por cuota. En ambos la emisión vive en la pestaña "Por facturar" de
+// esta misma página, así que la fila ofrece el salto en vez de un texto muerto.
+// Se consulta DESPUÉS de motivoNoFacturable para respetar sus precedencias: un
+// servicio cancelado o gratuito sigue sin ofrecer acción.
+const facturaEnBandejaDeCuotas = (r) =>
+  facturaPorCuotaDelPlan(r) ||
+  (r.servicio?.cobro?.facturas || []).filter(esFacturaActiva).some(f => f.id_cuota != null);
+
+// Qué acción ofrece la columna "Acciones": emitir la factura general aquí mismo,
+// saltar a la bandeja de cuotas, o nada (con el motivo como tooltip).
+function accionFacturar(r) {
+  const motivo = motivoNoFacturable(r);
+  if (!motivo) return { tipo: 'emitir' };
+  if (facturaEnBandejaDeCuotas(r)) {
+    const esPlan = facturaPorCuotaDelPlan(r);
+    return {
+      tipo: 'bandeja',
+      etiqueta: esPlan ? 'Facturar mes' : 'Facturar cuota',
+      ayuda: esPlan
+        ? 'Los mantenimientos de un plan se facturan una sola vez al mes, contra la cuota del plan. Abre «Por facturar» con las cuotas de este cliente.'
+        : 'Este cobro factura por cuota. Abre «Por facturar» con las cuotas de este cliente.'
+    };
+  }
+  return { tipo: 'bloqueado', motivo };
 }
 
 // Total cobrable del servicio: manda el monto del cobro; sin cobro creado, el
@@ -114,6 +152,22 @@ const totalCobrable = (r) => Number(r.servicio?.cobro?.monto_total ?? r.servicio
 // Indica si el servicio realizado es gratuito / sin cobro (presentación de
 // precio y estado de cobro distinta, alineada con la tabla).
 const esGratuito = (r) => r.servicio?.sin_cobro === 1;
+
+// Precio de una visita de plan. El servicio no tiene precio propio (nace con
+// precio_interno = 0: el importe pactado es el monto MENSUAL del plan, que no
+// cambia con cuántas visitas caigan en el mes), así que la columna mostraba
+// S/ 0.00 y se leía como gratuito. Se muestra el monto del plan, marcado como
+// mensual para no confundirlo con el total de esa fila.
+//
+// En el export va como TEXTO, sin valor numérico: el mismo mes aparece en tantas
+// filas como visitas tenga, y sumarlo multiplicaría el importe real del plan.
+const precioMensualDelPlan = (r) => {
+  const s = r.servicio;
+  if (!s?.id_mantenimiento_plan || Number(s.precio_interno || 0) !== 0) return null;
+  const monto = s.mantenimiento_plan?.monto_mensual;
+  if (monto == null) return null;
+  return { monto: Number(monto), moneda: s.mantenimiento_plan.moneda || s.moneda };
+};
 
 // Documento del cliente: "RUC 20..." / "DNI 4..." o '—' si no hay número.
 const docCliente = (r) => {
@@ -158,8 +212,14 @@ const COLUMNAS_EXPORT = [
   {
     header: 'Total',
     align: 'right',
-    get: r => (esGratuito(r) ? 'Sin costo' : formatMonto(r.servicio?.precio_interno, monedaDe(r))),
-    num: r => (esGratuito(r) ? null : Number(r.servicio?.precio_interno))
+    get: r => {
+      if (esGratuito(r)) return 'Sin costo';
+      const plan = precioMensualDelPlan(r);
+      if (plan) return `${formatMonto(plan.monto, plan.moneda)} al mes (plan)`;
+      return formatMonto(r.servicio?.precio_interno, monedaDe(r));
+    },
+    // El monto del plan no entra como número: se repite en cada visita del mes.
+    num: r => (esGratuito(r) || precioMensualDelPlan(r) ? null : Number(r.servicio?.precio_interno))
   },
   { header: 'Estado cobro', badge: true, get: r => (esGratuito(r) ? 'Sin cobro' : r.estado_cobro) },
   { header: 'Estado factura', badge: true, get: r => r.estado_facturacion },
@@ -168,6 +228,19 @@ const COLUMNAS_EXPORT = [
 
 export default function Contabilidad() {
   const [filtros, setFiltros] = useState(FILTROS_INICIALES);
+  // Vista activa: la tabla de servicios realizados o la bandeja de cuotas
+  // pendientes de facturar (planes de mantenimiento y cobros en cuotas). Las dos
+  // emiten contra el mismo endpoint, así que toda la facturación se hace aquí
+  // sin salir del módulo.
+  const [vistaModo, setVistaModo] = useState('servicios'); // 'servicios' | 'por_facturar'
+  // Catálogos de los filtros de la bandeja de cuotas (carga diferida: solo al
+  // entrar por primera vez a esa vista).
+  const [clientes, setClientes] = useState([]);
+  const [proyectos, setProyectos] = useState([]);
+  const [catalogosCargados, setCatalogosCargados] = useState(false);
+  // Salto desde una fila de plan: filtros con los que abrir la bandeja + nonce
+  // para que se reapliquen aunque se repita el mismo cliente.
+  const [focoCuotas, setFocoCuotas] = useState(null); // { filtros, key } | null
   const [exportando, setExportando] = useState(false);
   const [otAbierta, setOtAbierta] = useState(null); // { numero, archivo } | null
   // Emisión de la factura del servicio sin salir de Contabilidad.
@@ -178,6 +251,9 @@ export default function Contabilidad() {
   });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
+  // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
+  // cabecera del export.
+  const monedas = useMonedas();
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   // Mismos roles que admite la ruta de facturas en el backend.
   const puedeFacturar = esSuperAdmin || esAdmin || esContabilidad;
@@ -191,6 +267,38 @@ export default function Contabilidad() {
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
 
+  // Catálogos de la bandeja de cuotas: se piden la primera vez que se abre esa
+  // vista, no al cargar Contabilidad (la tabla de servicios no los usa).
+  useEffect(() => {
+    if (vistaModo !== 'por_facturar' || catalogosCargados) return;
+    let cancel = false;
+    Promise.all([
+      clientesService.list().catch(() => []),
+      cobrosService.proyectos().catch(() => [])
+    ]).then(([c, p]) => {
+      if (cancel) return;
+      setClientes(Array.isArray(c) ? c : []);
+      setProyectos(Array.isArray(p) ? p : []);
+      setCatalogosCargados(true);
+    });
+    return () => { cancel = true; };
+  }, [vistaModo, catalogosCargados]);
+
+  // "Facturar mes" / "Facturar cuota": abre la bandeja de cuotas filtrada por el
+  // cliente del servicio, que es donde vive ese comprobante. En los planes se
+  // acota además a preventivo, que es el único tipo que factura por mes.
+  const irACuotasDelPlan = (r) => {
+    const idCliente = r.servicio?.cliente?.id;
+    setFocoCuotas({
+      filtros: {
+        ...(facturaPorCuotaDelPlan(r) ? { tipo_categoria: 'preventivo' } : {}),
+        ...(idCliente ? { id_cliente: String(idCliente) } : {})
+      },
+      key: Date.now()
+    });
+    setVistaModo('por_facturar');
+  };
+
   // Descripción legible de los filtros activos, para la cabecera del export.
   const filtrosLegibles = () => {
     const p = [];
@@ -200,6 +308,7 @@ export default function Contabilidad() {
     if (filtros.estado_cobro) p.push(`Estado cobro: ${filtros.estado_cobro}`);
     if (filtros.estado_facturacion) p.push(`Estado factura: ${filtros.estado_facturacion}`);
     if (filtros.grupo_facturacion) p.push(`Facturación: ${GRUPOS_FACTURACION.find(g => g.value === filtros.grupo_facturacion)?.titulo || filtros.grupo_facturacion}`);
+    if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.desde) p.push(`Realización desde: ${filtros.desde}`);
     if (filtros.hasta) p.push(`Realización hasta: ${filtros.hasta}`);
     return p;
@@ -296,36 +405,63 @@ export default function Contabilidad() {
 
   return (
     <>
-      <PageHeader title="Contabilidad" subtitle={`${total.toLocaleString('es-PE')} servicio(s) realizado(s)`}
+      <PageHeader title="Contabilidad"
+        subtitle={vistaModo === 'por_facturar'
+          ? 'Cuotas pendientes de facturación (planes de mantenimiento y cobros en cuotas)'
+          : `${total.toLocaleString('es-PE')} servicio(s) realizado(s)`}
         actions={
           <>
-            {/* Filtro rápido por grupo de facturación: el mismo criterio de las
-                tarjetas. Es un interruptor — volver a pulsarlo lo quita. */}
-            <div className="flex items-center gap-2 sm:mr-2" role="group" aria-label="Filtrar por facturación">
-              {GRUPOS_FACTURACION.map(g => {
-                const activo = filtros.grupo_facturacion === g.value;
-                return (
-                  <button
-                    key={g.value}
-                    type="button"
-                    aria-pressed={activo}
-                    title={activo ? `Quitar el filtro «${g.titulo}»` : g.ayuda}
-                    onClick={() => setF('grupo_facturacion', activo ? '' : g.value)}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${activo ? g.btnOn : g.btnOff}`}
-                  >
-                    {g.titulo}
-                    {activo && <span aria-hidden="true" className="text-xs opacity-70">✕</span>}
-                  </button>
-                );
-              })}
+            {/* Selector de vista. "Servicios" factura el comprobante del servicio;
+                "Por facturar" es la bandeja de cuotas — la misma de Gestión de
+                cobros — donde se emite la factura mensual de los planes. */}
+            <div className="flex items-center gap-2 sm:mr-2" role="group" aria-label="Vista">
+              <button
+                type="button"
+                onClick={() => setVistaModo('servicios')}
+                className={vistaModo === 'servicios' ? 'btn-primary' : 'btn-secondary'}
+              >Servicios</button>
+              <button
+                type="button"
+                // Entrada "en limpio": se descarta el foco de un salto anterior
+                // para no reabrir la bandeja filtrada por un cliente viejo.
+                onClick={() => { setFocoCuotas(null); setVistaModo('por_facturar'); }}
+                title="Cuotas que aún no tienen comprobante: la factura mensual de los planes de mantenimiento y la de los cobros en cuotas"
+                className={vistaModo === 'por_facturar' ? 'btn-primary' : 'btn-secondary'}
+              >Por facturar</button>
             </div>
-            <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || total === 0}>Exportar Excel</button>
-            <button onClick={() => exportar('pdf')} className="btn-primary" disabled={exportando || total === 0}>Exportar PDF</button>
+            {/* El filtro por grupo y los exports son de la tabla de servicios;
+                la bandeja de cuotas trae los suyos propios. */}
+            {vistaModo === 'servicios' && (
+              <>
+                {/* Filtro rápido por grupo de facturación: el mismo criterio de las
+                    tarjetas. Es un interruptor — volver a pulsarlo lo quita. */}
+                <div className="flex items-center gap-2 sm:mr-2" role="group" aria-label="Filtrar por facturación">
+                  {GRUPOS_FACTURACION.map(g => {
+                    const activo = filtros.grupo_facturacion === g.value;
+                    return (
+                      <button
+                        key={g.value}
+                        type="button"
+                        aria-pressed={activo}
+                        title={activo ? `Quitar el filtro «${g.titulo}»` : g.ayuda}
+                        onClick={() => setF('grupo_facturacion', activo ? '' : g.value)}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${activo ? g.btnOn : g.btnOff}`}
+                      >
+                        {g.titulo}
+                        {activo && <span aria-hidden="true" className="text-xs opacity-70">✕</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button onClick={() => exportar('excel')} className="btn-secondary" disabled={exportando || total === 0}>Exportar Excel</button>
+                <button onClick={() => exportar('pdf')} className="btn-primary" disabled={exportando || total === 0}>Exportar PDF</button>
+              </>
+            )}
           </>
         }
       />
 
-      {resumen && (
+      {vistaModo === 'servicios' && resumen && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
           {GRUPOS_FACTURACION.map(g => (
             <CardMetrica
@@ -341,6 +477,7 @@ export default function Contabilidad() {
         </div>
       )}
 
+      {vistaModo === 'servicios' && (
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input lg:col-span-2"
@@ -363,6 +500,9 @@ export default function Contabilidad() {
             <option value="">Estado factura (todos)</option>
             {ESTADOS_FACTURACION.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          {/* Deja tabla, indicadores y export en una sola divisa: los importes
+              de PEN y USD nunca se suman entre sí. */}
+          <FiltroMoneda monedas={monedas} value={filtros.moneda} onChange={v => setF('moneda', v)} />
           <DateRangePicker
             desde={filtros.desde}
             hasta={filtros.hasta}
@@ -372,7 +512,9 @@ export default function Contabilidad() {
           <button onClick={() => setFiltros(FILTROS_INICIALES)} className="btn-secondary lg:col-span-6">Limpiar filtros</button>
         </div>
       </div>
+      )}
 
+      {vistaModo === 'servicios' && (
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin servicios" /> : (
           <>
@@ -452,7 +594,18 @@ export default function Contabilidad() {
                         <td className="table-td text-right font-mono">
                           {gratuito
                             ? <span className="text-emerald-700">Sin costo</span>
-                            : formatMonto(r.servicio?.precio_interno, r.servicio?.moneda)}
+                            : (() => {
+                                // Visita de plan: el importe es el mensual del plan,
+                                // no un total propio de esta fila.
+                                const plan = precioMensualDelPlan(r);
+                                if (!plan) return formatMonto(r.servicio?.precio_interno, r.servicio?.moneda);
+                                return (
+                                  <span title="Importe mensual del plan: cubre todas las visitas del mes y se factura una sola vez">
+                                    {formatMonto(plan.monto, plan.moneda)}
+                                    <span className="block text-[10px] text-slate-400 font-sans">al mes · plan</span>
+                                  </span>
+                                );
+                              })()}
                         </td>
                         <td className="table-td">
                           {gratuito
@@ -464,11 +617,23 @@ export default function Contabilidad() {
                           {(() => { const sit = situacionPago(r); return <span className={badgeEstado(sit === 'Cancelado' ? 'Pagado' : sit === 'Pendiente' ? 'Pendiente de iniciar' : 'Sin cobro')}>{sit}</span>; })()}
                         </td>
                         <td className="table-td text-right space-x-3 whitespace-nowrap">
-                          {puedeFacturar && (motivoNoFacturable(r)
-                            ? <span className="text-slate-300 text-xs cursor-help" title={motivoNoFacturable(r)}>Facturar</span>
-                            : <button type="button" onClick={() => abrirFacturar(r)}
-                                className="text-emerald-700 text-xs font-medium hover:underline">Facturar</button>
-                          )}
+                          {puedeFacturar && (() => {
+                            const acc = accionFacturar(r);
+                            // Factura general del servicio: se emite en el modal de
+                            // esta misma página.
+                            if (acc.tipo === 'emitir') {
+                              return <button type="button" onClick={() => abrirFacturar(r)}
+                                className="text-emerald-700 text-xs font-medium hover:underline">Facturar</button>;
+                            }
+                            // El comprobante que falta es de una CUOTA (mes del plan
+                            // o cobro en cuotas): se salta a la bandeja "Por facturar"
+                            // de esta página, ya filtrada por el cliente.
+                            if (acc.tipo === 'bandeja') {
+                              return <button type="button" onClick={() => irACuotasDelPlan(r)} title={acc.ayuda}
+                                className="text-emerald-700 text-xs font-medium hover:underline">{acc.etiqueta}</button>;
+                            }
+                            return <span className="text-slate-300 text-xs cursor-help" title={acc.motivo}>Facturar</span>;
+                          })()}
                           {r.servicio?.cobro && <Link to={`/cobros/${r.servicio.cobro.id}`} className="text-brand-700 text-xs">Ir a cobro</Link>}
                           <Link to={`/servicios/${r.id_servicio}`} className="text-slate-600 text-xs">Detalle</Link>
                         </td>
@@ -483,6 +648,22 @@ export default function Contabilidad() {
           </>
         )}
       </div>
+      )}
+
+      {/* Bandeja de cuotas por facturar: el MISMO componente que monta Gestión
+          de cobros. La factura mensual de un plan de mantenimiento se emite aquí
+          (contra la cuota del plan) sin salir de Contabilidad, con el mismo
+          POST /facturas que usa el detalle del plan en Mantenimientos. Al emitir
+          se refresca también la tabla de servicios y sus contadores. */}
+      {vistaModo === 'por_facturar' && (
+        <CuotasNoFacturadas
+          clientes={clientes}
+          proyectos={proyectos}
+          filtrosIniciales={focoCuotas?.filtros || null}
+          focoKey={focoCuotas?.key ?? null}
+          onFacturaEmitida={recargar}
+        />
+      )}
 
       <Modal open={!!facturando} onClose={cerrarFacturar} title="Emitir comprobante" size="sm"
         footer={<>

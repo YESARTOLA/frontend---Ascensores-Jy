@@ -6,11 +6,13 @@ import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
+import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoneda.jsx';
 import { FileLink, descargarArchivo } from '../components/common/FilePreview.jsx';
 import Modal from '../components/common/Modal.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
+import { useMonedas } from '../hooks/useMonedas.js';
 import { badgeEstado, formatFecha, formatMonto, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_FACTURA, ESTADO_FACTURA_SIN, ESTADO_FACTURA_ENVIADA, esFacturaActiva } from '../utils/estadoFactura.js';
 import { TIPOS_COMPROBANTE, etiquetaTipoComprobante } from '../utils/catalogosComprobante.js';
@@ -20,7 +22,7 @@ import CardMetricaDoble from '../components/common/CardMetricaDoble.jsx';
 
 const FILTROS_INICIALES = {
   q: '', id_cliente: '', estado_factura: '', tipo_comprobante: '', cobertura: '', tipo_categoria: '',
-  situacion: '', desde: '', hasta: '',
+  situacion: '', moneda: '', desde: '', hasta: '',
   // Orden por defecto: serie y N° de factura, ascendente. Es el orden con el que
   // administración lleva el registro; el correlativo interno (#) sigue
   // disponible como columna ordenable.
@@ -157,6 +159,9 @@ export default function Facturas() {
       .catch(() => {});
   };
   const toast = useToast();
+  // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
+  // cabecera del export.
+  const monedas = useMonedas();
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   const puedeAnular = esSuperAdmin || esAdmin || esContabilidad;
 
@@ -197,6 +202,7 @@ export default function Facturas() {
     if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_SERVICIO.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
     if (filtros.situacion) p.push(`Situación: ${SITUACIONES.find(x => x.value === filtros.situacion)?.titulo || filtros.situacion}`);
     if (filtros.cobertura) p.push(`Cobertura: ${filtros.cobertura === 'cuota' ? 'Por cuota' : 'General'}`);
+    if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.desde) p.push(`Emisión desde: ${filtros.desde}`);
     if (filtros.hasta) p.push(`Emisión hasta: ${filtros.hasta}`);
     return p;
@@ -318,6 +324,10 @@ export default function Facturas() {
             <option value="general">General</option>
             <option value="cuota">Por cuota</option>
           </select>
+          {/* La factura no guarda moneda: la hereda del cobro y, si no lo tiene,
+              del servicio (igual que la columna «Moneda» del export). El backend
+              filtra con esa misma regla. */}
+          <FiltroMoneda monedas={monedas} value={filtros.moneda} onChange={v => setF('moneda', v)} />
           <DateRangePicker
             desde={filtros.desde}
             hasta={filtros.hasta}
