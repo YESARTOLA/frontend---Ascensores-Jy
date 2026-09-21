@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { emergenciasService, archivosService } from '../../services';
+import { emergenciasService } from '../../services';
 import Modal from '../common/Modal.jsx';
 import Loader from '../common/Loader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
+import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useToast } from '../common/Toast.jsx';
 import { useFilePreview } from '../common/FilePreview.jsx';
 import { assetUrl } from '../../services/apiClient.js';
@@ -41,7 +43,7 @@ export default function AdjuntosEmergenciaModal({
   const [items, setItems] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
-  const [progreso, setProgreso] = useState(null);
+  const carga = useCargaArchivos();
   const [eliminandoId, setEliminandoId] = useState(null);
   const [max, setMax] = useState(null);
   // Cuando el backend deniega la gestión, manda sobre la prop optimista del padre.
@@ -77,21 +79,8 @@ export default function AdjuntosEmergenciaModal({
     }
 
     setSubiendo(true);
-    const subidos = [];
     try {
-      for (let i = 0; i < archivos.length; i++) {
-        const file = archivos[i];
-        setProgreso({ actual: i + 1, total: archivos.length, nombre: file.name, pct: 0 });
-        const fd = new FormData();
-        fd.append('archivo', file);
-        const arch = await archivosService.upload(fd, 'emergencias', {
-          onUploadProgress: (ev) => {
-            if (!ev.total) return;
-            setProgreso(p => (p ? { ...p, pct: Math.round((ev.loaded / ev.total) * 100) } : p));
-          }
-        });
-        subidos.push(arch);
-      }
+      const subidos = await carga.subirVarios(archivos, 'emergencias');
 
       if (esBorrador) {
         onChangeBorrador?.([
@@ -110,11 +99,10 @@ export default function AdjuntosEmergenciaModal({
     } catch (err) {
       // Los ya subidos quedaron en el storage aunque falle el vínculo: se informa
       // en vez de fingir éxito parcial.
-      toast.error(err.response?.data?.error || 'Error al subir los adjuntos');
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al subir los adjuntos');
       if (!esBorrador) cargar();
     } finally {
       setSubiendo(false);
-      setProgreso(null);
     }
   };
 
@@ -159,7 +147,7 @@ export default function AdjuntosEmergenciaModal({
     >
       <div className="space-y-4">
         <p className="text-xs text-slate-500">
-          Fotos y videos de la falla. El técnico asignado los verá desde su vista de la emergencia.
+          Fotos, videos y PDFs de la falla, sin límite de peso. El técnico asignado los verá desde su vista de la emergencia.
         </p>
 
         {gestionable && (
@@ -167,7 +155,7 @@ export default function AdjuntosEmergenciaModal({
             <input
               ref={inputRef}
               type="file"
-              accept="image/*,video/*"
+              accept="image/*,video/*,application/pdf"
               multiple
               className="hidden"
               onChange={seleccionar}
@@ -178,7 +166,7 @@ export default function AdjuntosEmergenciaModal({
               onClick={() => inputRef.current?.click()}
               disabled={subiendo || alTope}
             >
-              {subiendo ? 'Subiendo…' : '+ Agregar fotos o videos'}
+              {subiendo ? 'Subiendo…' : '+ Agregar fotos, videos o PDFs'}
             </button>
             {alTope && (
               <span className="ml-2 text-xs text-amber-700">
@@ -188,19 +176,7 @@ export default function AdjuntosEmergenciaModal({
           </div>
         )}
 
-        {progreso && (
-          <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3">
-            <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
-              <span className="truncate">
-                {progreso.nombre} ({progreso.actual}/{progreso.total})
-              </span>
-              <span className="font-mono shrink-0 ml-2">{progreso.pct}%</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
-              <div className="h-full bg-brand-600 transition-all" style={{ width: `${progreso.pct}%` }} />
-            </div>
-          </div>
-        )}
+        <BarraProgresoCarga carga={carga} />
 
         {cargando ? <Loader /> : listaVisible.length === 0 ? (
           <EmptyState title="Sin adjuntos" />

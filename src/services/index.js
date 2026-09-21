@@ -349,7 +349,9 @@ export const archivosService = {
   // Reconstruimos el FormData garantizando que el campo `tipo` viaja antes del archivo
   // para que multer lo lea al decidir la carpeta destino.
   // Los uploads desactivan el timeout global (30s) porque videos en conexiones lentas
-  // pueden tardar varios minutos; el límite real lo pone el server/Railway, no axios.
+  // pueden tardar mucho: no hay límite de peso, así que tampoco puede haberlo de
+  // tiempo. `onUploadProgress` alimenta la barra de progreso y `signal` permite
+  // cancelar la subida en curso (ver hook useCargaArchivos).
   upload: (formData, tipo, opciones = {}) => {
     const fd = new FormData();
     if (tipo) fd.append('tipo', tipo);
@@ -357,6 +359,7 @@ export const archivosService = {
     return api.post('/archivos', fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,
+      signal: opciones.signal,
       onUploadProgress: opciones.onUploadProgress
     }).then(r => r.data?.data ?? r.data);
   }

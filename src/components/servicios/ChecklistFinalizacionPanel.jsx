@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { serviciosService, archivosService, assetUrl } from '../../services';
+import { serviciosService, assetUrl } from '../../services';
 import SeccionColapsable from '../common/SeccionColapsable.jsx';
+import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useToast } from '../common/Toast.jsx';
 import { coordsDe, linkGoogleMaps, formatCoords } from '../../utils/mapa.js';
 import { formatFecha, toYMDLima, hoyISO } from '../../utils/formatters.js';
@@ -19,6 +21,10 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
   const [cargando, setCargando] = useState(true);
   const [diaActivo, setDiaActivo] = useState('');
   const [subiendo, setSubiendo] = useState(null); // id_item con subida en curso
+  // Item cuya barra de progreso se muestra. Sobrevive al final de la carga para
+  // que un error quede visible en el item donde ocurrio.
+  const [itemCarga, setItemCarga] = useState(null);
+  const carga = useCargaArchivos();
   const guardandoNota = useRef({});
 
   const cargar = async () => {
@@ -106,26 +112,33 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
     );
   });
 
-  const agregarFoto = async (it, e) => {
-    const file = e.target.files?.[0];
+  // Acepta fotos, videos y PDFs, de uno en uno o en tanda, sin tope de peso.
+  const agregarEvidencias = async (it, e) => {
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
     setSubiendo(it.id);
+    setItemCarga(it.id);
     try {
       const coords = await capturarUbicacion();
-      const fd = new FormData(); fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'evidencias');
-      const payload = { id_archivo: arch.id };
-      if (esMultidia && diaActivo) payload.id_dia = Number(diaActivo);
-      if (coords) { payload.latitud = coords.latitud; payload.longitud = coords.longitud; }
-      const foto = await serviciosService.agregarFotoChecklist(idServicio, it.id, payload);
-      setData(prev => {
-        const r = prev.respuestas[it.id] || { fotos: [] };
-        return { ...prev, respuestas: { ...prev.respuestas, [it.id]: { ...r, fotos: [...(r.fotos || []), mapFoto(foto)] } } };
+      await carga.subirVarios(files, 'evidencias', {
+        onArchivoSubido: async (arch) => {
+          const payload = { id_archivo: arch.id };
+          if (esMultidia && diaActivo) payload.id_dia = Number(diaActivo);
+          if (coords) { payload.latitud = coords.latitud; payload.longitud = coords.longitud; }
+          const foto = await serviciosService.agregarFotoChecklist(idServicio, it.id, payload);
+          setData(prev => {
+            const r = prev.respuestas[it.id] || { fotos: [] };
+            return { ...prev, respuestas: { ...prev.respuestas, [it.id]: { ...r, fotos: [...(r.fotos || []), mapFoto(foto)] } } };
+          });
+        }
       });
-      toast.success(coords ? 'Foto agregada' : 'Foto agregada — sin ubicación GPS');
+      const n = files.length;
+      toast.success(coords
+        ? (n > 1 ? `${n} evidencias agregadas` : 'Evidencia agregada')
+        : (n > 1 ? `${n} evidencias agregadas — sin ubicación GPS` : 'Evidencia agregada — sin ubicación GPS'));
     } catch (err) {
-      toast.error(err.response?.data?.error || 'No se pudo agregar la foto');
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'No se pudo agregar la evidencia');
     } finally {
       setSubiendo(null);
     }
@@ -247,17 +260,26 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
                     <div className="mt-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {puedeEditar && (
-                          <label className={`btn-secondary cursor-pointer text-xs w-full sm:w-auto ${subiendo === it.id ? 'opacity-50 pointer-events-none' : ''}`}>
-                            📷 Agregar foto
-                            <input type="file" className="hidden" accept="image/*" capture="environment"
-                              onChange={e => agregarFoto(it, e)} />
-                          </label>
+                          <>
+                            <label className={`btn-secondary cursor-pointer text-xs w-full sm:w-auto ${subiendo === it.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                              📷 Agregar foto
+                              <input type="file" className="hidden" accept="image/*" capture="environment"
+                                onChange={e => agregarEvidencias(it, e)} />
+                            </label>
+                            <label className={`btn-secondary cursor-pointer text-xs w-full sm:w-auto ${subiendo === it.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                              📎 Adjuntar (video o PDF)
+                              <input type="file" className="hidden" accept="image/*,video/*,application/pdf" multiple
+                                onChange={e => agregarEvidencias(it, e)} />
+                            </label>
+                          </>
                         )}
-                        {subiendo === it.id && <span className="text-xs text-slate-500">Subiendo…</span>}
                         {faltaFoto && subiendo !== it.id && (
-                          <span className="text-xs text-rose-600">Requiere al menos una foto</span>
+                          <span className="text-xs text-rose-600">Requiere al menos una evidencia</span>
                         )}
                       </div>
+                      {itemCarga === it.id && carga.progreso && (
+                        <BarraProgresoCarga carga={carga} className="mt-2" />
+                      )}
                       {(r.fotos || []).length > 0 && (
                         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mt-2">
                           {r.fotos.map(f => {
@@ -265,9 +287,25 @@ export default function ChecklistFinalizacionPanel({ idServicio, dias = [], esMu
                             return (
                               <div key={f.id} className="relative group rounded-md overflow-hidden ring-1 ring-slate-200 bg-slate-50">
                                 <div className="aspect-square">
-                                  {f.archivo?.ruta_almacenamiento
-                                    ? <img src={assetUrl(f.archivo.ruta_almacenamiento)} alt="Evidencia del ítem" className="w-full h-full object-cover" />
-                                    : <div className="w-full h-full grid place-items-center text-[10px] text-slate-400">Sin archivo</div>}
+                                  {/* La evidencia ya no es solo una foto: un video
+                                      se previsualiza y un PDF se abre en pestaña. */}
+                                  {!f.archivo?.ruta_almacenamiento ? (
+                                    <div className="w-full h-full grid place-items-center text-[10px] text-slate-400">Sin archivo</div>
+                                  ) : (f.archivo.mime_type || '').startsWith('video/') ? (
+                                    <a href={assetUrl(f.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer" className="relative block w-full h-full" title={f.archivo.nombre_original}>
+                                      <video src={assetUrl(f.archivo.ruta_almacenamiento)} preload="metadata" muted playsInline className="w-full h-full object-cover bg-black" />
+                                      <span className="absolute inset-0 grid place-items-center text-white text-lg">▶</span>
+                                    </a>
+                                  ) : (f.archivo.mime_type || '').startsWith('image/') ? (
+                                    <img src={assetUrl(f.archivo.ruta_almacenamiento)} alt="Evidencia del ítem" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <a href={assetUrl(f.archivo.ruta_almacenamiento)} target="_blank" rel="noreferrer"
+                                      className="w-full h-full grid place-items-center gap-0.5 p-1 text-center text-[10px] text-brand-700 hover:underline"
+                                      title={f.archivo.nombre_original}>
+                                      <span className="text-base">📄</span>
+                                      <span className="truncate w-full">{f.archivo.nombre_original}</span>
+                                    </a>
+                                  )}
                                 </div>
                                 <div className="px-1 py-0.5 text-[10px] leading-tight">
                                   {coords

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { serviciosService, tecnicosService, archivosService, evidenciasGuiasService, entregasService, assetUrl } from '../services';
+import { serviciosService, tecnicosService, evidenciasGuiasService, entregasService, assetUrl } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -26,6 +26,8 @@ import { useEsMovil } from '../hooks/useMediaQuery.js';
 import FichaTecnicaAscensor from '../components/ascensores/FichaTecnicaAscensor.jsx';
 import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
 import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import {
   tramoDeUnDia, tramosDeServicio, payloadDias, errorDeTramos, resumenProgramacion
 } from '../utils/programacion.js';
@@ -253,6 +255,10 @@ export default function ServicioDetalle() {
   // Programación que se decide junto con los técnicos (técnico + fecha = Asignado).
   const [asignarProgramacion, setAsignarProgramacion] = useState({ tramos: [], hora_programada: '' });
   const [finalizarForm, setFinalizarForm] = useState({ observaciones_tecnicas: '', descargo_tecnico: '', codigo_guia: '', id_archivo_guia: null, finalizar_observado: false });
+  // Seccion cuya barra de progreso se esta mostrando. A diferencia de
+  // `subiendoMomento`, no se limpia al terminar: si la carga falla, el aviso de
+  // error se queda a la vista en la seccion donde ocurrio hasta que se descarta.
+  const [momentoCarga, setMomentoCarga] = useState(null);
   const [subiendoMomento, setSubiendoMomento] = useState(null); // 'Antes' | 'Despues' | null (sección que está subiendo fotos)
   const [guardandoFinalizar, setGuardandoFinalizar] = useState(false);
   const filePreview = useFilePreview();
@@ -282,6 +288,14 @@ export default function ServicioDetalle() {
   const [guardandoRevisar, setGuardandoRevisar] = useState(false);
   const toast = useToast();
   const { user, esSuperAdmin, esAdmin, esCoordinador, esTecnico, puedeVerPrecio } = useAuth();
+
+  // Una carga por contexto: cada barra de progreso vive junto a los botones que
+  // la disparan, para que el tecnico vea el avance donde esta mirando.
+  const cargaMomento = useCargaArchivos();   // album de evidencias (Antes / Despues / Coordinacion)
+  const cargaEvidencia = useCargaArchivos(); // modal "Nueva evidencia"
+  const cargaGuia = useCargaArchivos();      // guia de salida (modal y cierre)
+  const cargaOt = useCargaArchivos();        // orden de trabajo
+  const cargaEntrega = useCargaArchivos();   // acta de entrega
 
   // Devuelve el servicio recién traído para que quien la llame pueda decidir con
   // el estado REAL (el `s` del closure todavía es el anterior).
@@ -513,12 +527,13 @@ export default function ServicioDetalle() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
     setSubiendoOtServicio(true);
     try {
-      const arch = await archivosService.upload(fd, 'ot');
+      const arch = await cargaOt.subirUno(file, 'ot');
       setOtForm(f => ({ ...f, id_archivo: arch.id }));
-    } catch { toast.error('No se pudo subir el documento de la OT'); }
+    } catch (err) {
+      if (!err?.cancelado) toast.error('No se pudo subir el documento de la OT');
+    }
     finally { setSubiendoOtServicio(false); }
   };
 
@@ -551,12 +566,13 @@ export default function ServicioDetalle() {
     const file = e.target.files?.[0];
     e.target.value = ''; // permitir reseleccionar el mismo archivo
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
     try {
-      const arch = await archivosService.upload(fd, 'guias');
+      const arch = await cargaGuia.subirUno(file, 'guias');
       setFinalizarForm(f => ({ ...f, id_archivo_guia: arch.id }));
       toast.success('Guía subida');
-    } catch (err) { toast.error('Error al subir archivo'); }
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir archivo');
+    }
   };
 
   // El cierre no vuelve a pedir nada: las fotos, la guía y la OT se registran
@@ -641,8 +657,7 @@ export default function ServicioDetalle() {
     if (!file) return;
     setSubiendoEvidenciaArchivo(true);
     try {
-      const fd = new FormData(); fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'evidencias');
+      const arch = await cargaEvidencia.subirUno(file, 'evidencias');
       // Auto-clasificar el tipo de evidencia según el mime del archivo subido.
       const mime = file.type || '';
       const tipoDetectado = mime.startsWith('video/') ? 'Video'
@@ -656,8 +671,10 @@ export default function ServicioDetalle() {
       }));
       toast.success('Archivo cargado');
     } catch (err) {
-      const msg = err?.response?.data?.error || err?.message || 'Error al subir';
-      toast.error(msg);
+      if (!err?.cancelado) {
+        const msg = err?.response?.data?.error || err?.message || 'Error al subir';
+        toast.error(msg);
+      }
     } finally {
       setSubiendoEvidenciaArchivo(false);
     }
@@ -691,22 +708,26 @@ export default function ServicioDetalle() {
     e.target.value = '';
     if (files.length === 0) return;
     setSubiendoMomento(momento);
+    setMomentoCarga(momento);
     try {
-      for (const file of files) {
-        const fd = new FormData(); fd.append('archivo', file);
-        const arch = await archivosService.upload(fd, 'evidencias');
-        const mime = file.type || '';
-        const tipo = mime.startsWith('video/') ? 'Video'
-          : mime.startsWith('image/') ? 'Foto'
-          : (mime === 'application/pdf' ? 'Documento' : 'Otro');
-        await evidenciasGuiasService.subirEvidencia(id, {
-          tipo_evidencia: tipo, descripcion: '', id_archivo: arch.id, momento
-        });
-      }
+      // Cada archivo se registra como evidencia en cuanto termina de subir: si la
+      // tanda se corta a medias, lo ya subido queda guardado, no se pierde.
+      await cargaMomento.subirVarios(files, 'evidencias', {
+        onArchivoSubido: async (arch, file) => {
+          const mime = file.type || '';
+          const tipo = mime.startsWith('video/') ? 'Video'
+            : mime.startsWith('image/') ? 'Foto'
+            : (mime === 'application/pdf' ? 'Documento' : 'Otro');
+          await evidenciasGuiasService.subirEvidencia(id, {
+            tipo_evidencia: tipo, descripcion: '', id_archivo: arch.id, momento
+          });
+        }
+      });
       toast.success(files.length > 1 ? `${files.length} fotos subidas` : 'Foto subida');
       cargar();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al subir fotos');
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al subir los archivos');
+      cargar(); // refleja lo que si alcanzo a subirse antes del fallo
     } finally {
       setSubiendoMomento(null);
     }
@@ -761,8 +782,7 @@ export default function ServicioDetalle() {
     if (!file) return;
     setSubiendoArchivoGuia(true);
     try {
-      const fd = new FormData(); fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'guias');
+      const arch = await cargaGuia.subirUno(file, 'guias');
       setGuiaForm(f => ({
         ...f,
         id_archivo: arch.id,
@@ -772,8 +792,8 @@ export default function ServicioDetalle() {
         estado_guia: f.estado_guia === ESTADO_GUIA_OBSERVADA ? estadoGuiaSegunArchivo(arch.id) : f.estado_guia
       }));
       toast.success('Archivo cargado');
-    } catch {
-      toast.error('Error al subir archivo');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir archivo');
     } finally {
       setSubiendoArchivoGuia(false);
     }
@@ -905,10 +925,15 @@ export default function ServicioDetalle() {
 
   const subirArchivoEntrega = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
-    try { const r = await archivosService.upload(fd, 'entregas'); setEntregaForm(f => ({ ...f, id_archivo: r.id })); toast.success('Archivo cargado'); }
-    catch { toast.error('Error al subir'); }
+    try {
+      const r = await cargaEntrega.subirUno(file, 'entregas');
+      setEntregaForm(f => ({ ...f, id_archivo: r.id }));
+      toast.success('Archivo cargado');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir');
+    }
   };
 
   const guardarEntrega = async () => {
@@ -1495,9 +1520,9 @@ export default function ServicioDetalle() {
                 </div>
                 <div>
                   <label className="label">Documento de la OT *</label>
-                  <input type="file" className="input" accept="image/*,.pdf"
+                  <input type="file" className="input" accept="image/*,video/*,.pdf"
                     disabled={subiendoOtServicio} onChange={subirArchivoOtServicio} />
-                  {subiendoOtServicio && <p className="text-xs text-slate-500 mt-1">Subiendo…</p>}
+                  <BarraProgresoCarga carga={cargaOt} className="mt-2" />
                   {otForm.id_archivo && !subiendoOtServicio && (
                     <p className="text-xs text-emerald-700 mt-1">✓ Documento cargado</p>
                   )}
@@ -1603,12 +1628,20 @@ export default function ServicioDetalle() {
                     <input type="file" className="hidden" accept="image/*" capture="environment" onChange={e => agregarFotosMomento(e, sec.key)} />
                   </label>
                   <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
-                    📎 Adjuntar fotos
-                    <input type="file" className="hidden" accept="image/*" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
+                    🎥 Grabar video
+                    <input type="file" className="hidden" accept="video/*" capture="environment" onChange={e => agregarFotosMomento(e, sec.key)} />
                   </label>
-                  {subiendoEsta && <span className="text-xs text-slate-500 self-center">Subiendo…</span>}
+                  {/* Fotos, videos y PDFs, varios a la vez y sin tope de peso: la
+                      evidencia de obra no siempre cabe en una foto. */}
+                  <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
+                    📎 Adjuntar archivos
+                    <input type="file" className="hidden" accept="image/*,video/*,application/pdf" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
+                  </label>
                 </>
               )}>
+                {momentoCarga === sec.key && cargaMomento.progreso && (
+                  <BarraProgresoCarga carga={cargaMomento} className="mb-3" />
+                )}
                 {!sec.lista.length ? (
                   <p className="text-sm text-slate-500">
                     Sin evidencias registradas.
@@ -1824,7 +1857,7 @@ export default function ServicioDetalle() {
               </label>
               <label className="btn-secondary cursor-pointer text-xs">
                 📎 Adjuntar archivo
-                <input type="file" className="hidden" accept="image/*,application/pdf" onChange={subirArchivoYAsignarGuia} />
+                <input type="file" className="hidden" accept="image/*,video/*,application/pdf" onChange={subirArchivoYAsignarGuia} />
               </label>
               {finalizarForm.id_archivo_guia && (
                 <span className="inline-flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-md px-2 py-1">
@@ -1833,6 +1866,7 @@ export default function ServicioDetalle() {
                 </span>
               )}
             </div>
+            <BarraProgresoCarga carga={cargaGuia} />
           </div>
           )}
 
@@ -1959,7 +1993,8 @@ export default function ServicioDetalle() {
           <div className="sm:col-span-2">
             <label className="label">Archivo</label>
             <input type="file" className="input" onChange={subirArchivoEntrega} />
-            {entregaForm.id_archivo && <p className="text-xs text-emerald-600 mt-1">Archivo cargado</p>}
+            <BarraProgresoCarga carga={cargaEntrega} className="mt-2" />
+            {entregaForm.id_archivo && !cargaEntrega.progreso && <p className="text-xs text-emerald-600 mt-1">Archivo cargado</p>}
           </div>
         </div>
       </Modal>
@@ -2005,10 +2040,10 @@ export default function ServicioDetalle() {
                 📎 Adjuntar
                 <input type="file" className="hidden" accept="image/*,video/*,application/pdf" onChange={subirArchivoEvidencia} />
               </label>
-              {subiendoEvidenciaArchivo && <span className="text-xs text-slate-500 self-center">Subiendo…</span>}
               {!subiendoEvidenciaArchivo && evidenciaForm.id_archivo && <span className="text-xs text-emerald-700 self-center">✓ Archivo cargado</span>}
             </div>
-            <p className="text-[11px] text-slate-500 mt-1">Se permiten fotos, videos y PDFs. Tamaño máximo configurado por el servidor.</p>
+            <BarraProgresoCarga carga={cargaEvidencia} className="mt-2" />
+            <p className="text-[11px] text-slate-500 mt-1">Fotos, videos y PDFs, sin límite de peso.</p>
           </div>
         </form>
       </Modal>
@@ -2040,7 +2075,7 @@ export default function ServicioDetalle() {
             />
           </div>
           <div>
-            <label className="label">Archivo (foto o PDF)</label>
+            <label className="label">Archivo (foto, video o PDF)</label>
             <div className="flex flex-wrap items-center gap-2">
               <label className="btn-secondary cursor-pointer text-xs">
                 📷 Tomar foto
@@ -2048,9 +2083,8 @@ export default function ServicioDetalle() {
               </label>
               <label className="btn-secondary cursor-pointer text-xs">
                 📎 Adjuntar archivo
-                <input type="file" className="hidden" accept="image/*,application/pdf" onChange={subirArchivoGuiaForm} />
+                <input type="file" className="hidden" accept="image/*,video/*,application/pdf" onChange={subirArchivoGuiaForm} />
               </label>
-              {subiendoArchivoGuia && <span className="text-xs text-slate-500">Subiendo…</span>}
               {!subiendoArchivoGuia && guiaForm.id_archivo && (
                 <span className="inline-flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-md px-2 py-1">
                   ✓ Archivo cargado

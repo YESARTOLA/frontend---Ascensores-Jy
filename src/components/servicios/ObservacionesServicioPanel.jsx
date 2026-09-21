@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { serviciosService, archivosService } from '../../services';
+import { serviciosService } from '../../services';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
 import SeccionColapsable from '../common/SeccionColapsable.jsx';
+import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useToast } from '../common/Toast.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import { formatFechaHora } from '../../utils/formatters.js';
@@ -31,6 +33,7 @@ import { DESTINATARIOS_ALERTA, etiquetasDestinatarios } from '../../utils/destin
 export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignados, estadoServicio }) {
   const { user, esSuperAdmin, esAdmin, esCoordinador, esTecnico } = useAuth();
   const toast = useToast();
+  const carga = useCargaArchivos();
   const [items, setItems] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [texto, setTexto] = useState('');
@@ -74,19 +77,17 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
 
   const subirArchivo = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setSubiendo(true);
     try {
-      const fd = new FormData();
-      fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'observaciones');
+      const arch = await carga.subirUno(file, 'observaciones');
       setArchivo(arch);
       toast.success('Adjunto cargado');
-    } catch {
-      toast.error('Error al subir el adjunto');
+    } catch (err) {
+      if (!err?.cancelado) toast.error(err?.response?.data?.error || 'Error al subir el adjunto');
     } finally {
       setSubiendo(false);
-      e.target.value = '';
     }
   };
 
@@ -206,9 +207,11 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
             {/* En móvil los dos botones ocupan el ancho completo y se apilan: la
                 observación se escribe en obra, con una sola mano. */}
             <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
+              {/* Foto, video o PDF, sin tope de peso: lo que haga falta para que
+                  la observación se entienda sin estar en el sitio. */}
               <label className="btn-ghost !ring-1 !ring-carbon-200 text-xs !py-2 !px-3 cursor-pointer w-full sm:w-auto">
-                {subiendo ? 'Subiendo…' : (archivo ? '📎 Reemplazar foto' : '📷 Adjuntar foto')}
-                <input type="file" className="hidden" accept="image/*,application/pdf" capture="environment"
+                {subiendo ? 'Subiendo…' : (archivo ? '📎 Reemplazar adjunto' : '📎 Adjuntar foto, video o PDF')}
+                <input type="file" className="hidden" accept="image/*,video/*,application/pdf"
                   disabled={subiendo || guardando} onChange={subirArchivo} />
               </label>
               {archivo && (
@@ -223,6 +226,7 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
                 {guardando ? 'Guardando…' : 'Registrar observación'}
               </button>
             </div>
+            <BarraProgresoCarga carga={carga} />
             {/* Destinatarios de la alerta: sin ninguno marcado, la observación
                 queda registrada sin avisar a nadie. */}
             <div className={`rounded-md p-2.5 ring-1 transition ${generaAlerta ? 'bg-rose-50 ring-rose-300' : 'bg-white ring-slate-200'}`}>
