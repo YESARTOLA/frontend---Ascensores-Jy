@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { archivosService } from '../../services';
 import { useToast } from '../common/Toast.jsx';
+import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import { sanearTelefono, formatTelefono } from '../../utils/formatters.js';
@@ -88,8 +88,10 @@ export default function ClienteForm({
 }) {
   const toast = useToast();
   const { accesoServicios, accesoProyectos } = useAuth();
-  const [subiendoContrato, setSubiendoContrato] = useState({ servicio: false, proyecto: false });
-  const [subiendoAdjuntos, setSubiendoAdjuntos] = useState({ servicio: false, proyecto: false });
+  // Una carga por área y por tipo de adjunto: cada una lleva su propia barra de
+  // progreso, así subir el contrato de Servicio no pisa la de Proyecto.
+  const cargasContrato = { servicio: useCargaArchivos(), proyecto: useCargaArchivos() };
+  const cargasAdjuntos = { servicio: useCargaArchivos(), proyecto: useCargaArchivos() };
 
   // Claves del contrato en el estado del form, por área.
   const kContrato = (area) => ({
@@ -112,20 +114,15 @@ export default function ClienteForm({
 
   const subirContrato = (area) => async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    setSubiendoContrato(s => ({ ...s, [area]: true }));
     try {
-      const fd = new FormData();
-      fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'contratos');
+      const arch = await cargasContrato[area].subirUno(file, 'contratos');
       const k = kContrato(area);
       onChange(f => ({ ...f, [k.idArchivo]: arch.id, [k.archivo]: arch }));
       toast.success('Contrato adjuntado');
-    } catch {
-      toast.error('Error al adjuntar el contrato');
-    } finally {
-      setSubiendoContrato(s => ({ ...s, [area]: false }));
-      e.target.value = '';
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al adjuntar el contrato');
     }
   };
 
@@ -136,24 +133,22 @@ export default function ClienteForm({
 
   const subirAdjuntos = (area) => async (e) => {
     const files = Array.from(e.target.files || []);
+    e.target.value = '';
     if (files.length === 0) return;
-    setSubiendoAdjuntos(s => ({ ...s, [area]: true }));
+    const campo = campoArea(area);
+    let cargados = 0;
     try {
-      const nuevos = [];
-      for (const file of files) {
-        const fd = new FormData();
-        fd.append('archivo', file);
-        const arch = await archivosService.upload(fd, 'clientes');
-        nuevos.push({ id_archivo: arch.id, descripcion: '', archivo: arch });
-      }
-      const campo = campoArea(area);
-      onChange(f => ({ ...f, [campo]: [...(f[campo] || []), ...nuevos] }));
-      toast.success(`${nuevos.length} adjunto(s) cargado(s)`);
-    } catch {
-      toast.error('Error al adjuntar archivo(s)');
-    } finally {
-      setSubiendoAdjuntos(s => ({ ...s, [area]: false }));
-      e.target.value = '';
+      // Cada adjunto se agrega al formulario en cuanto termina de subir: si la
+      // tanda se corta a medias, lo ya subido no se pierde.
+      await cargasAdjuntos[area].subirVarios(files, 'clientes', {
+        onArchivoSubido: (arch) => {
+          cargados += 1;
+          onChange(f => ({ ...f, [campo]: [...(f[campo] || []), { id_archivo: arch.id, descripcion: '', archivo: arch }] }));
+        }
+      });
+      toast.success(`${cargados} adjunto(s) cargado(s)`);
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al adjuntar archivo(s)');
     }
   };
   const cambiarDescripcionAdjunto = (area, idx, valor) => {
@@ -234,20 +229,21 @@ export default function ClienteForm({
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <input type="file" accept=".pdf,image/*" onChange={subirContrato(area)} disabled={subiendoContrato[area]} className="input flex-1" />
-              {subiendoContrato[area] && <span className="text-xs text-slate-500">Subiendo…</span>}
+              <input type="file" accept=".pdf,image/*" onChange={subirContrato(area)} disabled={cargasContrato[area].subiendo} className="input flex-1" />
             </div>
           )}
+          <BarraProgresoCarga carga={cargasContrato[area]} className="mt-2" />
         </div>
         <div className="border-t border-slate-200 pt-3">
           <div className="flex items-center justify-between mb-2">
             <label className="label !mb-0">Archivos adjuntos</label>
             <label className="btn-ghost text-xs !py-1.5 !px-3 cursor-pointer">
-              {subiendoAdjuntos[area] ? 'Subiendo…' : '+ Subir archivo(s)'}
+              {cargasAdjuntos[area].subiendo ? 'Subiendo…' : '+ Subir archivo(s)'}
               <input type="file" multiple className="hidden" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"
-                disabled={subiendoAdjuntos[area]} onChange={subirAdjuntos(area)} />
+                disabled={cargasAdjuntos[area].subiendo} onChange={subirAdjuntos(area)} />
             </label>
           </div>
+          <BarraProgresoCarga carga={cargasAdjuntos[area]} className="mb-2" />
           {lista.length === 0 ? (
             <p className="text-xs text-slate-500">PDF, imágenes u otros documentos del área. Sin límite.</p>
           ) : (

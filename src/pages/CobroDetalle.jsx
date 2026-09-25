@@ -1,12 +1,14 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
-import { cobrosService, archivosService, facturasService, cuentasBancariasService } from '../services';
+import { cobrosService, facturasService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, addMonthsYMD, toYMDLima } from '../utils/formatters.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../utils/catalogosComprobante.js';
@@ -44,6 +46,8 @@ export default function CobroDetalle() {
   const [factura, setFactura] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), monto: '', id_archivo: null, modo: 'general', id_cuota: '' });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
+  const cargaComprobante = useCargaArchivos(); // comprobante del abono
+  const cargaFactura = useCargaArchivos();     // archivo del comprobante emitido
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -107,10 +111,15 @@ export default function CobroDetalle() {
 
   const subirComprobante = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
-    try { const r = await archivosService.upload(fd, 'comprobantes'); setAbono(a => ({ ...a, id_archivo_comprobante: r.id })); toast.success('Comprobante cargado'); }
-    catch (err) { toast.error('Error al subir'); }
+    try {
+      const r = await cargaComprobante.subirUno(file, 'comprobantes');
+      setAbono(a => ({ ...a, id_archivo_comprobante: r.id }));
+      toast.success('Comprobante cargado');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir');
+    }
   };
 
   const registrar = async () => {
@@ -232,10 +241,15 @@ export default function CobroDetalle() {
 
   const subirArchivoFactura = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
-    try { const r = await archivosService.upload(fd, 'facturas'); setFactura(f => ({ ...f, id_archivo: r.id })); toast.success('Archivo cargado'); }
-    catch { toast.error('Error subiendo archivo'); }
+    try {
+      const r = await cargaFactura.subirUno(file, 'facturas');
+      setFactura(f => ({ ...f, id_archivo: r.id }));
+      toast.success('Archivo cargado');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error subiendo archivo');
+    }
   };
   const facturasActivas = (data.facturas || []).filter(esFacturaActiva);
   // Cobro de un PLAN de mantenimiento: cada cuota es un MES del plan y se
@@ -698,7 +712,7 @@ export default function CobroDetalle() {
 
       {/* Modal abono */}
       <Modal open={openAbono} onClose={() => setOpenAbono(false)} title="Registrar abono"
-        footer={<><button className="btn-secondary" onClick={() => setOpenAbono(false)}>Cancelar</button><button className="btn-primary" onClick={registrar}>Registrar</button></>}>
+        footer={<><button className="btn-secondary" onClick={() => setOpenAbono(false)}>Cancelar</button><button className="btn-primary" onClick={registrar} disabled={cargaComprobante.subiendo}>Registrar</button></>}>
         <div className="space-y-4">
           <div><label className="label">Monto *</label><input type="number" step="0.01" className="input" value={abono.monto} onChange={e => setAbono(a => ({ ...a, monto: e.target.value }))} placeholder={`Saldo: ${data.saldo_pendiente}`} /></div>
           <div><label className="label">Fecha *</label><input type="date" className="input" value={abono.fecha_pago} onChange={e => setAbono(a => ({ ...a, fecha_pago: e.target.value }))} /></div>
@@ -725,7 +739,11 @@ export default function CobroDetalle() {
               )}
             </div>
           )}
-          <div><label className="label">Comprobante</label><input type="file" className="input" onChange={subirComprobante} /></div>
+          <div>
+            <label className="label">Comprobante</label>
+            <input type="file" className="input" onChange={subirComprobante} disabled={cargaComprobante.subiendo} />
+            <BarraProgresoCarga carga={cargaComprobante} className="mt-2" />
+          </div>
           <div><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={abono.observaciones} onChange={e => setAbono(a => ({ ...a, observaciones: e.target.value }))} /></div>
         </div>
       </Modal>
@@ -823,7 +841,7 @@ export default function CobroDetalle() {
 
       {/* Modal factura */}
       <Modal open={openFactura} onClose={() => !guardandoFactura && setOpenFactura(false)} title="Registrar comprobante"
-        footer={<><button className="btn-secondary" onClick={() => setOpenFactura(false)} disabled={guardandoFactura}>Cancelar</button><button className="btn-primary" onClick={crearFactura} disabled={guardandoFactura}>{guardandoFactura ? 'Registrando…' : 'Registrar'}</button></>}>
+        footer={<><button className="btn-secondary" onClick={() => setOpenFactura(false)} disabled={guardandoFactura}>Cancelar</button><button className="btn-primary" onClick={crearFactura} disabled={guardandoFactura || cargaFactura.subiendo}>{guardandoFactura ? 'Registrando…' : 'Registrar'}</button></>}>
         <div className="space-y-4">
           <div>
             <label className="label">Alcance del comprobante</label>
@@ -887,7 +905,11 @@ export default function CobroDetalle() {
             />
             {factura.modo === 'por_cuota' && <p className="text-xs text-slate-500 mt-1">Fijado por el monto de la cuota seleccionada.</p>}
           </div>
-          <div><label className="label">Archivo del comprobante</label><input type="file" className="input" onChange={subirArchivoFactura} /></div>
+          <div>
+            <label className="label">Archivo del comprobante</label>
+            <input type="file" className="input" onChange={subirArchivoFactura} disabled={cargaFactura.subiendo} />
+            <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
+          </div>
         </div>
       </Modal>
 

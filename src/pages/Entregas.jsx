@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { entregasService, serviciosService, archivosService } from '../services';
+import { entregasService, serviciosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -8,6 +8,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, hoyISO, toYMDLima } from '../utils/formatters.js';
 import { estaServicioFinalizado } from '../utils/estadoServicio.js';
@@ -23,6 +25,7 @@ export default function Entregas() {
   const [form, setForm] = useState(inicial);
   const [filtros, setFiltros] = useState({ tipo_entrega: '', estado_entrega: '', id_servicio: '' });
   const toast = useToast();
+  const carga = useCargaArchivos();
   const { esSuperAdmin, esAdmin } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
 
@@ -51,10 +54,15 @@ export default function Entregas() {
 
   const subirArchivo = async (ev) => {
     const file = ev.target.files?.[0];
+    ev.target.value = '';
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
-    try { const r = await archivosService.upload(fd, 'entregas'); setForm(f => ({ ...f, id_archivo: r.id })); toast.success('Archivo cargado'); }
-    catch { toast.error('Error al subir'); }
+    try {
+      const r = await carga.subirUno(file, 'entregas');
+      setForm(f => ({ ...f, id_archivo: r.id }));
+      toast.success('Archivo cargado');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir');
+    }
   };
 
   const serviciosActivos = servicios.filter(s => !estaServicioFinalizado(s.estado_servicio));
@@ -143,7 +151,7 @@ export default function Entregas() {
       </div>
 
       <Modal open={open} onClose={() => setOpen(false)} title={editId ? 'Editar entrega' : 'Nueva entrega'} size="lg"
-        footer={<><button className="btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn-primary" onClick={guardar}>Guardar</button></>}>
+        footer={<><button className="btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn-primary" onClick={guardar} disabled={carga.subiendo}>Guardar</button></>}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">Servicio *</label>
@@ -174,8 +182,9 @@ export default function Entregas() {
           </div>
           <div className="sm:col-span-2">
             <label className="label">Archivo adjunto</label>
-            <input type="file" className="input" onChange={subirArchivo} />
-            {form.id_archivo && <p className="text-xs text-emerald-600 mt-1">Archivo cargado (id #{form.id_archivo})</p>}
+            <input type="file" className="input" onChange={subirArchivo} disabled={carga.subiendo} />
+            <BarraProgresoCarga carga={carga} className="mt-2" />
+            {form.id_archivo && !carga.progreso && <p className="text-xs text-emerald-600 mt-1">Archivo cargado (id #{form.id_archivo})</p>}
           </div>
         </div>
       </Modal>

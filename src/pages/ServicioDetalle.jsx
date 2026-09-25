@@ -55,8 +55,9 @@ const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
 // finalizado (`puedeGestionar`).
 //
 // `autor` sustituye al nombre del técnico en las secciones que no son suyas: la
-// fila guarda un id_tecnico obligatorio (es el técnico del servicio), así que en
-// la sección de Coordinación mostrarlo atribuiría la foto a quien no la tomó.
+// fila guarda el id_tecnico del técnico del servicio, así que en la sección de
+// Coordinación mostrarlo atribuiría la foto a quien no la tomó. Si la evidencia
+// se cargó sin técnico asignado, el autor es el usuario que la subió.
 function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, onGuardarComentario, autor }) {
   const [comentario, setComentario] = useState(ev.descripcion || '');
   const [guardando, setGuardando] = useState(false);
@@ -121,7 +122,7 @@ function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, 
       </div>
       <div className="p-2 space-y-1">
         <div className="text-xs text-slate-500">{formatFechaHora(ev.fecha_carga)}</div>
-        <div className="text-xs text-slate-700 truncate">{autor || ev.tecnico?.nombre}</div>
+        <div className="text-xs text-slate-700 truncate">{autor || ev.tecnico?.nombre || ev.usuario_registro?.nombres}</div>
         {diaEv && <span className="badge-blue mt-0.5 inline-block">Día {diaEv.orden}</span>}
         {puedeGestionar ? (
           <div className="pt-0.5">
@@ -1445,7 +1446,7 @@ export default function ServicioDetalle() {
                     )}
                   </div>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">{formatFechaHora(g.fecha_carga)} · {g.tecnico?.nombre}</div>
+                <div className="text-xs text-slate-500 mt-1">{formatFechaHora(g.fecha_carga)} · {g.tecnico?.nombre || g.usuario_registro?.nombres}</div>
                 {g.archivo && (() => {
                   const esImagen = (g.archivo.mime_type || '').startsWith('image/');
                   return esImagen ? (
@@ -1631,11 +1632,11 @@ export default function ServicioDetalle() {
                     🎥 Grabar video
                     <input type="file" className="hidden" accept="video/*" capture="environment" onChange={e => agregarFotosMomento(e, sec.key)} />
                   </label>
-                  {/* Fotos, videos y PDFs, varios a la vez y sin tope de peso: la
-                      evidencia de obra no siempre cabe en una foto. */}
+                  {/* Archivos de cualquier tipo, varios a la vez y sin tope de
+                      peso: la evidencia de obra no siempre cabe en una foto. */}
                   <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
                     📎 Adjuntar archivos
-                    <input type="file" className="hidden" accept="image/*,video/*,application/pdf" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
+                    <input type="file" className="hidden" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
                   </label>
                 </>
               )}>
@@ -2099,6 +2100,7 @@ export default function ServicioDetalle() {
                 </span>
               )}
             </div>
+            <BarraProgresoCarga carga={cargaGuia} className="mt-2" />
           </div>
           <div>
             <label className="label">Observaciones técnicas</label>

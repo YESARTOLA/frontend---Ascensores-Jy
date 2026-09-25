@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { mantenimientosService, clientesService, ascensoresService, tiposServicioService, facturasService, archivosService } from '../services';
+import { mantenimientosService, clientesService, ascensoresService, tiposServicioService, facturasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -12,6 +12,8 @@ import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import SeccionColapsable from '../components/common/SeccionColapsable.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import AscensoresFrecuenciaChecklist from '../components/common/AscensoresFrecuenciaChecklist.jsx';
 import CronogramaPlan from '../components/mantenimientos/CronogramaPlan.jsx';
@@ -91,6 +93,7 @@ export default function Mantenimientos() {
   const [exportForm, setExportForm] = useState({ ids_cliente: [], ids_ascensor: [], estado_ejecucion: '', desde: '', hasta: '', formato: 'excel' });
   const [exportando, setExportando] = useState(false);
   const toast = useToast();
+  const cargaFacturaMes = useCargaArchivos();
   const { esSuperAdmin, esAdmin, esCoordinador, esContabilidad, puedeVerPrecio } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
   const puedeExportar = esSuperAdmin || esAdmin || esCoordinador || esContabilidad;
@@ -441,13 +444,15 @@ export default function Mantenimientos() {
 
   const subirArchivoFacturaMes = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
     try {
-      const r = await archivosService.upload(fd, 'facturas');
+      const r = await cargaFacturaMes.subirUno(file, 'facturas');
       setFacturaMes(f => ({ ...f, id_archivo: r.id }));
       toast.success('Archivo cargado');
-    } catch { toast.error('Error subiendo archivo'); }
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error subiendo archivo');
+    }
   };
 
   // Emite la factura del MES: contra la cuota del cobro único del plan. El
@@ -1539,7 +1544,7 @@ export default function Mantenimientos() {
         footer={
           <>
             <button type="button" className="btn-secondary" onClick={() => setFacturandoMes(null)} disabled={guardandoFacturaMes}>Ahora no</button>
-            <button type="button" className="btn-primary" onClick={guardarFacturaMes} disabled={guardandoFacturaMes}>
+            <button type="button" className="btn-primary" onClick={guardarFacturaMes} disabled={guardandoFacturaMes || cargaFacturaMes.subiendo}>
               {guardandoFacturaMes ? 'Registrando…' : 'Registrar factura'}
             </button>
           </>
@@ -1585,8 +1590,9 @@ export default function Mantenimientos() {
             </div>
             <div>
               <label className="label">Archivo de factura</label>
-              <input type="file" className="input" onChange={subirArchivoFacturaMes} />
-              {facturaMes.id_archivo && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
+              <input type="file" className="input" onChange={subirArchivoFacturaMes} disabled={cargaFacturaMes.subiendo} />
+              <BarraProgresoCarga carga={cargaFacturaMes} className="mt-2" />
+              {facturaMes.id_archivo && !cargaFacturaMes.progreso && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
             </div>
           </div>
         )}

@@ -6,7 +6,7 @@ React 18 + Vite + Tailwind 3 + React Router 6.
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:3003
 npm run build
 npm run preview
 ```
@@ -16,7 +16,7 @@ npm run preview
 `.env`:
 ```
 VITE_API_BASE=/api
-VITE_API_PROXY=http://localhost:4000   # solo dev
+VITE_API_PROXY=http://localhost:4003   # solo dev
 ```
 
 En producción (Railway, Vercel, etc.) define `VITE_API_BASE` apuntando al backend desplegado, por ejemplo `https://api.ascensoresjy.com/api`.

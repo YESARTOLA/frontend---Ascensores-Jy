@@ -3,13 +3,14 @@ import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   cotizacionesService,
   configuracionService,
-  archivosService,
   cuentasBancariasService,
   assetUrl
 } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
@@ -142,9 +143,11 @@ export default function CotizacionDetalle() {
     fecha_inicio_plan: hoyISO()
   });
   const [archivoRespaldo, setArchivoRespaldo] = useState(null);
-  const [subiendoRespaldo, setSubiendoRespaldo] = useState(false);
+  const cargaRespaldo = useCargaArchivos();
+  const subiendoRespaldo = cargaRespaldo.subiendo;
   // Foto obligatoria por ítem al aprobar: id del ítem cuya foto se está subiendo.
   const [subiendoFotoItemId, setSubiendoFotoItemId] = useState(null);
+  const cargaFotoAprobacion = useCargaArchivos();
 
   // Reapertura
   const [openReabrir, setOpenReabrir] = useState(false);
@@ -156,7 +159,8 @@ export default function CotizacionDetalle() {
   const [generandoPdf, setGenerandoPdf] = useState(false);
 
   // Adjuntos
-  const [subiendoAdjuntos, setSubiendoAdjuntos] = useState(false);
+  const cargaAdjuntos = useCargaArchivos();
+  const subiendoAdjuntos = cargaAdjuntos.subiendo;
 
   const toast = useToast();
   const { esSuperAdmin, esAdmin } = useAuth();
@@ -362,9 +366,7 @@ export default function CotizacionDetalle() {
     if (!file || subiendoFotoItemId != null) return;
     setSubiendoFotoItemId(item.id);
     try {
-      const fd = new FormData();
-      fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'cotizaciones');
+      const arch = await cargaFotoAprobacion.subirUno(file, 'cotizaciones');
       await cotizacionesService.updateVersion(id, versionActiva.numero_version, {
         items: versionActiva.items.map(it => ({
           orden: it.orden,
@@ -379,7 +381,7 @@ export default function CotizacionDetalle() {
       toast.success('Foto agregada al ítem');
       await cargar();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al subir la foto del ítem');
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al subir la foto del ítem');
     } finally {
       setSubiendoFotoItemId(null);
     }
@@ -452,19 +454,15 @@ export default function CotizacionDetalle() {
 
   const subirRespaldo = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    setSubiendoRespaldo(true);
     try {
-      const fd = new FormData();
-      fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'cotizaciones');
+      const arch = await cargaRespaldo.subirUno(file, 'cotizaciones');
       setArchivoRespaldo(arch);
       setAprobarForm(f => ({ ...f, id_archivo_respaldo: arch.id }));
       toast.success('Archivo de respaldo subido');
-    } catch {
-      toast.error('Error al subir archivo');
-    } finally {
-      setSubiendoRespaldo(false);
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir archivo');
     }
   };
 
@@ -494,22 +492,21 @@ export default function CotizacionDetalle() {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     if (files.length === 0) return;
-    setSubiendoAdjuntos(true);
+    let agregados = 0;
     try {
-      let agregados = 0;
-      for (const file of files) {
-        const fd = new FormData();
-        fd.append('archivo', file);
-        const arch = await archivosService.upload(fd, 'cotizaciones');
-        await cotizacionesService.attachArchivo(id, arch.id);
-        agregados++;
-      }
+      // Cada archivo se vincula a la cotización en cuanto termina de subir.
+      await cargaAdjuntos.subirVarios(files, 'cotizaciones', {
+        onArchivoSubido: async (arch) => {
+          await cotizacionesService.attachArchivo(id, arch.id);
+          agregados++;
+        }
+      });
       toast.success(`${agregados} archivo(s) adjuntado(s)`);
-      cargar();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al adjuntar archivo(s)');
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al adjuntar archivo(s)');
     } finally {
-      setSubiendoAdjuntos(false);
+      // Refleja también lo que alcanzó a adjuntarse antes de un fallo.
+      if (agregados > 0) cargar();
     }
   };
   const quitarAdjunto = async (idAdjunto) => {
@@ -786,6 +783,7 @@ export default function CotizacionDetalle() {
                 </label>
               )}
             </div>
+            <BarraProgresoCarga carga={cargaAdjuntos} />
             {(!cot.archivos || cot.archivos.length === 0) ? (
               <div className="text-center py-8 text-carbon-400 italic">Sin adjuntos</div>
             ) : (
@@ -906,7 +904,7 @@ export default function CotizacionDetalle() {
         size="md"
         footer={<>
           <button onClick={() => setOpenAprobar(false)} className="btn-ghost">Cancelar</button>
-          <button type="submit" form="form-aprobar" className="btn-primary" disabled={faltanFotosItems || subiendoFotoItemId != null}
+          <button type="submit" form="form-aprobar" className="btn-primary" disabled={faltanFotosItems || subiendoFotoItemId != null || subiendoRespaldo}
             title={faltanFotosItems ? 'Sube la foto de cada ítem antes de aprobar' : undefined}>
             Confirmar aprobación
           </button>
@@ -1006,6 +1004,7 @@ export default function CotizacionDetalle() {
                     </li>
                   ))}
                 </ul>
+                <BarraProgresoCarga carga={cargaFotoAprobacion} className="mt-2" />
               </div>
             );
           })()}
@@ -1140,7 +1139,8 @@ export default function CotizacionDetalle() {
           <div>
             <label className="label">Archivo de respaldo (opcional)</label>
             <input type="file" className="input" onChange={subirRespaldo} disabled={subiendoRespaldo} />
-            {archivoRespaldo && <div className="text-xs text-emerald-600 mt-1">✓ {archivoRespaldo.nombre_original}</div>}
+            <BarraProgresoCarga carga={cargaRespaldo} className="mt-2" />
+            {archivoRespaldo && !cargaRespaldo.progreso && <div className="text-xs text-emerald-600 mt-1">✓ {archivoRespaldo.nombre_original}</div>}
           </div>
 
           {/* Cuentas bancarias a utilizar: opcional, precargadas desde la
@@ -1281,6 +1281,7 @@ function ItemsView({ version, igvTasa }) {
 
 function ItemsEditor({ items, setItems, observ, setObserv, garantia, setGarantia, cuotas, setCuotas, cuentas, cuentasSel, setCuentasSel, igvTasa, totales, moneda, onCancel, onSave, saving }) {
   const toast = useToast();
+  const cargaFoto = useCargaArchivos();
   const cambiar = (idx, key, val) => setItems(arr => arr.map((it, i) => i === idx ? { ...it, [key]: val } : it));
   const agregar = () => setItems(arr => [...arr, itemVacio()]);
   const quitar = (idx) => setItems(arr => arr.filter((_, i) => i !== idx));
@@ -1289,12 +1290,10 @@ function ItemsEditor({ items, setItems, observ, setObserv, garantia, setGarantia
     e.target.value = '';
     if (!file) return;
     try {
-      const fd = new FormData();
-      fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'cotizaciones');
+      const arch = await cargaFoto.subirUno(file, 'cotizaciones');
       setItems(arr => arr.map((it, i) => i === idx ? { ...it, id_archivo: arch.id, archivo: arch } : it));
-    } catch {
-      toast.error('Error al subir la foto del ítem');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir la foto del ítem');
     }
   };
   const quitarFoto = (idx) => setItems(arr => arr.map((it, i) => i === idx ? { ...it, id_archivo: null, archivo: null } : it));
@@ -1339,7 +1338,7 @@ function ItemsEditor({ items, setItems, observ, setObserv, garantia, setGarantia
               ) : (
                 <label className="text-[11px] cursor-pointer hover:underline text-brand-700" title="Subir foto del ítem">
                   + Foto
-                  <input type="file" accept="image/*" className="hidden" onChange={e => subirFoto(idx, e)} />
+                  <input type="file" accept="image/*" className="hidden" disabled={cargaFoto.subiendo} onChange={e => subirFoto(idx, e)} />
                 </label>
               )}
             </div>
@@ -1348,6 +1347,7 @@ function ItemsEditor({ items, setItems, observ, setObserv, garantia, setGarantia
           </div>
         ))}
       </div>
+      <BarraProgresoCarga carga={cargaFoto} />
       <div className="border-t border-carbon-100 pt-3 grid grid-cols-2 gap-1 max-w-xs ml-auto text-sm">
         <div className="text-right text-carbon-600">Subtotal</div>
         <div className="text-right font-medium">{formatMonto(totales.subtotal, moneda)}</div>
@@ -1388,7 +1388,7 @@ function ItemsEditor({ items, setItems, observ, setObserv, garantia, setGarantia
 
       <div className="flex justify-end gap-2">
         <button onClick={onCancel} type="button" className="btn-ghost">Cancelar</button>
-        <button onClick={onSave} type="button" disabled={saving} className="btn-primary">
+        <button onClick={onSave} type="button" disabled={saving || cargaFoto.subiendo} className="btn-primary">
           {saving ? 'Guardando…' : 'Guardar cambios'}
         </button>
       </div>

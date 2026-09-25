@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { archivosService, clientesService } from '../../services';
+import { clientesService } from '../../services';
 import Modal from '../common/Modal.jsx';
 import { useToast } from '../common/Toast.jsx';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
+import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { formatFecha } from '../../utils/formatters.js';
 
 const ETIQUETA_AREA = { servicio: 'Servicios', proyecto: 'Proyectos' };
@@ -37,7 +39,8 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
   const [fin, setFin] = useState('');
   const [observaciones, setObservaciones] = useState('');
   const [archivo, setArchivo] = useState(null);   // { id, nombre_original, … } recién subido
-  const [subiendo, setSubiendo] = useState(false);
+  const carga = useCargaArchivos();
+  const subiendo = carga.subiendo;
   const [guardando, setGuardando] = useState(false);
 
   // Al abrir: campos en blanco y área preseleccionada = la que ya tiene contrato
@@ -61,19 +64,14 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
 
   const subirArchivo = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    setSubiendo(true);
     try {
-      const fd = new FormData();
-      fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'contratos');
+      const arch = await carga.subirUno(file, 'contratos');
       setArchivo(arch);
       toast.success('Contrato adjuntado');
-    } catch {
-      toast.error('Error al adjuntar el contrato');
-    } finally {
-      setSubiendo(false);
-      e.target.value = '';
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al adjuntar el contrato');
     }
   };
 
@@ -163,8 +161,8 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
             <>
               <div className="flex items-center gap-2">
                 <input type="file" accept=".pdf,image/*" onChange={subirArchivo} disabled={subiendo} className="input flex-1" />
-                {subiendo && <span className="text-xs text-slate-500">Subiendo…</span>}
               </div>
+              <BarraProgresoCarga carga={carga} className="mt-2" />
               <p className="text-[11px] text-slate-500 mt-1">
                 {actualArchivo
                   ? <>Reemplaza al documento actual (<span className="font-medium">{actualArchivo.nombre_original}</span>). Si no adjunta uno, se conserva ese.</>

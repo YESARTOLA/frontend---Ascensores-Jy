@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { serviciosService, facturasService, archivosService, clientesService, cobrosService } from '../services';
+import { serviciosService, facturasService, clientesService, cobrosService } from '../services';
 import CuotasNoFacturadas from '../components/cobros/CuotasNoFacturadas.jsx';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
@@ -12,6 +12,8 @@ import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoned
 import OtModal from '../components/common/OtModal.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { useMonedas } from '../hooks/useMonedas.js';
 import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores, nombreEdificioDeAscensores, hoyISO } from '../utils/formatters.js';
@@ -251,6 +253,7 @@ export default function Contabilidad() {
   });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
+  const cargaFactura = useCargaArchivos();
   // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
   // cabecera del export.
   const monedas = useMonedas();
@@ -361,15 +364,14 @@ export default function Contabilidad() {
 
   const subirArchivoFactura = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const fd = new FormData();
-    fd.append('archivo', file);
     try {
-      const r = await archivosService.upload(fd, 'facturas');
+      const r = await cargaFactura.subirUno(file, 'facturas');
       setFactura(f => ({ ...f, id_archivo: r.id }));
       toast.success('Archivo cargado');
-    } catch {
-      toast.error('Error subiendo el archivo');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error subiendo el archivo');
     }
   };
 
@@ -668,7 +670,7 @@ export default function Contabilidad() {
       <Modal open={!!facturando} onClose={cerrarFacturar} title="Emitir comprobante" size="sm"
         footer={<>
           <button type="button" className="btn-secondary" onClick={cerrarFacturar} disabled={guardandoFactura}>Cancelar</button>
-          <button type="button" className="btn-primary" onClick={emitirFactura} disabled={guardandoFactura}>
+          <button type="button" className="btn-primary" onClick={emitirFactura} disabled={guardandoFactura || cargaFactura.subiendo}>
             {guardandoFactura ? 'Emitiendo…' : 'Emitir comprobante'}
           </button>
         </>}>
@@ -718,8 +720,9 @@ export default function Contabilidad() {
             </div>
             <div>
               <label className="label">Archivo del comprobante</label>
-              <input type="file" className="input" onChange={subirArchivoFactura} />
-              {factura.id_archivo && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
+              <input type="file" className="input" onChange={subirArchivoFactura} disabled={cargaFactura.subiendo} />
+              <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
+              {factura.id_archivo && !cargaFactura.progreso && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
             </div>
           </div>
         )}

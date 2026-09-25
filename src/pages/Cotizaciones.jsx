@@ -8,7 +8,6 @@ import {
   tiposServicioService,
   configuracionService,
   cuentasBancariasService,
-  archivosService,
   assetUrl
 } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
@@ -19,6 +18,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import PadreTabs from '../components/common/PadreTabs.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import Combobox from '../components/common/Combobox.jsx';
@@ -154,7 +155,10 @@ export default function Cotizaciones() {
   // Código de la cotización origen cuando el modal se abre en modo "duplicar".
   const [duplicandoDe, setDuplicandoDe] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [subiendoAdjuntos, setSubiendoAdjuntos] = useState(false);
+  const cargaAdjuntos = useCargaArchivos();
+  const subiendoAdjuntos = cargaAdjuntos.subiendo;
+  // Foto de ítem: una carga a la vez; el índice dice a qué ítem va.
+  const cargaFotoItem = useCargaArchivos();
   const { esSuperAdmin, esAdmin, accesoServicios, accesoProyectos } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
   const [aEliminar, setAEliminar] = useState(null);
@@ -480,12 +484,10 @@ export default function Cotizaciones() {
     e.target.value = '';
     if (!file) return;
     try {
-      const fd = new FormData();
-      fd.append('archivo', file);
-      const arch = await archivosService.upload(fd, 'cotizaciones');
+      const arch = await cargaFotoItem.subirUno(file, 'cotizaciones');
       setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, id_archivo: arch.id, archivo: arch } : it) }));
-    } catch {
-      toast.error('Error al subir la foto del ítem');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir la foto del ítem');
     }
   };
   const quitarFotoItem = (idx) => setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, id_archivo: null, archivo: null } : it) }));
@@ -514,21 +516,19 @@ export default function Cotizaciones() {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     if (files.length === 0) return;
-    setSubiendoAdjuntos(true);
+    let cargados = 0;
     try {
-      const nuevos = [];
-      for (const file of files) {
-        const fd = new FormData();
-        fd.append('archivo', file);
-        const arch = await archivosService.upload(fd, 'cotizaciones');
-        nuevos.push(arch);
-      }
-      setForm(f => ({ ...f, archivos: [...f.archivos, ...nuevos] }));
-      toast.success(`${nuevos.length} archivo(s) adjuntado(s)`);
-    } catch {
-      toast.error('Error al adjuntar archivo(s)');
-    } finally {
-      setSubiendoAdjuntos(false);
+      // Cada archivo se agrega en cuanto termina de subir: si la tanda se corta
+      // a medias, lo ya subido no se pierde.
+      await cargaAdjuntos.subirVarios(files, 'cotizaciones', {
+        onArchivoSubido: (arch) => {
+          cargados += 1;
+          setForm(f => ({ ...f, archivos: [...f.archivos, arch] }));
+        }
+      });
+      toast.success(`${cargados} archivo(s) adjuntado(s)`);
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al adjuntar archivo(s)');
     }
   };
   const quitarAdjunto = (idArchivo) => {
@@ -839,7 +839,7 @@ export default function Cotizaciones() {
         footer={
           <>
             <button onClick={cerrarModal} className="btn-ghost">Cancelar</button>
-            <button type="submit" form="form-cotizacion" disabled={saving} className="btn-primary">
+            <button type="submit" form="form-cotizacion" disabled={saving || subiendoAdjuntos || cargaFotoItem.subiendo} className="btn-primary">
               {saving ? 'Guardando…' : 'Crear cotización'}
             </button>
           </>
@@ -1021,7 +1021,7 @@ export default function Cotizaciones() {
                       <label className="text-[11px] cursor-pointer hover:underline text-brand-700"
                         title="Subir foto del ítem (opcional al cotizar)">
                         + Foto
-                        <input type="file" accept="image/*" className="hidden" onChange={e => subirFotoItem(idx, e)} />
+                        <input type="file" accept="image/*" className="hidden" disabled={cargaFotoItem.subiendo} onChange={e => subirFotoItem(idx, e)} />
                       </label>
                     )}
                   </div>
@@ -1030,6 +1030,7 @@ export default function Cotizaciones() {
                 </div>
               ))}
             </div>
+            <BarraProgresoCarga carga={cargaFotoItem} className="mt-2" />
             <p className="text-[11px] text-carbon-400 mt-2">
               La foto de cada ítem es opcional al cotizar. Se exigirá al aprobar la cotización, cuando se convierte en servicio
               (puede subirse desde el modal de aprobación).
@@ -1142,6 +1143,7 @@ export default function Cotizaciones() {
                 <input type="file" multiple className="hidden" onChange={subirAdjuntos} disabled={subiendoAdjuntos} />
               </label>
             </div>
+            <BarraProgresoCarga carga={cargaAdjuntos} className="mb-2" />
             {form.archivos.length === 0 ? (
               <div className="text-xs text-carbon-400 italic">Sin adjuntos</div>
             ) : (

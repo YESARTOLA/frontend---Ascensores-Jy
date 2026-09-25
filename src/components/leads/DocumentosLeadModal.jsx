@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { leadsService, archivosService } from '../../services';
+import { leadsService } from '../../services';
 import Modal from '../common/Modal.jsx';
 import Loader from '../common/Loader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
 import { useToast } from '../common/Toast.jsx';
+import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useFilePreview, descargarArchivo } from '../common/FilePreview.jsx';
 import { assetUrl } from '../../services/apiClient.js';
 import { formatFechaHora } from '../../utils/formatters.js';
@@ -43,8 +45,8 @@ export default function DocumentosLeadModal({ open, onClose, lead, puedeGestiona
 
   const [items, setItems] = useState([]);
   const [cargando, setCargando] = useState(false);
-  const [subiendo, setSubiendo] = useState(false);
-  const [progreso, setProgreso] = useState(null);
+  const carga = useCargaArchivos();
+  const subiendo = carga.subiendo;
   const [eliminandoId, setEliminandoId] = useState(null);
   const [max, setMax] = useState(null);
   // Cuando el backend deniega la gestión, manda sobre la prop optimista del padre.
@@ -80,22 +82,8 @@ export default function DocumentosLeadModal({ open, onClose, lead, puedeGestiona
       return toast.error(`Máximo ${max} documentos por lead.`);
     }
 
-    setSubiendo(true);
-    const subidos = [];
     try {
-      for (let i = 0; i < archivos.length; i++) {
-        const file = archivos[i];
-        setProgreso({ actual: i + 1, total: archivos.length, nombre: file.name, pct: 0 });
-        const fd = new FormData();
-        fd.append('archivo', file);
-        const arch = await archivosService.upload(fd, 'leads', {
-          onUploadProgress: (ev) => {
-            if (!ev.total) return;
-            setProgreso(p => (p ? { ...p, pct: Math.round((ev.loaded / ev.total) * 100) } : p));
-          }
-        });
-        subidos.push(arch);
-      }
+      const subidos = await carga.subirVarios(archivos, 'leads');
 
       await leadsService.agregarDocumentos(
         idLead,
@@ -107,11 +95,8 @@ export default function DocumentosLeadModal({ open, onClose, lead, puedeGestiona
     } catch (err) {
       // Los ya subidos quedaron en el storage aunque falle el vínculo: se informa
       // en vez de fingir éxito parcial.
-      toast.error(err.response?.data?.error || 'Error al subir los documentos');
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al subir los documentos');
       cargar();
-    } finally {
-      setSubiendo(false);
-      setProgreso(null);
     }
   };
 
@@ -175,17 +160,7 @@ export default function DocumentosLeadModal({ open, onClose, lead, puedeGestiona
           </div>
         )}
 
-        {progreso && (
-          <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3">
-            <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
-              <span className="truncate">{progreso.nombre} ({progreso.actual}/{progreso.total})</span>
-              <span className="font-mono shrink-0 ml-2">{progreso.pct}%</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
-              <div className="h-full bg-brand-600 transition-all" style={{ width: `${progreso.pct}%` }} />
-            </div>
-          </div>
-        )}
+        <BarraProgresoCarga carga={carga} />
 
         {cargando ? <Loader /> : items.length === 0 ? (
           <EmptyState title="Sin documentos" />

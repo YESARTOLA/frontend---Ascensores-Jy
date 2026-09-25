@@ -197,7 +197,7 @@ export default function AscensorHistorial() {
             {guias.map(g => (
               <li key={g.id} className="text-xs">
                 <div className="font-medium">Guía {g.codigo_guia || '—'} · <span className="font-mono text-slate-500">{g.servicio?.codigo}</span></div>
-                <div className="text-slate-400">{formatFechaHora(g.fecha_carga)} · {g.tecnico?.nombre}</div>
+                <div className="text-slate-400">{formatFechaHora(g.fecha_carga)} · {g.tecnico?.nombre || g.usuario_registro?.nombres}</div>
                 {g.archivo && <FileLink archivo={g.archivo}>Ver archivo</FileLink>}
               </li>
             ))}
@@ -209,7 +209,7 @@ export default function AscensorHistorial() {
             {evidencias.map(ev => (
               <li key={ev.id} className="text-xs">
                 <div className="font-medium">{ev.tipo_evidencia} · <span className="font-mono text-slate-500">{ev.servicio?.codigo}</span></div>
-                <div className="text-slate-400">{formatFechaHora(ev.fecha_carga)} · {ev.tecnico?.nombre}</div>
+                <div className="text-slate-400">{formatFechaHora(ev.fecha_carga)} · {ev.tecnico?.nombre || ev.usuario_registro?.nombres}</div>
                 {ev.descripcion && <p className="text-slate-600">{ev.descripcion}</p>}
                 {ev.archivo && <FileLink archivo={ev.archivo}>Ver archivo</FileLink>}
               </li>

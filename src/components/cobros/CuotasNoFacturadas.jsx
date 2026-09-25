@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { cobrosService, facturasService, archivosService } from '../../services';
+import { cobrosService, facturasService } from '../../services';
 import Loader from '../common/Loader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
 import Combobox from '../common/Combobox.jsx';
@@ -8,6 +8,8 @@ import FiltroMoneda, { etiquetaDeMoneda } from '../common/FiltroMoneda.jsx';
 import Modal from '../common/Modal.jsx';
 import Pagination from '../common/Pagination.jsx';
 import { useToast } from '../common/Toast.jsx';
+import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useMonedas } from '../../hooks/useMonedas.js';
 import { formatFecha, formatFechaHora, formatMonto, hoyISO } from '../../utils/formatters.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../../utils/catalogosComprobante.js';
@@ -106,6 +108,7 @@ export default function CuotasNoFacturadas({
   const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
+  const cargaFactura = useCargaArchivos();
   // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
   // cabecera del export.
   const monedas = useMonedas();
@@ -212,13 +215,15 @@ export default function CuotasNoFacturadas({
 
   const subirArchivoFactura = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const fd = new FormData(); fd.append('archivo', file);
     try {
-      const r = await archivosService.upload(fd, 'facturas');
+      const r = await cargaFactura.subirUno(file, 'facturas');
       setFactura(f => ({ ...f, id_archivo: r.id }));
       toast.success('Archivo cargado');
-    } catch { toast.error('Error subiendo archivo'); }
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error subiendo archivo');
+    }
   };
 
   // Emite una factura POR CUOTA directamente. El monto lo fija el backend =
@@ -424,7 +429,7 @@ export default function CuotasNoFacturadas({
         footer={
           <>
             <button className="btn-secondary" onClick={() => setFacturarCuota(null)} disabled={guardandoFactura}>Cancelar</button>
-            <button className="btn-primary" onClick={guardarFactura} disabled={guardandoFactura}>{guardandoFactura ? 'Facturando…' : 'Facturar'}</button>
+            <button className="btn-primary" onClick={guardarFactura} disabled={guardandoFactura || cargaFactura.subiendo}>{guardandoFactura ? 'Facturando…' : 'Facturar'}</button>
           </>
         }
       >
@@ -486,8 +491,9 @@ export default function CuotasNoFacturadas({
             </div>
             <div>
               <label className="label">Archivo de factura</label>
-              <input type="file" className="input" onChange={subirArchivoFactura} />
-              {factura.id_archivo && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
+              <input type="file" className="input" onChange={subirArchivoFactura} disabled={cargaFactura.subiendo} />
+              <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
+              {factura.id_archivo && !cargaFactura.progreso && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
             </div>
           </div>
         )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { leadsService, clientesService, edificiosService, ascensoresService, tiposServicioService, tiposAscensorService, ubigeoService, tecnicosService, archivosService } from '../services';
+import { leadsService, clientesService, edificiosService, ascensoresService, tiposServicioService, tiposAscensorService, ubigeoService, tecnicosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -8,6 +8,8 @@ import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import PadreTabs from '../components/common/PadreTabs.jsx';
 import { useToast } from '../components/common/Toast.jsx';
+import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { badgeEstado, hoyISO, formatFechaHora, sanearTelefono, formatTelefono, nombreEdificio, nombreCliente } from '../utils/formatters.js';
@@ -73,11 +75,15 @@ export default function Leads() {
   // Catálogos que solo usa el wizard (se cargan al abrir la conversión).
   const [catalogosConv, setCatalogosConv] = useState(null);
   const toast = useToast();
+  const cargaCot = useCargaArchivos(); // PDF de la cotización del lead
   const navigate = useNavigate();
   const { user, esSuperAdmin, esAdmin, esCoordinador, esVendedora, esCentralVentas, puedeVerPrecio } = useAuth();
-  // Ciclo comercial del lead (cambiar estado, descartar, adjuntar cotizaciones):
-  // administración y la Central de ventas. La Vendedora NO lo gestiona.
+  // Documentos libres del lead: administración y la Central de ventas los
+  // gestionan; la Vendedora solo los consulta.
   const puedeGestionar = esSuperAdmin || esAdmin || esCoordinador || esCentralVentas;
+  // Ciclo comercial (cambiar estado, descartar, adjuntar cotizaciones): los
+  // anteriores + la Vendedora sobre SUS leads (el backend acota el alcance).
+  const puedeCambiarEstado = puedeGestionar || esVendedora;
   // Alta de leads: la Central de ventas es el punto de captura (con el
   // superadministrador) y la Vendedora registra los prospectos que consigue
   // ella misma, que nacen asignados a su usuario (lo impone el backend).
@@ -321,6 +327,7 @@ export default function Leads() {
   const abrirAdjuntarCotizacion = (l) => {
     setOpenCotizacion(l);
     setCotArchivo(null);
+    cargaCot.limpiar(); // sin el aviso de error de un intento anterior
     setCotVersionSiguiente(null);
     leadsService.cotizaciones(l.id)
       .then(cots => setCotVersionSiguiente((cots[0]?.version || 0) + 1))
@@ -337,9 +344,7 @@ export default function Leads() {
     }
     setSubiendoCot(true);
     try {
-      const fd = new FormData();
-      fd.append('archivo', cotArchivo);
-      const arch = await archivosService.upload(fd, 'cotizaciones');
+      const arch = await cargaCot.subirUno(cotArchivo, 'cotizaciones');
       const cot = await leadsService.subirCotizacion(openCotizacion.id, arch.id);
       toast.success(`Cotización adjuntada (versión ${cot.version})`);
       // Si el detalle del mismo lead está abierto, refrescar su lista y estado.
@@ -352,8 +357,9 @@ export default function Leads() {
       setOpenCotizacion(null);
       setCotArchivo(null);
       cargar();
-    } catch (err) { toast.error(err.response?.data?.error || 'Error al adjuntar la cotización'); }
-    finally { setSubiendoCot(false); }
+    } catch (err) {
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al adjuntar la cotización');
+    } finally { setSubiendoCot(false); }
   };
 
   const descartar = async () => {
@@ -443,7 +449,7 @@ export default function Leads() {
                     <td className="table-td text-xs">{l.vendedor?.nombres || '—'}</td>
                     <td className="table-td"><span className={badgeBuenPagador(l.buen_pagador)}>{l.buen_pagador || 'Sin calificar'}</span></td>
                     <td className="table-td">
-                      {puedeGestionar ? (
+                      {puedeCambiarEstado ? (
                         <select
                           className="select text-xs !py-1"
                           value={l.estado_lead}
@@ -678,7 +684,7 @@ export default function Leads() {
               <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-xs font-semibold text-slate-700">Cotizaciones adjuntas</div>
-                  {puedeGestionar && openDetalle.estado_lead !== ESTADO_LEAD_DESCARTADO && (
+                  {puedeCambiarEstado && openDetalle.estado_lead !== ESTADO_LEAD_DESCARTADO && (
                     <button type="button" onClick={() => abrirAdjuntarCotizacion(openDetalle)}
                       className="btn-ghost text-xs !py-1.5 !px-3">
                       + Nueva versión
@@ -734,7 +740,8 @@ export default function Leads() {
           <div>
             <label className="label">PDF de la cotización *</label>
             <input type="file" required accept="application/pdf,.pdf" className="input"
-              onChange={e => setCotArchivo(e.target.files?.[0] || null)} />
+              disabled={subiendoCot} onChange={e => setCotArchivo(e.target.files?.[0] || null)} />
+            <BarraProgresoCarga carga={cargaCot} className="mt-2" />
           </div>
         </form>
       </Modal>
