@@ -2,6 +2,7 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import CuentasBancariasPanel from '../components/configuracion/CuentasBancariasPanel.jsx';
 import ChecklistPlantillasPanel from '../components/configuracion/ChecklistPlantillasPanel.jsx';
 import ParametrosOperativosPanel from '../components/configuracion/ParametrosOperativosPanel.jsx';
+import ClasificacionesPanel from '../components/clientes/ClasificacionesPanel.jsx';
 
 export default function Configuracion() {
   return (
@@ -33,6 +34,14 @@ export default function Configuracion() {
         </div>
         <div className="card-body">
           <ChecklistPlantillasPanel />
+        </div>
+      </div>
+      <div className="card mt-5">
+        <div className="card-header">
+          <h3 className="card-title">Clasificaciones de cliente</h3>
+        </div>
+        <div className="card-body">
+          <ClasificacionesPanel />
         </div>
       </div>
     </>

@@ -190,7 +190,7 @@ export default function Ascensores() {
             <label className="label">Clasificación</label>
             <select className="select" value={filtros.clasificacion} onChange={e => setF('clasificacion', e.target.value)}>
               <option value="">Todas las clasificaciones</option>
-              {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>)}
+              {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}{c.activo ? '' : ' (desactivada)'}</option>)}
             </select>
           </div>
           <div>

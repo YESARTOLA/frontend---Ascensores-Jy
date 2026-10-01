@@ -9,6 +9,8 @@ import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoneda.jsx';
 import { FileLink, descargarArchivo } from '../components/common/FilePreview.jsx';
 import Modal from '../components/common/Modal.jsx';
+import DocumentosFacturaModal from '../components/facturas/DocumentosFacturaModal.jsx';
+import { CeldaDocumentosFactura, ListaDocumentosFactura } from '../components/facturas/DocumentosFactura.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
@@ -148,6 +150,8 @@ export default function Facturas() {
   const [anulando, setAnulando] = useState(false);
   // Detalle de la factura (se abre desde su número) con descarga del comprobante.
   const [facturaDetalle, setFacturaDetalle] = useState(null);
+  // Factura cuyo modal de documentos (constancias, XML/CDR…) está abierto.
+  const [facturaDocs, setFacturaDocs] = useState(null);
 
   // El listado no incluye el desglose mensual de las facturas de plan (lo
   // arma el endpoint de detalle desde el cronograma). Se abre el modal al
@@ -364,7 +368,7 @@ export default function Facturas() {
                   <ThSort label="Monto" {...propsTh('monto', 'right')} />
                   <ThSort label="Cobertura" {...propsTh('cobertura')} />
                   <ThSort label="Estado" {...propsTh('estado_factura')} />
-                  <th className="table-th">Archivo</th>
+                  <th className="table-th">Documentos</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
@@ -411,7 +415,7 @@ export default function Facturas() {
                           : <span className="badge-violet">General</span>}
                       </td>
                       <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
-                      <td className="table-td">{f.archivo ? <FileLink archivo={f.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                      <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaDocs(f)} /></td>
                       <td className="table-td text-right whitespace-nowrap">
                         {esFacturaActiva(f)
                           ? (puedeAnular
@@ -494,6 +498,21 @@ export default function Facturas() {
                   </FileLink>
                 : <span className="text-slate-400">Sin comprobante adjunto</span>
             } />
+            <div className="col-span-2">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  Documentos adicionales · {facturaDetalle.documentos?.length || 0}
+                </div>
+                <button
+                  type="button"
+                  className="text-brand-700 text-xs hover:underline"
+                  onClick={() => { setFacturaDocs(facturaDetalle); setFacturaDetalle(null); }}
+                >Gestionar documentos</button>
+              </div>
+              {facturaDetalle.documentos?.length
+                ? <ListaDocumentosFactura documentos={facturaDetalle.documentos} />
+                : <span className="text-sm text-slate-400">Sin documentos adicionales</span>}
+            </div>
             {facturaDetalle.detalle_mensual && (
               <div className="col-span-2 rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3">
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
@@ -529,6 +548,13 @@ export default function Facturas() {
           </div>
         )}
       </Modal>
+
+      <DocumentosFacturaModal
+        open={!!facturaDocs}
+        onClose={() => setFacturaDocs(null)}
+        factura={facturaDocs}
+        onCambio={recargar}
+      />
 
       {/* Anular factura: no la borra (queda como constancia con estado 'Anulada')
           y deja libre el servicio o la cuota para emitir una nueva. */}

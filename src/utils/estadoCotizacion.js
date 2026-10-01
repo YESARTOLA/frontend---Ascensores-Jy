@@ -26,7 +26,9 @@ export const ESTADOS_VERSION = [
 export const ESTADO_GLOBAL_COTIZADO = 'Cotizado';
 export const ESTADO_GLOBAL_ACEPTADO = 'Aceptado';
 export const ESTADO_GLOBAL_EJECUCION = 'Ejecución';
-export const ESTADO_GLOBAL_PENDIENTE = 'Pendiente';
+// El técnico ya terminó y queda saldo por cobrar. Antes se llamaba 'Pendiente',
+// que en la misma fila se confundía con el 'Pendiente' del servicio.
+export const ESTADO_GLOBAL_POR_COBRAR = 'Por cobrar';
 export const ESTADO_GLOBAL_TERMINADO = 'Terminado';
 // Terminal: la cotización fue eliminada (baja lógica) pero se conserva visible
 // en el listado como historial.
@@ -36,7 +38,7 @@ export const ESTADOS_GLOBALES = [
   ESTADO_GLOBAL_COTIZADO,
   ESTADO_GLOBAL_ACEPTADO,
   ESTADO_GLOBAL_EJECUCION,
-  ESTADO_GLOBAL_PENDIENTE,
+  ESTADO_GLOBAL_POR_COBRAR,
   ESTADO_GLOBAL_TERMINADO,
   ESTADO_GLOBAL_ANULADO
 ];
@@ -53,11 +55,11 @@ export const FILTRO_GLOBAL_APROBADAS = 'Aprobadas';
 // servicio y lo que queda es circuito administrativo/contable (revisión, cobro,
 // facturación) hasta el cierre. Filtrar por 'Terminado' devuelve TODOS estos,
 // no solo los que tienen ese badge — por eso en la lista conviven filas
-// 'Terminado' y 'Pendiente' bajo ese filtro. La traducción la hace el backend;
+// 'Terminado' y 'Por cobrar' bajo ese filtro. La traducción la hace el backend;
 // aquí está para poder explicarlo en la UI. Espejo de
 // backend/utils/estadoCotizacion.js.
 export const ESTADOS_GLOBALES_TRABAJO_TERMINADO = [
-  ESTADO_GLOBAL_PENDIENTE,
+  ESTADO_GLOBAL_POR_COBRAR,
   ESTADO_GLOBAL_TERMINADO
 ];
 
@@ -69,7 +71,7 @@ export const ESTADOS_GLOBALES_TRABAJO_TERMINADO = [
 export const ESTADOS_GLOBALES_POST_ACEPTACION = [
   ESTADO_GLOBAL_ACEPTADO,
   ESTADO_GLOBAL_EJECUCION,
-  ESTADO_GLOBAL_PENDIENTE,
+  ESTADO_GLOBAL_POR_COBRAR,
   ESTADO_GLOBAL_TERMINADO
 ];
 
@@ -85,5 +87,5 @@ export function rangoEsPorFechaAceptacion(valorFiltroGlobal) {
 export const ESTADOS_GLOBALES_SERVICIO_EN_MARCHA = [
   ESTADO_GLOBAL_ACEPTADO,
   ESTADO_GLOBAL_EJECUCION,
-  ESTADO_GLOBAL_PENDIENTE
+  ESTADO_GLOBAL_POR_COBRAR
 ];

@@ -24,10 +24,13 @@ import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import Combobox from '../components/common/Combobox.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
-import { badgeEstado, formatMonto, nombreEdificioDeAscensores, clientesConEdificios } from '../utils/formatters.js';
+import { badgeEstado, formatMonto, nombreEdificioDeAscensores, clientesConEdificios, hoyISO } from '../utils/formatters.js';
 import { usePersistentState } from '../utils/usePersistentState.js';
 import CuotasEditor, { planCuotasInicial, planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
+import ItemsCotizacionEditor, { itemVacio, itemDesdeServidor, itemsParaPayload, calcImporte } from '../components/cotizaciones/ItemsCotizacionEditor.jsx';
 import { ESTADO_GLOBAL_ANULADO, rangoEsPorFechaAceptacion } from '../utils/estadoCotizacion.js';
+import { MODO_IGV_MAS, modoIgvDeVersion, camposModoIgv, calcularTotalesCotizacion } from '../utils/igvCotizacion.js';
+import { SelectorModoIgv, ResumenTotales } from '../components/cotizaciones/IgvCotizacion.jsx';
 
 // La LISTA de estados del filtro no se declara aquí: se pide al backend
 // (/cotizaciones/catalogos), que es quien los escribe. Duplicarla en un literal
@@ -55,18 +58,6 @@ const rangoAMes = (desde, hasta) => {
   return r.desde === desde && r.hasta === hasta ? mes : '';
 };
 
-const itemVacio = () => ({
-  descripcion: '',
-  cantidad: 1,
-  unidad: 'Unidad',
-  precio_unitario: 0,
-  descuento_porcentaje: 0,
-  // Foto del ítem (opcional al cotizar; obligatoria al aprobar). `archivo` es el
-  // objeto subido para previsualizar; `id_archivo` es lo que se envía al backend.
-  id_archivo: null,
-  archivo: null
-});
-
 const ascensorVacio = (modo = 'existente') => ({
   modo, // 'existente' | 'nuevo'
   id_ascensor: '',
@@ -87,7 +78,8 @@ const formInicial = (preset = {}) => ({
   observaciones: '',
   // Texto libre de la garantía ofrecida. Sale en el PDF como "Garantía: …".
   garantia: '',
-  sin_igv: false,
+  // Más IGV / IGV incluido / Sin IGV (ver utils/igvCotizacion.js).
+  modo_igv: MODO_IGV_MAS,
   // Ids de las cuentas bancarias a adjuntar en el PDF. Por defecto se marcan
   // todas las activas al abrir el modal.
   cuentas_pdf: [],
@@ -106,10 +98,6 @@ const formInicial = (preset = {}) => ({
   _codigo_servicio_cobro: preset._codigo_servicio_cobro || null
 });
 
-function round2(n) {
-  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-}
-
 // Código(s) del/los ascensor(es) de una cotización. Los existentes traen `codigo`;
 // los que la cotización describe como "nuevos" (a instalar) aún no tienen código,
 // se cuentan aparte para mostrarlos como "N nuevo(s)".
@@ -118,13 +106,6 @@ function ascensoresCotizacion(c) {
   const codigos = rows.map(a => a.ascensor?.codigo).filter(Boolean);
   const nuevos = rows.filter(a => !a.ascensor && a.ascensor_nuevo).length;
   return { codigos, nuevos };
-}
-
-function calcImporte(it) {
-  const cant = Number(it.cantidad) || 0;
-  const pu = Number(it.precio_unitario) || 0;
-  const desc = Number(it.descuento_porcentaje) || 0;
-  return round2(cant * pu * (1 - desc / 100));
 }
 
 export default function Cotizaciones() {
@@ -162,6 +143,7 @@ export default function Cotizaciones() {
   const { esSuperAdmin, esAdmin, accesoServicios, accesoProyectos } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
   const [aEliminar, setAEliminar] = useState(null);
+  const [exportando, setExportando] = useState(false);
   const toast = useToast();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -313,8 +295,46 @@ export default function Cotizaciones() {
       setEstadosGlobales(cat?.estados_globales || []);
       setFiltrosGlobales(cat?.filtros_globales || []);
       setEtiquetasGlobales(cat?.etiquetas_globales || {});
+      // El filtro de estado se recuerda entre sesiones: si guardaba un estado
+      // que ya no existe (p.ej. 'Pendiente', hoy 'Por cobrar'), se limpia para
+      // no dejar la lista vacía con el selector mostrando "Todos".
+      const validos = [...(cat?.estados_globales || []), ...(cat?.filtros_globales || []).map(f => f.valor)];
+      if (validos.length > 0) {
+        setFiltros(f => (f.estado_global && !validos.includes(f.estado_global) ? { ...f, estado_global: '' } : f));
+      }
     });
   }, []);
+
+  // Excel del listado con los MISMOS filtros activos (pestaña de tipo, búsqueda,
+  // estado, cliente, ascensor, rango y "Mostrar anuladas"). Lo genera el backend
+  // con el mismo where que la tabla y trae el conjunto completo, sin paginar.
+  const exportarExcel = async () => {
+    if (exportando) return;
+    setExportando(true);
+    try {
+      const blob = await cotizacionesService.exportar(filtros, 'excel').then(r => r.data);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cotizaciones-${hoyISO()}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('Exportación XLSX lista');
+    } catch (err) {
+      // Con responseType 'blob' el error del backend también llega como blob.
+      let msg = 'Error al exportar';
+      if (err.response?.data instanceof Blob) {
+        try { msg = JSON.parse(await err.response.data.text()).error || msg; } catch {}
+      } else if (err.response?.data?.error) {
+        msg = err.response.data.error;
+      }
+      toast.error(msg);
+    } finally {
+      setExportando(false);
+    }
+  };
 
   const abrirModal = () => {
     setDuplicandoDe(null);
@@ -341,7 +361,7 @@ export default function Cotizaciones() {
       moneda: v.moneda || 'PEN',
       observaciones: v.observaciones || '',
       garantia: v.garantia || '',
-      sin_igv: !!v.sin_igv,
+      modo_igv: modoIgvDeVersion(v),
       // Si la original tenía selección de cuentas la copiamos; si era legacy
       // (null) marcamos todas las activas, igual que una cotización nueva.
       cuentas_pdf: Array.isArray(v.cuentas_pdf) ? v.cuentas_pdf : cuentas.map(c => c.id),
@@ -363,17 +383,7 @@ export default function Cotizaciones() {
                 }
               })
         : [ascensorVacio()],
-      items: (v.items || []).length
-        ? v.items.map(it => ({
-            descripcion: it.descripcion || '',
-            cantidad: Number(it.cantidad) || 1,
-            unidad: it.unidad || 'Unidad',
-            precio_unitario: Number(it.precio_unitario) || 0,
-            descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
-            id_archivo: it.id_archivo || null,
-            archivo: it.archivo || null
-          }))
-        : [itemVacio()],
+      items: (v.items || []).length ? v.items.map(itemDesdeServidor) : [itemVacio()],
       cuotas: planCuotasDesdeServidor(v)
     };
   };
@@ -440,7 +450,7 @@ export default function Cotizaciones() {
   }, [ascensores, filtros.id_cliente]);
 
   // Con los filtros del embudo ya aceptado ('Aceptado', 'Ejecución',
-  // 'Pendiente', 'Terminado' y el virtual 'Aprobadas') el backend aplica el
+  // 'Por cobrar', 'Terminado' y el virtual 'Aprobadas') el backend aplica el
   // rango de fechas sobre la FECHA DE ACEPTACIÓN, no sobre la de creación. Se
   // refleja en las etiquetas para que el usuario sepa qué está acotando.
   const rangoPorAceptacion = rangoEsPorFechaAceptacion(filtros.estado_global);
@@ -470,27 +480,8 @@ export default function Cotizaciones() {
     return () => { vivo = false; };
   }, [form.id_cliente]);
 
-  const cambiarItem = (idx, key, val) => {
-    setForm(f => ({
-      ...f,
-      items: f.items.map((it, i) => i === idx ? { ...it, [key]: val } : it)
-    }));
-  };
-  const agregarItem = () => setForm(f => ({ ...f, items: [...f.items, itemVacio()] }));
-  const quitarItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
-
-  const subirFotoItem = async (idx, e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const arch = await cargaFotoItem.subirUno(file, 'cotizaciones');
-      setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, id_archivo: arch.id, archivo: arch } : it) }));
-    } catch (err) {
-      if (!err?.cancelado) toast.error('Error al subir la foto del ítem');
-    }
-  };
-  const quitarFotoItem = (idx) => setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, id_archivo: null, archivo: null } : it) }));
+  // El editor de ítems trabaja con updaters (arr => nuevoArr) sobre la lista.
+  const setItems = (fn) => setForm(f => ({ ...f, items: fn(f.items) }));
 
   const cambiarAscensor = (idx, key, val) => {
     setForm(f => ({
@@ -535,9 +526,9 @@ export default function Cotizaciones() {
     setForm(f => ({ ...f, archivos: f.archivos.filter(a => a.id !== idArchivo) }));
   };
 
-  const subtotal = round2(form.items.reduce((acc, it) => acc + calcImporte(it), 0));
-  const igvCalc = form.sin_igv ? 0 : round2(subtotal * igvTasa);
-  const totalCalc = round2(subtotal + igvCalc);
+  // Misma regla que recalcula el backend al guardar (incluye el IGV incluido).
+  const totales = calcularTotalesCotizacion(form.items.map(calcImporte), igvTasa, form.modo_igv);
+  const totalCalc = totales.total;
 
   const guardar = async (e) => {
     e.preventDefault();
@@ -598,19 +589,9 @@ export default function Cotizaciones() {
         moneda: form.moneda,
         observaciones: form.observaciones || null,
         garantia: form.garantia || null,
-        sin_igv: form.sin_igv,
+        ...camposModoIgv(form.modo_igv),
         cuentas_pdf: form.cuentas_pdf,
-        items: form.items
-          .filter(it => it.descripcion.trim())
-          .map((it, i) => ({
-            orden: i + 1,
-            descripcion: it.descripcion,
-            cantidad: Number(it.cantidad) || 1,
-            unidad: it.unidad || 'Unidad',
-            precio_unitario: Number(it.precio_unitario) || 0,
-            descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
-            id_archivo: it.id_archivo || null
-          })),
+        items: itemsParaPayload(form.items),
         tiene_cuotas: payloadCuotas.tiene_cuotas,
         plan_cuotas: payloadCuotas.plan_cuotas,
         saldo_variable: payloadCuotas.saldo_variable,
@@ -638,6 +619,10 @@ export default function Cotizaciones() {
         subtitle={`${total} registro(s)`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <button onClick={exportarExcel} disabled={exportando || total === 0} className="btn-ghost"
+              title="Descarga en Excel todas las cotizaciones que coinciden con los filtros activos">
+              {exportando ? 'Generando…' : 'Exportar Excel'}
+            </button>
             {puedeCrear && (
               <button onClick={abrirModal} className="btn-primary">+ Nueva cotización</button>
             )}
@@ -982,82 +967,29 @@ export default function Cotizaciones() {
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="label !mb-0">Items</label>
-              <button type="button" onClick={agregarItem} className="btn-ghost text-xs !py-1.5 !px-3">+ Agregar item</button>
-            </div>
-            <div className="hidden sm:grid grid-cols-12 gap-2 px-1 pb-1.5 mb-1 border-b border-carbon-100 text-[10px] font-semibold uppercase tracking-wider text-carbon-500">
-              <div className="col-span-4">Descripción</div>
-              <div className="col-span-1 text-right">Cant.</div>
-              <div className="col-span-1">Unidad</div>
-              <div className="col-span-2 text-right">P. unitario</div>
-              <div className="col-span-1 text-right">% dscto</div>
-              <div className="col-span-1 text-right">Importe</div>
-              <div className="col-span-1 text-center">Foto</div>
-              <div className="col-span-1"></div>
-            </div>
-            <div className="space-y-2">
-              {form.items.map((it, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
-                  <textarea className="textarea col-span-12 sm:col-span-4" rows="1" placeholder="Descripción del item"
-                    value={it.descripcion} onChange={e => cambiarItem(idx, 'descripcion', e.target.value)} />
-                  <input type="number" step="0.01" className="input col-span-3 sm:col-span-1" placeholder="Cant."
-                    value={it.cantidad} onChange={e => cambiarItem(idx, 'cantidad', e.target.value)} />
-                  <input className="input col-span-3 sm:col-span-1" placeholder="Unidad"
-                    value={it.unidad} onChange={e => cambiarItem(idx, 'unidad', e.target.value)} />
-                  <input type="number" step="0.01" className="input col-span-3 sm:col-span-2" placeholder="P. unitario"
-                    value={it.precio_unitario} onChange={e => cambiarItem(idx, 'precio_unitario', e.target.value)} />
-                  <input type="number" step="0.01" className="input col-span-2 sm:col-span-1" placeholder="% dscto"
-                    value={it.descuento_porcentaje} onChange={e => cambiarItem(idx, 'descuento_porcentaje', e.target.value)} />
-                  <div className="col-span-9 sm:col-span-1 text-right text-sm font-medium pt-2">
-                    {formatMonto(calcImporte(it), form.moneda)}
-                  </div>
-                  <div className="col-span-2 sm:col-span-1 flex items-center justify-center pt-1">
-                    {it.archivo ? (
-                      <img src={assetUrl(it.archivo.ruta_almacenamiento)} alt="foto ítem"
-                        onClick={() => quitarFotoItem(idx)} title="Clic para quitar la foto"
-                        className="h-9 w-9 object-cover rounded ring-1 ring-slate-200 cursor-pointer" />
-                    ) : (
-                      <label className="text-[11px] cursor-pointer hover:underline text-brand-700"
-                        title="Subir foto del ítem (opcional al cotizar)">
-                        + Foto
-                        <input type="file" accept="image/*" className="hidden" disabled={cargaFotoItem.subiendo} onChange={e => subirFotoItem(idx, e)} />
-                      </label>
-                    )}
-                  </div>
-                  <button type="button" onClick={() => quitarItem(idx)}
-                    className="col-span-1 text-carbon-400 hover:text-red-600 text-lg leading-none">×</button>
-                </div>
-              ))}
-            </div>
-            <BarraProgresoCarga carga={cargaFotoItem} className="mt-2" />
+            <ItemsCotizacionEditor
+              items={form.items}
+              setItems={setItems}
+              moneda={form.moneda}
+              cargaFoto={cargaFotoItem}
+              tituloFoto="Subir foto del ítem (opcional al cotizar)"
+            />
             <p className="text-[11px] text-carbon-400 mt-2">
               La foto de cada ítem es opcional al cotizar. Se exigirá al aprobar la cotización, cuando se convierte en servicio
               (puede subirse desde el modal de aprobación).
             </p>
           </div>
 
-          <div className="flex items-center justify-end">
-            <label className="inline-flex items-center gap-2 text-sm text-carbon-700 cursor-pointer">
-              <input type="checkbox" checked={form.sin_igv}
-                onChange={e => setForm(f => ({ ...f, sin_igv: e.target.checked }))} />
-              Cotizar sin IGV
-            </label>
-          </div>
-          <div className="border-t border-carbon-100 pt-3 grid grid-cols-2 gap-1 text-sm">
-            <div className="text-right text-carbon-600">Subtotal</div>
-            <div className="text-right font-medium">{formatMonto(subtotal, form.moneda)}</div>
-            {form.sin_igv ? (
-              <div className="col-span-2 text-right text-xs text-carbon-500">Precios sin IGV</div>
-            ) : (
-              <>
-                <div className="text-right text-carbon-600">IGV ({Math.round(igvTasa * 100)}%)</div>
-                <div className="text-right font-medium">{formatMonto(igvCalc, form.moneda)}</div>
-              </>
-            )}
-            <div className="text-right text-brand-700 font-bold">TOTAL</div>
-            <div className="text-right text-brand-700 font-bold text-base">{formatMonto(totalCalc, form.moneda)}</div>
-          </div>
+          <SelectorModoIgv value={form.modo_igv} onChange={modo_igv => setForm(f => ({ ...f, modo_igv }))} />
+          <ResumenTotales
+            className="border-t border-carbon-100 pt-3"
+            modo={form.modo_igv}
+            subtotal={totales.subtotal}
+            igv={totales.igv}
+            total={totales.total}
+            igvTasa={igvTasa}
+            moneda={form.moneda}
+          />
 
           <CuotasEditor
             value={form.cuotas}

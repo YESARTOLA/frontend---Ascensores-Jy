@@ -8,7 +8,7 @@ import {
 // Formulario compartido de datos del lead: lo usan el alta ("Nuevo lead") y la
 // edición de datos importantes. La cascada de ubicación (departamento →
 // provincia → distrito) se deriva en memoria del catálogo plano de ubigeo.
-// Obligatorios aquí: nombre de contacto, teléfono, correo y tipo de ascensor.
+// Obligatorios aquí: solo nombre de contacto y teléfono.
 // El lead es el punto de captura de la consulta; los datos comerciales
 // (ubicación, tipo/subtipo de servicio, empresa) se piden como obligatorios
 // recién al convertirlo a cliente, en el wizard de conversión.
@@ -97,8 +97,8 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
         value={formatTelefono(value.telefono)}
         onChange={e => set({ telefono: sanearTelefono(e.target.value) })}
       /></div>
-      <div><label className="label">Correo *</label><input
-        className="input" required type="email" autoComplete="email"
+      <div><label className="label">Correo</label><input
+        className="input" type="email" autoComplete="email"
         placeholder="contacto@empresa.com"
         value={value.correo} onChange={e => set({ correo: e.target.value })}
       /></div>
@@ -149,7 +149,7 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
       <div><label className="label">Departamento</label><select className="select" value={value.departamento} onChange={e => set({ departamento: e.target.value, provincia: '', codigo_ubigeo: '' })}><option value="">—</option>{departamentos.map(d => <option key={d} value={d}>{d}</option>)}</select></div>
       <div><label className="label">Provincia</label><select className="select" disabled={!value.departamento} value={value.provincia} onChange={e => set({ provincia: e.target.value, codigo_ubigeo: '' })}><option value="">—</option>{provincias.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
       <div><label className="label">Distrito</label><select className="select" disabled={!value.provincia} value={value.codigo_ubigeo} onChange={e => set({ codigo_ubigeo: e.target.value })}><option value="">—</option>{distritos.map(d => <option key={d.codigo} value={d.codigo}>{d.distrito}</option>)}</select></div>
-      <div><label className="label">Tipo de ascensor *</label><select className="select" required value={value.id_tipo_ascensor} onChange={e => set({ id_tipo_ascensor: e.target.value })}><option value="">—</option>{tiposAscensor.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
+      <div><label className="label">Tipo de ascensor</label><select className="select" value={value.id_tipo_ascensor} onChange={e => set({ id_tipo_ascensor: e.target.value })}><option value="">—</option>{tiposAscensor.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
       <div className="sm:col-span-2"><label className="label">Nombre del proyecto</label><input className="input" value={value.nombre_proyecto} onChange={e => set({ nombre_proyecto: e.target.value })} /></div>
       <div><label className="label">Tipo de servicio</label><select className="select" value={value.id_padre_servicio} onChange={e => set({ id_padre_servicio: e.target.value, id_tipo_servicio_solicitado: '' })}><option value="">—</option>{padresServicio.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
       <div><label className="label">Subtipo solicitado</label><select className="select" disabled={!value.id_padre_servicio} value={value.id_tipo_servicio_solicitado} onChange={e => set({ id_tipo_servicio_solicitado: e.target.value })}><option value="">—</option>{subtiposDelPadre.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
@@ -188,7 +188,7 @@ export default function LeadForm({ formId, value, onChange, onSubmit, ubigeo, ti
       </div>
       <div className="sm:col-span-2"><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={value.observaciones} onChange={e => set({ observaciones: e.target.value })} /></div>
       <p className="sm:col-span-2 text-[11px] text-slate-500">
-        Solo nombre, teléfono, correo y tipo de ascensor son obligatorios para registrar el lead.
+        Solo nombre del contacto y teléfono son obligatorios para registrar el lead.
         El resto de datos se completa cuando quiera, y se exige al convertirlo a cliente.
       </p>
     </form>

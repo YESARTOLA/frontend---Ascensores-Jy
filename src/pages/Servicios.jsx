@@ -10,7 +10,7 @@ import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import { badgeEstado, formatMonto, hoyISO, nombreEdificioDeAscensores } from '../utils/formatters.js';
+import { badgeEstado, hoyISO, nombreEdificioDeAscensores } from '../utils/formatters.js';
 import { ESTADOS_SERVICIO, esServicioEditable } from '../utils/estadoServicio.js';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
 import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
@@ -154,7 +154,7 @@ export default function Servicios() {
   const [form, setForm] = useState(inicial);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const { esSuperAdmin, esAdmin, puedeVerPrecio } = useAuth();
+  const { esSuperAdmin, esAdmin } = useAuth();
   const puedeCrear = esSuperAdmin || esAdmin;
   const puedeEditar = esSuperAdmin || esAdmin;
   // Eliminar un proyecto queda restringido al superadministrador.
@@ -362,7 +362,8 @@ export default function Servicios() {
                   <th className="table-th">Código</th><th className="table-th">Título</th><th className="table-th">Tipo</th>
                   <th className="table-th">Edificio-Obra / Ascensores</th><th className="table-th">Tipo servicio</th>
                   <th className="table-th">Fecha</th><th className="table-th">Técnicos</th>
-                  <th className="table-th">Estado</th>{puedeVerPrecio && <th className="table-th text-right">Precio</th>}
+                  {/* El listado de Proyectos no muestra el precio (ni en tabla ni en móvil). */}
+                  <th className="table-th">Estado</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
@@ -385,7 +386,6 @@ export default function Servicios() {
                         <td className="table-td text-xs" title={etiquetaProgramacion(s).detalle}>{etiquetaProgramacion(s).texto}</td>
                         <td className="table-td text-xs">{s.asignaciones?.length > 0 ? s.asignaciones.map(a => a.tecnico?.nombre).join(', ') : <span className="text-rose-500">Sin asignar</span>}</td>
                         <td className="table-td"><span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span></td>
-                        {puedeVerPrecio && <td className="table-td text-right font-mono text-sm">{formatMonto(s.precio_interno, s.moneda)}</td>}
                         <td className="table-td text-right whitespace-nowrap">
                           <Link to={`/servicios/${s.id}`} className="text-brand-700 text-xs hover:underline">Ver</Link>
                           {editable && (
@@ -433,9 +433,8 @@ export default function Servicios() {
                         </div>
                         <span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span>
                       </div>
-                      <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
+                      <div className="mt-2 text-xs text-slate-500">
                         <span title={etiquetaProgramacion(s).detalle}>{etiquetaProgramacion(s).texto}</span>
-                        {puedeVerPrecio && <span className="font-mono">{formatMonto(s.precio_interno, s.moneda)}</span>}
                       </div>
                     </Link>
                     {(editable || puedeEliminar) && (

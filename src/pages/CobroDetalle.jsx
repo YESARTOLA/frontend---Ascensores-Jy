@@ -8,6 +8,8 @@ import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx'
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import DocumentosFacturaModal from '../components/facturas/DocumentosFacturaModal.jsx';
+import { CeldaDocumentosFactura, DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, addMonthsYMD, toYMDLima } from '../utils/formatters.js';
@@ -43,11 +45,14 @@ export default function CobroDetalle() {
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   // cuotas[i].id presente = blindada (pagada/facturada). Sin id = nueva editable.
   const [cuotas, setCuotas] = useState({ numero_cuotas: 1, fecha_proximo_abono: hoyISO(), cuotas: [] });
-  const [factura, setFactura] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), monto: '', id_archivo: null, modo: 'general', id_cuota: '' });
+  const [factura, setFactura] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), monto: '', id_archivo: null, documentos: [], modo: 'general', id_cuota: '' });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
+  // Factura cuyo modal de documentos (constancias, XML/CDR…) está abierto.
+  const [facturaDocs, setFacturaDocs] = useState(null);
   const toast = useToast();
   const cargaComprobante = useCargaArchivos(); // comprobante del abono
   const cargaFactura = useCargaArchivos();     // archivo del comprobante emitido
+  const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -62,6 +67,9 @@ export default function CobroDetalle() {
 
   const cargar = async () => { setLoading(true); try { setData(await cobrosService.get(id)); } finally { setLoading(false); } };
   useEffect(() => { cargar(); }, [id]);
+  // Recarga sin pasar por el Loader de página, que desmontaría el modal de
+  // documentos mientras sigue abierto.
+  const refrescar = () => cobrosService.get(id).then(setData).catch(() => {});
 
   // Cada vez que se abre el modal de cuotas (o cambia el cobro), prepoblar
   // con las cuotas actuales. Las blindadas (pagadas o facturadas) preservan
@@ -289,6 +297,7 @@ export default function CobroDetalle() {
         ? Number(data.monto_total).toFixed(2)
         : Number(primeraCuotaLibre?.monto || 0).toFixed(2),
       id_archivo: null,
+      documentos: [],
       modo: modoInicial,
       id_cuota: modoInicial === 'por_cuota' ? String(primeraCuotaLibre.id) : ''
     });
@@ -361,6 +370,7 @@ export default function CobroDetalle() {
         fecha_emision: factura.fecha_emision,
         monto: factura.monto,
         id_archivo: factura.id_archivo,
+        documentos: aPayloadDocumentos(factura.documentos),
         id_cuota: factura.modo === 'por_cuota' ? Number(factura.id_cuota) : null
       };
       await facturasService.create(payload);
@@ -637,7 +647,7 @@ export default function CobroDetalle() {
                 <th className="table-th text-right">Monto</th>
                 <th className="table-th">Cobertura</th>
                 <th className="table-th">Estado</th>
-                <th className="table-th">Archivo</th>
+                <th className="table-th">Documentos</th>
                 <th className="table-th text-right">Acción</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
@@ -652,7 +662,7 @@ export default function CobroDetalle() {
                         : <span className="badge-violet">General</span>}
                     </td>
                     <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
-                    <td className="table-td">{f.archivo ? <FileLink archivo={f.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                    <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaDocs(f)} /></td>
                     <td className="table-td text-right">
                       {!esFacturaActiva(f) ? (
                         <span className="text-slate-400 text-xs">Anulada</span>
@@ -841,7 +851,7 @@ export default function CobroDetalle() {
 
       {/* Modal factura */}
       <Modal open={openFactura} onClose={() => !guardandoFactura && setOpenFactura(false)} title="Registrar comprobante"
-        footer={<><button className="btn-secondary" onClick={() => setOpenFactura(false)} disabled={guardandoFactura}>Cancelar</button><button className="btn-primary" onClick={crearFactura} disabled={guardandoFactura || cargaFactura.subiendo}>{guardandoFactura ? 'Registrando…' : 'Registrar'}</button></>}>
+        footer={<><button className="btn-secondary" onClick={() => setOpenFactura(false)} disabled={guardandoFactura}>Cancelar</button><button className="btn-primary" onClick={crearFactura} disabled={guardandoFactura || cargaFactura.subiendo || cargaDocsFactura.subiendo}>{guardandoFactura ? 'Registrando…' : 'Registrar'}</button></>}>
         <div className="space-y-4">
           <div>
             <label className="label">Alcance del comprobante</label>
@@ -910,8 +920,20 @@ export default function CobroDetalle() {
             <input type="file" className="input" onChange={subirArchivoFactura} disabled={cargaFactura.subiendo} />
             <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
           </div>
+          <DocumentosAdicionalesBorrador
+            value={factura.documentos}
+            onChange={documentos => setFactura(f => ({ ...f, documentos }))}
+            carga={cargaDocsFactura}
+          />
         </div>
       </Modal>
+
+      <DocumentosFacturaModal
+        open={!!facturaDocs}
+        onClose={() => setFacturaDocs(null)}
+        factura={facturaDocs}
+        onCambio={refrescar}
+      />
 
       <ConfirmarEliminacion
         open={openEliminar}
@@ -948,7 +970,7 @@ export default function CobroDetalle() {
           <>
             Se dará de baja la factura <span className="font-mono font-semibold">{facturaAEliminar?.numero_factura}</span>
             {facturaAEliminar?.estado_factura === ESTADO_FACTURA_ENVIADA && <> (que ya figura como <strong>Enviada</strong> al cliente)</>}.
-            Se recalculará el estado de facturación del servicio y se eliminará su PDF. Acción auditada y recuperable.
+            Se recalculará el estado de facturación del servicio y se eliminarán su PDF y sus documentos adicionales. Acción auditada y recuperable.
           </>
         }
         onConfirmar={async () => {

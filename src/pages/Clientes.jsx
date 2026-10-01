@@ -12,6 +12,10 @@ import { FileLink } from '../components/common/FilePreview.jsx';
 import { formatFecha, hoyISO, formatTelefono } from '../utils/formatters.js';
 import ClienteForm, { clienteFormInicial, clienteToForm } from '../components/clientes/ClienteForm.jsx';
 import ContratoNuevoModal from '../components/clientes/ContratoNuevoModal.jsx';
+import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
+import ImpactoEliminacionCliente from '../components/clientes/ImpactoEliminacionCliente.jsx';
+import { FILTROS_ESTADO_REGISTRO, FILTRO_ESTADO_ACTIVOS } from '../utils/filtroEstadoRegistro.js';
+import { useClasificaciones } from '../hooks/useClasificaciones.js';
 
 const estadosContrato = (diasAviso) => [
   { value: '', label: 'Todos los contratos' },
@@ -58,6 +62,8 @@ function estadoContratoBadge(inicio, fin, diasAviso) {
 
 const AREAS_CONTRATO_LABEL = { servicio: 'Servicios', proyecto: 'Proyectos' };
 
+const LG_COL_SPAN = { 1: 'lg:col-span-1', 2: 'lg:col-span-2', 3: 'lg:col-span-3', 4: 'lg:col-span-4' };
+
 // Señala de forma discreta por qué entró el cliente en los resultados cuando la
 // coincidencia no fue por sus propios datos sino por un edificio/obra o por un
 // ascensor suyo (el backend los devuelve en `*_coincidentes` al buscar).
@@ -91,8 +97,11 @@ function Coincidencias({ cliente }) {
 }
 
 export default function Clientes() {
-  const [filtros, setFiltros] = useState({ q: '', distrito: '', tipo_ascensor: '', clasificacion: '', estado_contrato: '', con_contrato: '', area_contrato: '' });
-  const [clasificaciones, setClasificaciones] = useState([]);
+  // `estado` (activos / eliminados / todos) solo lo aplica el backend para el
+  // Super Admin; para los demás roles siempre son los activos.
+  const [filtros, setFiltros] = useState({ q: '', distrito: '', tipo_ascensor: '', clasificacion: '', estado_contrato: '', con_contrato: '', area_contrato: '', estado: FILTRO_ESTADO_ACTIVOS });
+  // Catálogo gestionable y compartido: se refresca solo si se edita.
+  const clasificaciones = useClasificaciones();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(clienteFormInicial);
   const [editId, setEditId] = useState(null);
@@ -103,6 +112,9 @@ export default function Clientes() {
   // Cliente al que se le registra un contrato nuevo (renovación).
   const [clienteContrato, setClienteContrato] = useState(null);
   const [cambiandoEdificios, setCambiandoEdificios] = useState(false);
+  // Cliente pendiente de eliminar (doble confirmación) y de reactivar (solo SA).
+  const [aEliminar, setAEliminar] = useState(null);
+  const [aReactivar, setAReactivar] = useState(null);
   const [diasAviso, setDiasAviso] = useState(30);
   const [distritos, setDistritos] = useState([]);
   const [tiposAscensor, setTiposAscensor] = useState([]);
@@ -152,10 +164,7 @@ export default function Clientes() {
   const cargarTiposAscensor = () => {
     clientesService.tiposAscensor().then(setTiposAscensor).catch(() => {});
   };
-  const cargarClasificaciones = () => {
-    clientesService.clasificaciones().then(setClasificaciones).catch(() => setClasificaciones([]));
-  };
-  useEffect(() => { cargarDistritos(); cargarTiposAscensor(); cargarClasificaciones(); }, []);
+  useEffect(() => { cargarDistritos(); cargarTiposAscensor(); }, []);
 
   const cargar = () => { recargar(); cargarDistritos(); cargarTiposAscensor(); };
 
@@ -211,6 +220,33 @@ export default function Clientes() {
       toast.error(err.response?.data?.error || 'No se pudo cambiar el estado de los edificios');
     } finally {
       setCambiandoEdificios(false);
+    }
+  };
+
+  // Eliminación lógica en cascada. La doble confirmación la impone
+  // ConfirmarEliminacion: hay que escribir la palabra clave para habilitarla.
+  const eliminar = async () => {
+    if (!aEliminar) return;
+    try {
+      await clientesService.setEstado(aEliminar.id, 0);
+      toast.success('Cliente eliminado');
+      setAEliminar(null);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo eliminar el cliente');
+    }
+  };
+
+  // Reactivar no es destructivo: basta una confirmación simple.
+  const reactivar = async () => {
+    if (!aReactivar) return;
+    try {
+      await clientesService.setEstado(aReactivar.id, 1);
+      toast.success('Cliente reactivado');
+      setAReactivar(null);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo reactivar el cliente');
     }
   };
 
@@ -284,7 +320,7 @@ export default function Clientes() {
           <select className="select" value={filtros.clasificacion}
             onChange={e => setFiltros(f => ({ ...f, clasificacion: e.target.value }))}>
             <option value="">Todas las clasificaciones</option>
-            {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>)}
+            {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}{c.activo ? '' : ' (desactivada)'}</option>)}
           </select>
           {/* Solo tiene sentido para quien ve las dos áreas: un usuario acotado
               ya recibe únicamente los clientes de la suya. */}
@@ -294,11 +330,18 @@ export default function Clientes() {
               {AREA_CONTRATO.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           )}
-          <select className={`select sm:col-span-2 ${accesoServicios && accesoProyectos ? 'lg:col-span-2' : 'lg:col-span-4'}`}
+          <select className={`select sm:col-span-2 ${LG_COL_SPAN[(accesoServicios && accesoProyectos ? 2 : 4) - (esSuperAdmin ? 1 : 0)]}`}
             value={filtros.con_contrato}
             onChange={e => setFiltros(f => ({ ...f, con_contrato: e.target.value }))}>
             {CON_CONTRATO.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
+          {/* Clientes eliminados: solo el Super Admin los ve (y puede reactivarlos). */}
+          {esSuperAdmin && (
+            <select className="select" value={filtros.estado}
+              onChange={e => setFiltros(f => ({ ...f, estado: e.target.value }))}>
+              {FILTROS_ESTADO_REGISTRO.map(f => <option key={f.codigo} value={f.codigo}>{f.etiqueta}</option>)}
+            </select>
+          )}
         </div>
       </div>
 
@@ -335,6 +378,7 @@ export default function Clientes() {
                         <td className="table-td">
                           <div className="flex items-center gap-2 flex-wrap">
                             <div className="font-medium text-slate-800">{c.nombre}</div>
+                            {c.estado === 0 && <BadgeEliminado />}
                             {c.clasificacion && clasificacionByCodigo[c.clasificacion] && (
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 ${clasificacionByCodigo[c.clasificacion].color}`}>
                                 {clasificacionByCodigo[c.clasificacion].etiqueta}
@@ -387,6 +431,9 @@ export default function Clientes() {
                           {esSuperAdmin && (c._count?.edificios ?? 0) > 0 && (
                             <button onClick={() => setClienteEdificios(c)} className="text-slate-600 hover:underline text-xs">Edificios</button>
                           )}
+                          {esSuperAdmin && (c.estado === 0
+                            ? <button onClick={() => setAReactivar(c)} className="text-emerald-600 hover:underline text-xs">Reactivar</button>
+                            : <button onClick={() => setAEliminar(c)} className="text-rose-600 hover:underline text-xs">Eliminar</button>)}
                         </td>
                       </tr>
                     );
@@ -402,6 +449,7 @@ export default function Clientes() {
                     <div className="h-9 w-9 rounded-full bg-brand-50 text-brand-700 grid place-items-center font-semibold text-sm shrink-0">{c.nombre[0]}</div>
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-slate-800 truncate">{c.nombre}</div>
+                      {c.estado === 0 && <div className="mt-0.5"><BadgeEliminado /></div>}
                       <div className="text-xs text-slate-500">{c.tipo_documento} {c.numero_documento || ''}</div>
                       <div className="text-xs text-slate-500 mt-0.5 font-mono">{telefonoContacto(c)}</div>
                       <Coincidencias cliente={c} />
@@ -420,6 +468,9 @@ export default function Clientes() {
                         {esSuperAdmin && (c._count?.edificios ?? 0) > 0 && (
                           <button onClick={() => setClienteEdificios(c)} className="text-xs text-slate-600">Edificios</button>
                         )}
+                        {esSuperAdmin && (c.estado === 0
+                          ? <button onClick={() => setAReactivar(c)} className="text-xs text-emerald-600">Reactivar</button>
+                          : <button onClick={() => setAEliminar(c)} className="text-xs text-rose-600">Eliminar</button>)}
                       </div>
                     </div>
                   </div>
@@ -444,7 +495,6 @@ export default function Clientes() {
           value={form}
           onChange={setForm}
           onSubmit={guardar}
-          clasificaciones={clasificaciones}
         />
       </Modal>
 
@@ -468,6 +518,36 @@ export default function Clientes() {
           solo el Super Admin seguirá viéndolos. No se elimina nada y puedes reactivarlos cuando quieras.
         </p>
       </Modal>
+
+      <ConfirmarEliminacion
+        open={!!aEliminar}
+        onClose={() => setAEliminar(null)}
+        titulo="Eliminar cliente"
+        palabraClave="ELIMINAR"
+        textoBoton="Eliminar cliente"
+        onConfirmar={eliminar}
+        descripcion={aEliminar && <ImpactoEliminacionCliente cliente={aEliminar} />}
+      />
+
+      <Modal open={!!aReactivar} onClose={() => setAReactivar(null)}
+        title="Reactivar cliente" size="sm"
+        footer={<>
+          <button className="btn-secondary" onClick={() => setAReactivar(null)}>Cancelar</button>
+          <button className="btn-primary" onClick={reactivar}>Reactivar</button>
+        </>}>
+        <p className="text-sm text-slate-600">
+          ¿Reactivar <span className="font-semibold text-slate-800">{aReactivar?.nombre}</span>?
+          Volverá a verse para todos los roles. Sus edificios, ascensores, servicios y cotizaciones
+          eliminados NO se restauran automáticamente: hay que reactivarlos uno a uno.
+        </p>
+      </Modal>
     </>
+  );
+}
+
+/** Pill que marca un cliente eliminado (solo lo ve el Super Admin). */
+function BadgeEliminado() {
+  return (
+    <span className="text-[10px] px-2 py-0.5 rounded-full ring-1 bg-rose-50 text-rose-700 ring-rose-200">Eliminado</span>
   );
 }

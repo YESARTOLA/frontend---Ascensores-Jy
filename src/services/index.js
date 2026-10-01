@@ -26,13 +26,22 @@ export const clientesService = {
   exportar: (params, formato = 'excel') =>
     api.get('/clientes/exportar', { params: { ...params, formato }, responseType: 'blob' }),
   tiposAscensor: () => api.get('/clientes/tipos-ascensor').then(r => r.data?.data ?? r.data),
+  // Catálogo gestionable de clasificaciones (activas e inactivas, con su área).
+  // Para leerlo desde componentes, usar el hook useClasificaciones (cacheado).
   clasificaciones: () => api.get('/clientes/clasificaciones').then(r => r.data?.data ?? r.data),
+  crearClasificacion: (d) => api.post('/clientes/clasificaciones', d).then(r => r.data?.data ?? r.data),
+  actualizarClasificacion: (id, d) => api.put(`/clientes/clasificaciones/${id}`, d).then(r => r.data?.data ?? r.data),
+  setEstadoClasificacion: (id, estado) => api.patch(`/clientes/clasificaciones/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data),
   // Detecta un cliente activo por RUC/DNI (devuelve el cliente o null) para
   // vincularlo en la conversión de leads en vez de crear un duplicado.
   porDocumento: (numero) => api.get(`/clientes/por-documento/${encodeURIComponent(numero)}`).then(r => r.data?.data ?? r.data),
   // Registra un contrato NUEVO en un área: archiva la vigencia anterior en el
   // historial y deja la nueva como vigente (el PDF nuevo reemplaza al anterior).
-  registrarContrato: (id, d) => api.post(`/clientes/${id}/contrato`, d).then(r => r.data?.data ?? r.data)
+  registrarContrato: (id, d) => api.post(`/clientes/${id}/contrato`, d).then(r => r.data?.data ?? r.data),
+  // estado 0 = eliminación lógica en cascada; estado 1 = reactivar (solo Super Admin).
+  setEstado: (id, estado) => api.patch(`/clientes/${id}/estado`, { estado }).then(r => r.data?.data ?? r.data),
+  // Vista previa de lo que arrastra la eliminación (alimenta la doble confirmación).
+  impactoEliminacion: (id) => api.get(`/clientes/${id}/impacto-eliminacion`).then(r => r.data?.data ?? r.data)
 };
 
 // Edificios u obras de un cliente (ubicación física que agrupa ascensores).
@@ -176,7 +185,14 @@ export const facturasService = {
   anular: (id, motivo) =>
     api.patch(`/facturas/${id}/estado`, { estado_factura: ESTADO_FACTURA_ANULADA, motivo })
       .then(r => r.data?.data ?? r.data),
-  remove: (id) => api.delete(`/facturas/${id}`).then(r => r.data)
+  remove: (id) => api.delete(`/facturas/${id}`).then(r => r.data),
+  // Documentos de la factura: el comprobante y los de soporte (constancia de
+  // detracción, de pago, XML/CDR…). Devuelven la respuesta completa:
+  // { data: { comprobante, documentos }, meta: { max } }.
+  listarDocumentos: (id) => api.get(`/facturas/${id}/documentos`).then(r => r.data),
+  agregarDocumentos: (id, documentos) => api.post(`/facturas/${id}/documentos`, { documentos }).then(r => r.data),
+  eliminarDocumento: (id, idDocumento) => api.delete(`/facturas/${id}/documentos/${idDocumento}`).then(r => r.data),
+  adjuntarComprobante: (id, id_archivo) => api.patch(`/facturas/${id}/comprobante`, { id_archivo }).then(r => r.data)
 };
 
 export const emergenciasService = {

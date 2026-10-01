@@ -195,9 +195,9 @@ export default function Leads() {
     });
     setAscForm(ascensorFormInicial);
     if (!catalogosConv) {
-      Promise.all([edificiosService.distritos(), clientesService.clasificaciones(), edificiosService.tipos(), tiposAscensorService.list()])
-        .then(([distritos, clasificaciones, tiposEdificio, tiposAscensor]) =>
-          setCatalogosConv({ distritos, clasificaciones, tiposEdificio, tiposAscensor }))
+      Promise.all([edificiosService.distritos(), edificiosService.tipos(), tiposAscensorService.list()])
+        .then(([distritos, tiposEdificio, tiposAscensor]) =>
+          setCatalogosConv({ distritos, tiposEdificio, tiposAscensor }))
         .catch(() => {});
     }
   };
@@ -817,7 +817,6 @@ export default function Leads() {
             value={clienteForm}
             onChange={setClienteForm}
             onSubmit={crearClienteConv}
-            clasificaciones={catalogosConv?.clasificaciones || []}
           />
         )}
 

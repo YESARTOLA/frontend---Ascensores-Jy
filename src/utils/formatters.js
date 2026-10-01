@@ -183,7 +183,10 @@ export function badgeEstado(estado) {
     e.includes('emisión') || e.includes('emitid') || e === 'aceptado' ||
     e === 'ejecución' || e.includes('atenc')
   ) return 'badge-blue';
-  if (e.includes('pendien') || e.includes('checklist') || e === 'cotizado' || e.includes('reportad')) return 'badge-amber';
+  if (
+    e.includes('pendien') || e.includes('checklist') || e === 'cotizado' || e.includes('reportad') ||
+    e === 'por cobrar'
+  ) return 'badge-amber';
   if (
     e.includes('mora') || e.includes('vencid') || e.includes('cancel') ||
     e.includes('anul') || e.includes('fuera') || e.includes('descart') || e === 'rechazado'

@@ -1,19 +1,35 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+
+// Modales abiertos, del más antiguo al más reciente. Con modales anidados (p. ej.
+// "Gestionar clasificaciones" sobre "Nuevo cliente") Escape cierra solo el de
+// arriba —antes cerraba todos y se perdía lo escrito en el de abajo— y el scroll
+// de la página se libera recién al cerrar el último.
+const pilaModales = [];
 
 // `banner`: contenido fijo bajo la cabecera, FUERA del área que scrollea. Para
 // avisos que no pueden perderse de vista aunque el formulario sea largo.
 export default function Modal({ open, onClose, title, children, footer, banner, size = 'md' }) {
+  // `onClose` suele ser una función nueva en cada render: se lee por ref para
+  // que el registro en la pila dependa solo de `open` y no cambie de lugar.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
-    const handler = (e) => e.key === 'Escape' && onClose();
+    const token = {};
+    pilaModales.push(token);
+    const handler = (e) => {
+      if (e.key === 'Escape' && pilaModales[pilaModales.length - 1] === token) onCloseRef.current?.();
+    };
     document.addEventListener('keydown', handler);
     document.body.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', handler);
-      document.body.style.overflow = '';
+      pilaModales.splice(pilaModales.indexOf(token), 1);
+      if (pilaModales.length === 0) document.body.style.overflow = '';
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   const widths = { sm: 'max-w-md', md: 'max-w-2xl', lg: 'max-w-4xl', xl: 'max-w-6xl' };

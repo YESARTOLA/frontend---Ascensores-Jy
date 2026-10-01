@@ -9,6 +9,7 @@ import Modal from '../common/Modal.jsx';
 import Pagination from '../common/Pagination.jsx';
 import { useToast } from '../common/Toast.jsx';
 import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import { DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../facturas/DocumentosFactura.jsx';
 import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useMonedas } from '../../hooks/useMonedas.js';
 import { formatFecha, formatFechaHora, formatMonto, hoyISO } from '../../utils/formatters.js';
@@ -105,10 +106,11 @@ export default function CuotasNoFacturadas({
   const [version, setVersion] = useState(0);
   // Facturación directa desde la fila: cuota en curso + estado del formulario.
   const [facturarCuota, setFacturarCuota] = useState(null);
-  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null });
+  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null, documentos: [] });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
   const cargaFactura = useCargaArchivos();
+  const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
   // cabecera del export.
   const monedas = useMonedas();
@@ -208,7 +210,8 @@ export default function CuotasNoFacturadas({
       // Sugerencia por el documento del cliente (RUC → Factura, DNI → Boleta).
       tipo_comprobante: tipoComprobanteSugerido(f.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
-      id_archivo: null
+      id_archivo: null,
+      documentos: []
     });
     setFacturarCuota(f);
   };
@@ -239,7 +242,8 @@ export default function CuotasNoFacturadas({
       fecha_emision: factura.fecha_emision,
       monto: Number(cu.monto),
       id_cuota: cu.id,
-      id_archivo: factura.id_archivo
+      id_archivo: factura.id_archivo,
+      documentos: aPayloadDocumentos(factura.documentos)
     };
     if (cu.servicio?.id) payload.id_servicio = cu.servicio.id;
     else if (cu.mantenimiento_plan?.id) payload.id_mantenimiento_plan = cu.mantenimiento_plan.id;
@@ -429,7 +433,7 @@ export default function CuotasNoFacturadas({
         footer={
           <>
             <button className="btn-secondary" onClick={() => setFacturarCuota(null)} disabled={guardandoFactura}>Cancelar</button>
-            <button className="btn-primary" onClick={guardarFactura} disabled={guardandoFactura || cargaFactura.subiendo}>{guardandoFactura ? 'Facturando…' : 'Facturar'}</button>
+            <button className="btn-primary" onClick={guardarFactura} disabled={guardandoFactura || cargaFactura.subiendo || cargaDocsFactura.subiendo}>{guardandoFactura ? 'Facturando…' : 'Facturar'}</button>
           </>
         }
       >
@@ -495,6 +499,11 @@ export default function CuotasNoFacturadas({
               <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
               {factura.id_archivo && !cargaFactura.progreso && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
             </div>
+            <DocumentosAdicionalesBorrador
+              value={factura.documentos}
+              onChange={documentos => setFactura(f => ({ ...f, documentos }))}
+              carga={cargaDocsFactura}
+            />
           </div>
         )}
       </Modal>

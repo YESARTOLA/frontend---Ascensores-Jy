@@ -154,7 +154,7 @@ export default function Cobros() {
     q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
     id_tipo_servicio: '', id_proyecto: '',
     moneda: '', monto_min: '', monto_max: '',
-    fecha_proximo_desde: '', fecha_proximo_hasta: '',
+    aprobacion_desde: '', aprobacion_hasta: '',
     orden: '', direccion: ''
   });
   // Calendario
@@ -245,8 +245,8 @@ export default function Cobros() {
     if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.monto_min) p.push(`Monto desde: ${filtros.monto_min}`);
     if (filtros.monto_max) p.push(`Monto hasta: ${filtros.monto_max}`);
-    if (filtros.fecha_proximo_desde) p.push(`Venc. desde: ${filtros.fecha_proximo_desde}`);
-    if (filtros.fecha_proximo_hasta) p.push(`Venc. hasta: ${filtros.fecha_proximo_hasta}`);
+    if (filtros.aprobacion_desde) p.push(`Cotización aprobada desde: ${filtros.aprobacion_desde}`);
+    if (filtros.aprobacion_hasta) p.push(`Cotización aprobada hasta: ${filtros.aprobacion_hasta}`);
     return p;
   };
 
@@ -280,7 +280,7 @@ export default function Cobros() {
     q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
     id_tipo_servicio: '', id_proyecto: '',
     moneda: '', monto_min: '', monto_max: '',
-    fecha_proximo_desde: '', fecha_proximo_hasta: '',
+    aprobacion_desde: '', aprobacion_hasta: '',
     orden: '', direccion: ''
   });
 
@@ -472,12 +472,15 @@ export default function Cobros() {
               placeholder="Todas las cuentas"
               emptyLabel="Sin cuentas que coincidan"
             />
-            {/* Rango de vencimiento: un único calendario elige inicio y fin. */}
+            {/* Rango por FECHA DE APROBACIÓN de la cotización que originó el
+                cobro (la que registra el módulo de Cotizaciones). Los cobros sin
+                cotización —planes, servicios directos— no tienen esa fecha y no
+                aparecen mientras el rango esté puesto. */}
             <DateRangePicker
-              desde={filtros.fecha_proximo_desde}
-              hasta={filtros.fecha_proximo_hasta}
-              onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, fecha_proximo_desde: desde, fecha_proximo_hasta: hasta }))}
-              placeholder="Vencimiento (rango)"
+              desde={filtros.aprobacion_desde}
+              hasta={filtros.aprobacion_hasta}
+              onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, aprobacion_desde: desde, aprobacion_hasta: hasta }))}
+              placeholder="Aprobación de cotización (rango)"
             />
             {/* Va junto al rango de montos a propósito: la cartera mezcla PEN
                 y USD, y un "monto desde / hasta" sin moneda compara importes de

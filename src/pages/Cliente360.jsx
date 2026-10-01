@@ -14,6 +14,8 @@ import EdificioForm, { edificioFormInicial, edificioToForm } from '../components
 import ImpactoEliminacionEdificio from '../components/edificios/ImpactoEliminacionEdificio.jsx';
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import ContratoNuevoModal from '../components/clientes/ContratoNuevoModal.jsx';
+import { ChipsDocumentosFactura } from '../components/facturas/DocumentosFactura.jsx';
+import { useClasificaciones } from '../hooks/useClasificaciones.js';
 
 const ESTADOS_PENDIENTE = ['Borrador', 'Pendiente', 'Asignado'];
 const ESTADOS_CURSO = ['En curso'];
@@ -23,7 +25,7 @@ export default function Cliente360() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [clasificaciones, setClasificaciones] = useState([]);
+  const clasificaciones = useClasificaciones();
   const [tiposEdificio, setTiposEdificio] = useState([]);
   const [distritos, setDistritos] = useState([]);
   const { puedeVerPrecio, esSuperAdmin, esAdmin, esCoordinador, accesoServicios, accesoProyectos } = useAuth();
@@ -48,7 +50,6 @@ export default function Cliente360() {
   const cargar = () => clientesService.vista360(id).then(setData);
   useEffect(() => {
     cargar().finally(() => setLoading(false));
-    clientesService.clasificaciones().then(setClasificaciones).catch(() => setClasificaciones([]));
     edificiosService.tipos().then(setTiposEdificio).catch(() => setTiposEdificio([]));
     edificiosService.distritos().then(setDistritos).catch(() => setDistritos([]));
   }, [id]);
@@ -402,7 +403,8 @@ export default function Cliente360() {
                       <span>{f.servicio?.codigo} · {formatFecha(f.fecha_emision)}</span>
                       <span className="font-mono">{formatMonto(f.monto)}</span>
                     </div>
-                    {f.archivo && <FileLink archivo={f.archivo}>Ver archivo</FileLink>}
+                    {/* Comprobante y documentos adicionales (detracción, XML/CDR…), con vista previa. */}
+                    <div className="flex flex-wrap gap-1.5 mt-1"><ChipsDocumentosFactura factura={f} /></div>
                   </li>
                 ))}
               </ul>

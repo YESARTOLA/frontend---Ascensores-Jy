@@ -186,7 +186,10 @@ export default function AscensorForm({
         <select className="select" value={value.clasificacion}
           onChange={e => onChange(f => ({ ...f, clasificacion: e.target.value }))}>
           <option value="">— Sin clasificar —</option>
-          {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>)}
+          {/* Solo las activas, más la que ya tenga (aunque se haya desactivado). */}
+          {clasificaciones.filter(c => c.activo || c.codigo === value.clasificacion).map(c => (
+            <option key={c.codigo} value={c.codigo}>{c.etiqueta}{c.activo ? '' : ' (desactivada)'}</option>
+          ))}
         </select>
       </div>
       <div>

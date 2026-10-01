@@ -13,6 +13,7 @@ import OtModal from '../components/common/OtModal.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import { DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { useMonedas } from '../hooks/useMonedas.js';
@@ -25,7 +26,8 @@ import { etiquetaMoneda } from '../utils/excelNumeros.js';
 
 const FILTROS_INICIALES = {
   q: '', tipo_categoria: '', situacion: '', estado_cobro: '', estado_facturacion: '',
-  grupo_facturacion: '', moneda: '', desde: '', hasta: ''
+  grupo_facturacion: '', moneda: '', desde: '', hasta: '',
+  aprobacion_desde: '', aprobacion_hasta: ''
 };
 
 // Los dos grupos que resume Contabilidad. Esta lista es a la vez las TARJETAS
@@ -57,10 +59,10 @@ const GRUPOS_FACTURACION = [
 ];
 
 // Opciones del filtro de situación de pago (espejo de la columna "Situación").
+// No hay "Sin cobro": los gratuitos no se listan en Contabilidad (con_monto).
 const SITUACIONES = [
   { value: 'cancelado', label: 'Cancelado' },
-  { value: 'pendiente', label: 'Pendiente' },
-  { value: 'sin_cobro', label: 'Sin cobro' }
+  { value: 'pendiente', label: 'Pendiente' }
 ];
 
 // Opciones del filtro por tipo de servicio. El value viaja al backend, que lo
@@ -151,10 +153,6 @@ function accionFacturar(r) {
 // precio del servicio (mismo criterio que usa el backend para validar).
 const totalCobrable = (r) => Number(r.servicio?.cobro?.monto_total ?? r.servicio?.precio_interno ?? 0);
 
-// Indica si el servicio realizado es gratuito / sin cobro (presentación de
-// precio y estado de cobro distinta, alineada con la tabla).
-const esGratuito = (r) => r.servicio?.sin_cobro === 1;
-
 // Precio de una visita de plan. El servicio no tiene precio propio (nace con
 // precio_interno = 0: el importe pactado es el monto MENSUAL del plan, que no
 // cambia con cuántas visitas caigan en el mes), así que la columna mostraba
@@ -185,14 +183,33 @@ const fechaComprobante = (r) => {
   return facturas.reduce((max, f) => (f.fecha_emision > max ? f.fecha_emision : max), facturas[0].fecha_emision);
 };
 
+// Mantenimiento (de un plan o del módulo de mantenimiento) con fecha programada.
+// Espejo de WHERE_MANTENIMIENTO_PROGRAMADO en el backend (serviciosController).
+const esMantenimientoProgramado = (r) => {
+  const s = r.servicio;
+  return !!s?.fecha_programada
+    && (!!s.id_mantenimiento_plan || s.tipo_servicio?.modulo_asociado === 'mantenimiento');
+};
+
+// "Fecha servicio": para los mantenimientos es la fecha PROGRAMADA (la visita
+// de agosto es de agosto aunque se haya ejecutado en septiembre); para el resto,
+// la de realización. null = servicio aún sin ejecutar.
+const fechaServicio = (r) => {
+  if (esMantenimientoProgramado(r)) return r.servicio.fecha_programada;
+  return r.estado_administrativo === EN_EJECUCION ? null : r.fecha_realizacion;
+};
+
+// Listado de Contabilidad: el rango de fechas se aplica sobre "Fecha servicio"
+// (programada en mantenimientos), no sobre la fecha de realización. Y solo trae
+// servicios con importe (con_monto): los gratuitos y los de S/ 0.00 no tienen
+// nada que cobrar ni facturar (backend/utils/montoACobrar.js).
+const listarRealizados = (params) => serviciosService.realizadosPaginate({ ...params, rango_fecha: 'servicio', con_monto: 1 });
+
 // Tipo de servicio legible (nombre del subtipo).
 const tipoServicioLabel = (r) => r.servicio?.tipo_servicio?.nombre || '—';
 
-// Situación de pago: Sin cobro (gratuito) | Cancelado (pagado) | Pendiente.
-const situacionPago = (r) => {
-  if (esGratuito(r)) return 'Sin cobro';
-  return COBRO_CANCELADO.includes(r.estado_cobro) ? 'Cancelado' : 'Pendiente';
-};
+// Situación de pago: Cancelado (pagado) | Pendiente.
+const situacionPago = (r) => (COBRO_CANCELADO.includes(r.estado_cobro) ? 'Cancelado' : 'Pendiente');
 
 // Moneda del servicio (por defecto soles, como el resto del módulo).
 const monedaDe = (r) => r.servicio?.moneda || 'PEN';
@@ -201,7 +218,7 @@ const monedaDe = (r) => r.servicio?.moneda || 'PEN';
 // Los importes llevan `num`: en Excel son celdas numéricas sumables, y la
 // columna "Moneda" permite filtrar/segmentar soles y dólares por separado.
 const COLUMNAS_EXPORT = [
-  { header: 'Fecha servicio', get: r => (r.estado_administrativo === EN_EJECUCION ? '' : formatFecha(r.fecha_realizacion)) },
+  { header: 'Fecha servicio', get: r => { const f = fechaServicio(r); return f ? formatFecha(f) : ''; } },
   { header: 'Fecha comprobante', get: r => { const f = fechaComprobante(r); return f ? formatFecha(f) : ''; } },
   { header: 'Código', get: r => r.servicio?.codigo },
   { header: 'DNI / RUC', get: r => (docCliente(r) === '—' ? '' : docCliente(r)) },
@@ -210,20 +227,19 @@ const COLUMNAS_EXPORT = [
   { header: 'Ascensor', get: r => resumenAscensores(r.servicio) },
   { header: 'Tipo de servicio', get: r => tipoServicioLabel(r) },
   { header: 'Etapa', badge: true, get: r => r.estado_administrativo || '' },
-  { header: 'Moneda', get: r => (esGratuito(r) ? '' : etiquetaMoneda(monedaDe(r))) },
+  { header: 'Moneda', get: r => etiquetaMoneda(monedaDe(r)) },
   {
     header: 'Total',
     align: 'right',
     get: r => {
-      if (esGratuito(r)) return 'Sin costo';
       const plan = precioMensualDelPlan(r);
       if (plan) return `${formatMonto(plan.monto, plan.moneda)} al mes (plan)`;
       return formatMonto(r.servicio?.precio_interno, monedaDe(r));
     },
     // El monto del plan no entra como número: se repite en cada visita del mes.
-    num: r => (esGratuito(r) || precioMensualDelPlan(r) ? null : Number(r.servicio?.precio_interno))
+    num: r => (precioMensualDelPlan(r) ? null : Number(r.servicio?.precio_interno))
   },
-  { header: 'Estado cobro', badge: true, get: r => (esGratuito(r) ? 'Sin cobro' : r.estado_cobro) },
+  { header: 'Estado cobro', badge: true, get: r => r.estado_cobro },
   { header: 'Estado factura', badge: true, get: r => r.estado_facturacion },
   { header: 'Situación', badge: true, get: r => situacionPago(r) }
 ];
@@ -249,11 +265,12 @@ export default function Contabilidad() {
   const [facturando, setFacturando] = useState(null); // fila en el modal | null
   const [factura, setFactura] = useState({
     numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo,
-    fecha_emision: hoyISO(), monto: '', id_archivo: null
+    fecha_emision: hoyISO(), monto: '', id_archivo: null, documentos: []
   });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
   const cargaFactura = useCargaArchivos();
+  const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
   // cabecera del export.
   const monedas = useMonedas();
@@ -262,7 +279,7 @@ export default function Contabilidad() {
   const puedeFacturar = esSuperAdmin || esAdmin || esContabilidad;
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar, meta } =
-    usePaginatedList(serviciosService.realizadosPaginate, filtros, { initialPageSize: 25 });
+    usePaginatedList(listarRealizados, filtros, { initialPageSize: 25 });
   // Resumen de facturación del conjunto filtrado completo (no solo de la página
   // visible). Lo calcula el backend con el mismo `where` que la tabla y solo lo
   // envía a los roles con visibilidad financiera.
@@ -312,8 +329,10 @@ export default function Contabilidad() {
     if (filtros.estado_facturacion) p.push(`Estado factura: ${filtros.estado_facturacion}`);
     if (filtros.grupo_facturacion) p.push(`Facturación: ${GRUPOS_FACTURACION.find(g => g.value === filtros.grupo_facturacion)?.titulo || filtros.grupo_facturacion}`);
     if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
-    if (filtros.desde) p.push(`Realización desde: ${filtros.desde}`);
-    if (filtros.hasta) p.push(`Realización hasta: ${filtros.hasta}`);
+    if (filtros.desde) p.push(`Fecha servicio desde: ${filtros.desde}`);
+    if (filtros.hasta) p.push(`Fecha servicio hasta: ${filtros.hasta}`);
+    if (filtros.aprobacion_desde) p.push(`Cotización aprobada desde: ${filtros.aprobacion_desde}`);
+    if (filtros.aprobacion_hasta) p.push(`Cotización aprobada hasta: ${filtros.aprobacion_hasta}`);
     return p;
   };
 
@@ -321,7 +340,7 @@ export default function Contabilidad() {
   const exportar = async (formato) => {
     try {
       setExportando(true);
-      const resp = await serviciosService.realizadosPaginate({ ...filtros });
+      const resp = await listarRealizados({ ...filtros });
       const filas = Array.isArray(resp) ? resp : (resp?.data || []);
       if (!filas.length) { toast.error('No hay datos para exportar'); return; }
       const opts = {
@@ -352,7 +371,8 @@ export default function Contabilidad() {
       tipo_comprobante: tipoComprobanteSugerido(r.servicio?.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
       monto: totalCobrable(r).toFixed(2),
-      id_archivo: null
+      id_archivo: null,
+      documentos: []
     });
     setFacturando(r);
   };
@@ -393,7 +413,8 @@ export default function Contabilidad() {
         tipo_comprobante: factura.tipo_comprobante,
         fecha_emision: factura.fecha_emision,
         monto,
-        id_archivo: factura.id_archivo
+        id_archivo: factura.id_archivo,
+        documentos: aPayloadDocumentos(factura.documentos)
       });
       toast.success(`Factura ${factura.numero_factura.trim()} emitida`);
       setFacturando(null);
@@ -509,7 +530,17 @@ export default function Contabilidad() {
             desde={filtros.desde}
             hasta={filtros.hasta}
             onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, desde, hasta }))}
-            placeholder="Rango de realización"
+            placeholder="Rango de fecha de servicio"
+          />
+          {/* Rango por FECHA DE APROBACIÓN de la cotización del servicio (la que
+              registra el módulo de Cotizaciones); se combina con el de fecha de
+              servicio. Los servicios sin cotización —visitas de plan, directos—
+              no tienen esa fecha y no aparecen mientras el rango esté puesto. */}
+          <DateRangePicker
+            desde={filtros.aprobacion_desde}
+            hasta={filtros.aprobacion_hasta}
+            onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, aprobacion_desde: desde, aprobacion_hasta: hasta }))}
+            placeholder="Aprobación de cotización (rango)"
           />
           <button onClick={() => setFiltros(FILTROS_INICIALES)} className="btn-secondary lg:col-span-6">Limpiar filtros</button>
         </div>
@@ -543,31 +574,22 @@ export default function Contabilidad() {
                     const ot = { numero: r.servicio?.numero_ot, archivo: r.servicio?.archivo_ot };
                     const tieneOt = !!(ot.numero || ot.archivo);
                     const enEjecucion = r.estado_administrativo === EN_EJECUCION;
-                    // Servicios gratuitos / con cobertura: no se les crea cobro, así que
-                    // el precio interno (referencial) y el estado_cobro almacenado pueden
-                    // quedar "Pendiente de iniciar" por datos legacy. Sobreescribimos la
-                    // presentación para que contabilidad los identifique al instante.
-                    const gratuito = esGratuito(r);
-                    const esMantenimientoGratuito = r.servicio?.es_mantenimiento_gratuito === 1;
                     return (
                       <tr key={r.id ?? `row-${idx}`} className="table-row-hover">
-                        <td className="table-td text-xs">
-                          {enEjecucion
-                            ? <span className="text-slate-400 italic">— (sin ejecutar)</span>
-                            : formatFecha(r.fecha_realizacion)}
+                        <td className="table-td text-xs"
+                            title={esMantenimientoProgramado(r) && !enEjecucion
+                              ? `Fecha programada · realizado el ${formatFecha(r.fecha_realizacion)}`
+                              : undefined}>
+                          {(() => {
+                            const f = fechaServicio(r);
+                            return f ? formatFecha(f) : <span className="text-slate-400 italic">— (sin ejecutar)</span>;
+                          })()}
                         </td>
                         <td className="table-td text-xs">
                           {(() => { const f = fechaComprobante(r); return f ? formatFecha(f) : <span className="text-slate-400">—</span>; })()}
                         </td>
                         <td className="table-td">
                           <Link to={`/servicios/${r.id_servicio}`} className="font-mono text-xs text-brand-700">{r.servicio?.codigo}</Link>
-                          {gratuito && (
-                            <div className="mt-0.5">
-                              <span className="badge-green text-[10px]">
-                                {esMantenimientoGratuito ? 'Mant. gratuito' : 'Sin cobro'}
-                              </span>
-                            </div>
-                          )}
                         </td>
                         <td className="table-td text-xs font-mono whitespace-nowrap">{docCliente(r)}</td>
                         <td className="table-td text-xs">{r.servicio?.cliente?.nombre || '—'}</td>
@@ -594,29 +616,25 @@ export default function Contabilidad() {
                           )}
                         </td>
                         <td className="table-td text-right font-mono">
-                          {gratuito
-                            ? <span className="text-emerald-700">Sin costo</span>
-                            : (() => {
-                                // Visita de plan: el importe es el mensual del plan,
-                                // no un total propio de esta fila.
-                                const plan = precioMensualDelPlan(r);
-                                if (!plan) return formatMonto(r.servicio?.precio_interno, r.servicio?.moneda);
-                                return (
-                                  <span title="Importe mensual del plan: cubre todas las visitas del mes y se factura una sola vez">
-                                    {formatMonto(plan.monto, plan.moneda)}
-                                    <span className="block text-[10px] text-slate-400 font-sans">al mes · plan</span>
-                                  </span>
-                                );
-                              })()}
+                          {(() => {
+                            // Visita de plan: el importe es el mensual del plan,
+                            // no un total propio de esta fila.
+                            const plan = precioMensualDelPlan(r);
+                            if (!plan) return formatMonto(r.servicio?.precio_interno, r.servicio?.moneda);
+                            return (
+                              <span title="Importe mensual del plan: cubre todas las visitas del mes y se factura una sola vez">
+                                {formatMonto(plan.monto, plan.moneda)}
+                                <span className="block text-[10px] text-slate-400 font-sans">al mes · plan</span>
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="table-td">
-                          {gratuito
-                            ? <span className={badgeEstado('Sin cobro')}>Sin cobro</span>
-                            : <span className={badgeEstado(r.estado_cobro)}>{r.estado_cobro}</span>}
+                          <span className={badgeEstado(r.estado_cobro)}>{r.estado_cobro}</span>
                         </td>
                         <td className="table-td"><span className={badgeEstado(r.estado_facturacion)}>{r.estado_facturacion}</span></td>
                         <td className="table-td">
-                          {(() => { const sit = situacionPago(r); return <span className={badgeEstado(sit === 'Cancelado' ? 'Pagado' : sit === 'Pendiente' ? 'Pendiente de iniciar' : 'Sin cobro')}>{sit}</span>; })()}
+                          {(() => { const sit = situacionPago(r); return <span className={badgeEstado(sit === 'Cancelado' ? 'Pagado' : 'Pendiente de iniciar')}>{sit}</span>; })()}
                         </td>
                         <td className="table-td text-right space-x-3 whitespace-nowrap">
                           {puedeFacturar && (() => {
@@ -670,7 +688,7 @@ export default function Contabilidad() {
       <Modal open={!!facturando} onClose={cerrarFacturar} title="Emitir comprobante" size="sm"
         footer={<>
           <button type="button" className="btn-secondary" onClick={cerrarFacturar} disabled={guardandoFactura}>Cancelar</button>
-          <button type="button" className="btn-primary" onClick={emitirFactura} disabled={guardandoFactura || cargaFactura.subiendo}>
+          <button type="button" className="btn-primary" onClick={emitirFactura} disabled={guardandoFactura || cargaFactura.subiendo || cargaDocsFactura.subiendo}>
             {guardandoFactura ? 'Emitiendo…' : 'Emitir comprobante'}
           </button>
         </>}>
@@ -724,6 +742,11 @@ export default function Contabilidad() {
               <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
               {factura.id_archivo && !cargaFactura.progreso && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
             </div>
+            <DocumentosAdicionalesBorrador
+              value={factura.documentos}
+              onChange={documentos => setFactura(f => ({ ...f, documentos }))}
+              carga={cargaDocsFactura}
+            />
           </div>
         )}
       </Modal>

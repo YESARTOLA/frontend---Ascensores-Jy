@@ -11,6 +11,7 @@ import { generarFichaAscensorPDF } from '../utils/pdfReport.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import AscensorForm, { ascensorToForm } from '../components/ascensores/AscensorForm.jsx';
 import FichaTecnicaAscensor from '../components/ascensores/FichaTecnicaAscensor.jsx';
+import { ChipsDocumentosFactura } from '../components/facturas/DocumentosFactura.jsx';
 
 export default function AscensorHistorial() {
   const { id } = useParams();
@@ -185,7 +186,8 @@ export default function AscensorHistorial() {
                   <span>{f.servicio?.codigo} · {formatFecha(f.fecha_emision)}</span>
                   <span className="font-mono">{formatMonto(f.monto)}</span>
                 </div>
-                {f.archivo && <FileLink archivo={f.archivo}>Ver</FileLink>}
+                {/* Comprobante y documentos adicionales (detracción, XML/CDR…), con vista previa. */}
+                <div className="flex flex-wrap gap-1.5 mt-1"><ChipsDocumentosFactura factura={f} /></div>
               </li>
             ))}
           </ul>

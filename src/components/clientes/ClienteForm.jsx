@@ -1,12 +1,19 @@
+import { useState } from 'react';
 import { useToast } from '../common/Toast.jsx';
+import Modal from '../common/Modal.jsx';
 import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
 import useCargaArchivos from '../../hooks/useCargaArchivos.js';
+import { useClasificaciones } from '../../hooks/useClasificaciones.js';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
+import ClasificacionesPanel from './ClasificacionesPanel.jsx';
 import { sanearTelefono, formatTelefono } from '../../utils/formatters.js';
+import { aplicaAAreas } from '../../utils/clasificacionesCliente.js';
 
 // Campo del form (estado) para cada área de adjuntos.
 const campoArea = (area) => area === 'proyecto' ? 'archivos_proyecto' : 'archivos_servicio';
+
+const ETIQUETA_AREA = { servicio: 'Servicios', proyecto: 'Proyectos' };
 
 /**
  * Formulario completo de cliente (alta/edición), reutilizable desde cualquier
@@ -19,7 +26,12 @@ const campoArea = (area) => area === 'proyecto' ? 'archivos_proyecto' : 'archivo
  *   value           — estado del formulario (usar clienteFormInicial como base)
  *   onChange        — setter del estado (estilo setForm)
  *   onSubmit        — callback con el payload ya construido y validado
- *   clasificaciones — catálogo de clasificaciones ({ codigo, etiqueta })
+ *
+ * Orden de llenado: primero el ÁREA del cliente (Servicios, Proyectos o ambas) y
+ * luego la CLASIFICACIÓN, que se ofrece filtrada por esa área: hay
+ * clasificaciones solo de Servicios y otras solo de Proyectos. El catálogo de
+ * clasificaciones es gestionable (useClasificaciones) y super_admin/admin lo
+ * editan desde aquí mismo ("Gestionar").
  *
  * Los precios de servicio ya no se gestionan aquí: se configuran por ascensor
  * (ver AscensorForm), porque el mismo servicio puede costar distinto por ascensor.
@@ -34,9 +46,10 @@ export const clienteFormInicial = {
   contacto_cobranzas_nombre: '', contacto_cobranzas_correo: '', contacto_cobranzas_telefono: '',
   contacto_admin_nombre: '', contacto_admin_correo: '', contacto_admin_telefono: '',
   clasificacion: '',
-  // Áreas cuyos datos de contrato/documentación se registran (UI, no se envía tal
-  // cual): Servicios, Proyectos o ambas. Evita cargar el formulario sin motivo.
-  areasSeleccionadas: ['servicio'],
+  // Área(s) del cliente (UI, no se envía tal cual): Servicios, Proyectos o ambas.
+  // Es lo PRIMERO que se elige: decide qué contrato y documentación se piden y
+  // qué clasificaciones se ofrecen. Arranca vacía para que se elija a conciencia.
+  areasSeleccionadas: [],
   // Contrato de servicio POR ÁREA (fechas + documento firmado). Debe llenarse al
   // menos un área (Servicios o Proyectos); se pueden llenar ambas.
   contrato_servicio_inicio: '', contrato_servicio_fin: '',
@@ -82,12 +95,12 @@ export function clienteToForm(c, archivos = []) {
   };
 }
 
-export default function ClienteForm({
-  formId, value, onChange, onSubmit,
-  clasificaciones = []
-}) {
+export default function ClienteForm({ formId, value, onChange, onSubmit }) {
   const toast = useToast();
-  const { accesoServicios, accesoProyectos } = useAuth();
+  const { accesoServicios, accesoProyectos, esSuperAdmin, esAdmin } = useAuth();
+  const clasificaciones = useClasificaciones();
+  const puedeGestionarClasificaciones = esSuperAdmin || esAdmin;
+  const [gestionandoClasificaciones, setGestionandoClasificaciones] = useState(false);
   // Una carga por área y por tipo de adjunto: cada una lleva su propia barra de
   // progreso, así subir el contrato de Servicio no pisa la de Proyecto.
   const cargasContrato = { servicio: useCargaArchivos(), proyecto: useCargaArchivos() };
@@ -104,13 +117,30 @@ export default function ClienteForm({
   const puedeArea = (area) => area === 'servicio' ? accesoServicios : accesoProyectos;
   // Áreas que el usuario puede gestionar (por ámbito).
   const areasDisponibles = ['servicio', 'proyecto'].filter(puedeArea);
-  // Áreas activas = intersección de lo elegido con lo disponible; si queda vacío,
-  // se muestran todas las disponibles (evita ocultar todo por un estado inválido).
+  // Áreas activas = intersección de lo elegido con lo disponible. Si el usuario
+  // solo gestiona un área, esa es la del cliente sin tener que elegirla; si
+  // gestiona ambas y aún no eligió, no hay área activa y el resto espera.
   const elegidas = areasDisponibles.filter(a => (value.areasSeleccionadas || []).includes(a));
-  const areasActivas = elegidas.length ? elegidas : areasDisponibles;
-  // Modo del selector de 3 botones.
-  const modo = areasActivas.length >= 2 ? 'ambos' : areasActivas[0];
-  const setModo = (m) => onChange(f => ({ ...f, areasSeleccionadas: m === 'ambos' ? ['servicio', 'proyecto'] : [m] }));
+  const areasActivas = elegidas.length ? elegidas : (areasDisponibles.length === 1 ? areasDisponibles : []);
+  const hayArea = areasActivas.length > 0;
+  // Modo del selector de 3 botones (null = sin elegir).
+  const modo = areasActivas.length >= 2 ? 'ambos' : (areasActivas[0] || null);
+  const setModo = (m) => onChange(f => {
+    const areas = m === 'ambos' ? ['servicio', 'proyecto'] : [m];
+    // La clasificación elegida puede no aplicar a la nueva área: se limpia.
+    const actual = clasificaciones.find(c => c.codigo === f.clasificacion);
+    const sigueValida = !f.clasificacion || (actual && aplicaAAreas(actual, areas));
+    return { ...f, areasSeleccionadas: areas, ...(sigueValida ? {} : { clasificacion: '' }) };
+  });
+
+  // Clasificaciones que se ofrecen: activas y de las áreas del cliente. La que
+  // ya tiene (al editar) se mantiene visible aunque hoy no cumpla, para no
+  // reclasificarlo sin querer; el backend tampoco la revalida si no cambia.
+  const clasificacionActual = clasificaciones.find(c => c.codigo === value.clasificacion);
+  const opcionesClasificacion = clasificaciones.filter(c =>
+    (c.activo && aplicaAAreas(c, areasActivas)) || c.codigo === value.clasificacion);
+  const notaClasificacion = (c) => (!c.activo ? ' (desactivada)'
+    : !aplicaAAreas(c, areasActivas) ? ' (no aplica a esta área)' : '');
 
   const subirContrato = (area) => async (e) => {
     const file = e.target.files?.[0];
@@ -166,6 +196,10 @@ export default function ClienteForm({
 
   const enviar = (e) => {
     e.preventDefault();
+    if (!hayArea) {
+      toast.error('Primero elige el área del cliente: Servicios, Proyectos o ambas.');
+      return;
+    }
     // Validación de "al menos un área con contrato completo" (inicio + fin), solo
     // sobre las áreas ACTIVAS (elegidas y disponibles). El backend revalida.
     const completa = (area) => areasActivas.includes(area) && value[`contrato_${area}_inicio`] && value[`contrato_${area}_fin`];
@@ -269,7 +303,59 @@ export default function ClienteForm({
   };
 
   return (
+    <>
     <form id={formId} onSubmit={enviar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* 1) Área y 2) clasificación, ANTES que el resto: el área decide qué
+          contrato y documentación se piden y qué clasificaciones aplican. */}
+      <div className="sm:col-span-2 rounded-lg ring-1 ring-slate-200 bg-slate-50/60 p-4 space-y-4">
+        <div>
+          <label className="label">1. ¿Para qué área es este cliente? *</label>
+          {areasDisponibles.length > 1 ? (
+            <div className="inline-flex rounded-lg ring-1 ring-slate-300 overflow-hidden">
+              {[{ v: 'servicio', t: 'Área de Servicios' }, { v: 'proyecto', t: 'Área de Proyectos' }, { v: 'ambos', t: 'Ambas' }].map((o, i) => (
+                <button key={o.v} type="button" onClick={() => setModo(o.v)} aria-pressed={modo === o.v}
+                  className={`px-4 py-1.5 text-sm ${i > 0 ? 'border-l border-slate-300' : ''} ${modo === o.v ? 'bg-brand-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}>
+                  {o.t}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm font-medium text-slate-800">
+              {hayArea ? `Área de ${ETIQUETA_AREA[areasActivas[0]]}` : 'No tienes áreas asignadas para registrar clientes.'}
+            </div>
+          )}
+          <p className="text-[11px] text-slate-500 mt-1">
+            Define qué contrato y documentación se registrarán y qué clasificaciones puede tener. Debes registrar el contrato (inicio y fin) de al menos un área.
+          </p>
+        </div>
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <label className="label !mb-0">2. Clasificación</label>
+            {puedeGestionarClasificaciones && (
+              <button type="button" onClick={() => setGestionandoClasificaciones(true)}
+                className="text-xs text-brand-700 hover:underline">
+                Gestionar clasificaciones
+              </button>
+            )}
+          </div>
+          <select className="select" value={value.clasificacion} disabled={!hayArea}
+            onChange={e => onChange(f => ({ ...f, clasificacion: e.target.value }))}>
+            <option value="">{hayArea ? '— Sin clasificar —' : 'Primero elige el área'}</option>
+            {opcionesClasificacion.map(c => (
+              <option key={c.codigo} value={c.codigo}>{c.etiqueta}{notaClasificacion(c)}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-slate-500 mt-1">
+            {!hayArea
+              ? 'Las clasificaciones dependen del área: hay unas solo de Servicios y otras solo de Proyectos.'
+              : `Se muestran las clasificaciones de ${areasActivas.length > 1 ? 'Servicios y de Proyectos' : ETIQUETA_AREA[areasActivas[0]]}. Etiqueta informativa para reportes y filtros; no afecta el flujo.`}
+            {clasificacionActual && hayArea && !aplicaAAreas(clasificacionActual, areasActivas) && (
+              <span className="block text-amber-700">La clasificación actual no corresponde a esta área; elige otra si la vas a cambiar.</span>
+            )}
+          </p>
+        </div>
+      </div>
+
       <div className="sm:col-span-2">
         <label className="label">Razón social / Nombre *</label>
         <input className="input" required value={value.nombre} onChange={e => onChange(f => ({ ...f, nombre: e.target.value }))} />
@@ -283,15 +369,6 @@ export default function ClienteForm({
       <div>
         <label className="label">Número de documento</label>
         <input className="input" value={value.numero_documento} onChange={e => onChange(f => ({ ...f, numero_documento: e.target.value }))} />
-      </div>
-      <div className="sm:col-span-2">
-        <label className="label">Clasificación</label>
-        <select className="select" value={value.clasificacion}
-          onChange={e => onChange(f => ({ ...f, clasificacion: e.target.value }))}>
-          <option value="">— Sin clasificar —</option>
-          {clasificaciones.map(c => <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>)}
-        </select>
-        <p className="text-[11px] text-slate-500 mt-1">Etiqueta informativa para reportes y filtros. No afecta el flujo.</p>
       </div>
       <p className="sm:col-span-2 text-[11px] text-slate-500 -mt-1">La ubicación (edificios u obras con su mapa) se registra después, desde la ficha del cliente.</p>
       <div className="sm:col-span-2 grid grid-cols-1 gap-3">
@@ -319,26 +396,29 @@ export default function ClienteForm({
           );
         })}
       </div>
-      {areasDisponibles.length > 1 && (
-        <div className="sm:col-span-2">
-          <label className="label">¿Qué datos de contrato y documentación se registrarán?</label>
-          <div className="inline-flex rounded-lg ring-1 ring-slate-300 overflow-hidden">
-            {[{ v: 'servicio', t: 'Área de Servicios' }, { v: 'proyecto', t: 'Área de Proyectos' }, { v: 'ambos', t: 'Ambas' }].map((o, i) => (
-              <button key={o.v} type="button" onClick={() => setModo(o.v)}
-                className={`px-4 py-1.5 text-sm ${i > 0 ? 'border-l border-slate-300' : ''} ${modo === o.v ? 'bg-brand-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}>
-                {o.t}
-              </button>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1">Selecciona el área con la que este cliente trabajará (o ambas). Solo se pedirán los datos del área elegida. Debes registrar el contrato (inicio y fin) de al menos un área.</p>
-        </div>
+      {!hayArea && (
+        <p className="sm:col-span-2 text-xs text-slate-500 rounded-lg border border-dashed border-slate-300 px-3 py-2">
+          El contrato y la documentación se piden después de elegir el área (paso 1).
+        </p>
       )}
-      {areasActivas.includes('servicio') && seccionArea('servicio', 'Área de Servicios')}
-      {areasActivas.includes('proyecto') && seccionArea('proyecto', 'Área de Proyectos')}
+      {areasActivas.includes('servicio') && seccionArea('servicio', 'Contrato y documentación · Área de Servicios')}
+      {areasActivas.includes('proyecto') && seccionArea('proyecto', 'Contrato y documentación · Área de Proyectos')}
       <div className="sm:col-span-2">
         <label className="label">Observaciones</label>
         <textarea className="textarea" rows="3" value={value.observaciones} onChange={e => onChange(f => ({ ...f, observaciones: e.target.value }))} />
       </div>
     </form>
+
+    {/* Fuera del <form> del cliente: el panel tiene su propio formulario. */}
+    <Modal
+      open={gestionandoClasificaciones}
+      onClose={() => setGestionandoClasificaciones(false)}
+      title="Clasificaciones de cliente"
+      size="lg"
+      footer={<button type="button" className="btn-secondary" onClick={() => setGestionandoClasificaciones(false)}>Volver al cliente</button>}
+    >
+      <ClasificacionesPanel />
+    </Modal>
+    </>
   );
 }
