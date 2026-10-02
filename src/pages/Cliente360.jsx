@@ -16,9 +16,11 @@ import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx'
 import ContratoNuevoModal from '../components/clientes/ContratoNuevoModal.jsx';
 import { ChipsDocumentosFactura } from '../components/facturas/DocumentosFactura.jsx';
 import { useClasificaciones } from '../hooks/useClasificaciones.js';
+import { AREAS_CLIENTE, ETIQUETA_AREA, areasPorContrato } from '../utils/areasCliente.js';
 
-const ESTADOS_PENDIENTE = ['Borrador', 'Pendiente', 'Asignado'];
-const ESTADOS_CURSO = ['En curso'];
+// Pendientes y en curso comparten una sola tabla: la columna Estado distingue
+// cada uno. Se listan del más avanzado al menos avanzado.
+const ORDEN_EN_GESTION = ['En curso', 'Asignado', 'Pendiente', 'Borrador'];
 const ESTADOS_FIN = ['Finalizado', 'En revisión administrativa', 'A gestión de cobro', 'En cobro', 'Cobrado parcial', 'Cobrado total', 'Facturado', 'Cerrado'];
 
 export default function Cliente360() {
@@ -91,10 +93,11 @@ export default function Cliente360() {
   };
 
   const grupos = useMemo(() => {
-    if (!data?.servicios) return { pendientes: [], curso: [], finalizados: [] };
+    if (!data?.servicios) return { enGestion: [], finalizados: [] };
+    const rango = s => ORDEN_EN_GESTION.indexOf(s.estado_servicio);
     return {
-      pendientes: data.servicios.filter(s => ESTADOS_PENDIENTE.includes(s.estado_servicio)),
-      curso: data.servicios.filter(s => ESTADOS_CURSO.includes(s.estado_servicio)),
+      // sort es estable: dentro de un mismo estado se conserva el orden del backend.
+      enGestion: data.servicios.filter(s => rango(s) !== -1).sort((a, b) => rango(a) - rango(b)),
       finalizados: data.servicios.filter(s => ESTADOS_FIN.includes(s.estado_servicio))
     };
   }, [data]);
@@ -130,13 +133,11 @@ export default function Cliente360() {
           <div className="card-header"><h3 className="card-title">Datos generales</h3></div>
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
             <Info label="Razón social" value={data.nombre || '—'} cols={2} />
-            <Info label="Teléfono" value={formatTelefono(data.telefono) || '—'} />
-            <Info label="WhatsApp" value={formatTelefono(data.whatsapp) || '—'} />
-            <Info label="Correo" value={data.correo || '—'} cols={2} />
-            {['servicio', 'proyecto']
+            {/* El contrato del área del cliente (es de una sola), si el usuario la ve. */}
+            {(areasPorContrato(data).length ? areasPorContrato(data) : AREAS_CLIENTE)
               .filter(area => area === 'servicio' ? accesoServicios : accesoProyectos)
               .map(area => {
-                const etiqueta = area === 'servicio' ? 'Servicios' : 'Proyectos';
+                const etiqueta = ETIQUETA_AREA[area];
                 const arch = data[`archivo_contrato_${area}`];
                 // Contratos ya reemplazados del área (el documento no se historiza:
                 // el PDF vigente es el único que se conserva).
@@ -276,8 +277,7 @@ export default function Cliente360() {
           </div>
         </div>
 
-        <SeccionServicios titulo="Servicios pendientes" data={grupos.pendientes} accent="amber" puedeVerPrecio={puedeVerPrecio} clienteId={id} clienteNombre={data.nombre} mostrarDesglose={mostrarDesglose} />
-        <SeccionServicios titulo="En curso" data={grupos.curso} accent="violet" puedeVerPrecio={puedeVerPrecio} clienteId={id} clienteNombre={data.nombre} mostrarDesglose={mostrarDesglose} />
+        <SeccionServicios titulo="Servicios pendientes y en curso" data={grupos.enGestion} accent="amber" puedeVerPrecio={puedeVerPrecio} clienteId={id} clienteNombre={data.nombre} mostrarDesglose={mostrarDesglose} />
         <SeccionServicios titulo="Finalizados" data={grupos.finalizados} accent="green" puedeVerPrecio={puedeVerPrecio} clienteId={id} clienteNombre={data.nombre} mostrarDesglose={mostrarDesglose} />
 
         {puedeVerPrecio && (
@@ -504,7 +504,7 @@ export default function Cliente360() {
 }
 
 function SeccionServicios({ titulo, data, accent, puedeVerPrecio, clienteId, clienteNombre, mostrarDesglose }) {
-  const colors = { amber: 'border-amber-300', violet: 'border-violet-300', green: 'border-emerald-300' };
+  const colors = { amber: 'border-amber-300', green: 'border-emerald-300' };
   const nProyectos = data.filter(s => s.tipo_registro === 'proyecto').length;
   const nServicios = data.length - nProyectos;
   return (

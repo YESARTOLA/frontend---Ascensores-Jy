@@ -7,10 +7,17 @@ import { FileLink } from '../common/FilePreview.jsx';
 import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
 import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { formatFecha } from '../../utils/formatters.js';
-
-const ETIQUETA_AREA = { servicio: 'Servicios', proyecto: 'Proyectos' };
+import { AREAS_CLIENTE, ETIQUETA_AREA, areasPorContrato } from '../../utils/areasCliente.js';
 
 const soloFecha = (v) => (v ? String(v).substring(0, 10) : '');
+
+// Un cliente es de una sola área: el contrato nuevo se registra en la suya (y
+// solo si el usuario la gestiona). Sin contrato registrado, en cualquiera de
+// las del usuario.
+function areasRenovables(cliente, areasDisponibles) {
+  const delCliente = areasPorContrato(cliente);
+  return delCliente.length ? areasDisponibles.filter(a => delCliente.includes(a)) : areasDisponibles;
+}
 
 /**
  * Registrar un CONTRATO NUEVO para un área del cliente (renovación).
@@ -30,7 +37,7 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
   const toast = useToast();
   const { accesoServicios, accesoProyectos } = useAuth();
   const areasDisponibles = useMemo(
-    () => ['servicio', 'proyecto'].filter(a => (a === 'servicio' ? accesoServicios : accesoProyectos)),
+    () => AREAS_CLIENTE.filter(a => (a === 'servicio' ? accesoServicios : accesoProyectos)),
     [accesoServicios, accesoProyectos]
   );
 
@@ -43,12 +50,10 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
   const subiendo = carga.subiendo;
   const [guardando, setGuardando] = useState(false);
 
-  // Al abrir: campos en blanco y área preseleccionada = la que ya tiene contrato
-  // registrado (la que se renueva en la práctica), si el usuario la puede ver.
+  // Al abrir: campos en blanco y área = la del cliente.
   useEffect(() => {
     if (!cliente) return;
-    const conContrato = areasDisponibles.find(a => cliente[`contrato_${a}_inicio`] && cliente[`contrato_${a}_fin`]);
-    setArea(conContrato || areasDisponibles[0] || 'servicio');
+    setArea(areasRenovables(cliente, areasDisponibles)[0] || areasDisponibles[0] || 'servicio');
     setInicio('');
     setFin('');
     setObservaciones('');
@@ -56,6 +61,25 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
   }, [cliente, areasDisponibles]);
 
   if (!cliente) return null;
+
+  const areas = areasRenovables(cliente, areasDisponibles);
+  // Cliente de un área que este usuario no gestiona (lo ve por tener registros
+  // de la suya): su contrato lo registra esa área.
+  if (areas.length === 0) {
+    return (
+      <Modal open onClose={onClose} title="Registrar contrato nuevo" size="md"
+        footer={<button className="btn-secondary" onClick={onClose}>Cerrar</button>}>
+        <div className="space-y-4">
+          <div className="text-sm text-slate-600">
+            Cliente: <span className="font-semibold text-slate-800">{cliente.nombre}</span>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            Este cliente es del Área de {ETIQUETA_AREA[areasPorContrato(cliente)[0]]}: su contrato lo registra esa área.
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   const actualInicio = cliente[`contrato_${area}_inicio`];
   const actualFin = cliente[`contrato_${area}_fin`];
@@ -111,12 +135,16 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
           Cliente: <span className="font-semibold text-slate-800">{cliente.nombre}</span>
         </div>
 
-        {areasDisponibles.length > 1 && (
+        {areas.length > 1 ? (
           <div>
             <label className="label">Área del contrato</label>
             <select className="select" value={area} onChange={e => setArea(e.target.value)}>
-              {areasDisponibles.map(a => <option key={a} value={a}>{ETIQUETA_AREA[a]}</option>)}
+              {areas.map(a => <option key={a} value={a}>{ETIQUETA_AREA[a]}</option>)}
             </select>
+          </div>
+        ) : areasDisponibles.length > 1 && (
+          <div className="text-sm text-slate-600">
+            Área: <span className="font-semibold text-slate-800">{ETIQUETA_AREA[area]}</span>
           </div>
         )}
 

@@ -31,14 +31,12 @@ const CON_CONTRATO = [
   { value: '0', label: 'Sin contrato adjunto' }
 ];
 
-// Área cuyos datos de contrato y documentación registra el cliente (la misma
-// pregunta del formulario de alta). Es inclusivo: "Área de Servicios" también
-// devuelve a los clientes que registran las dos áreas.
+// Área del cliente (la misma pregunta del formulario de alta): Servicios o
+// Proyectos, una sola.
 const AREA_CONTRATO = [
   { value: '', label: 'Todas las áreas' },
   { value: 'servicio', label: 'Área de Servicios' },
-  { value: 'proyecto', label: 'Área de Proyectos' },
-  { value: 'ambos', label: 'Ambas áreas' }
+  { value: 'proyecto', label: 'Área de Proyectos' }
 ];
 
 // Teléfono mostrado en el listado: el del contacto principal, con el teléfono
