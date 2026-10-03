@@ -71,7 +71,11 @@ export const ascensoresService = {
   // (a diferencia de `update`, que reemplaza el arreglo `precios` completo).
   // Devuelve { id_ascensor, precios } con el catálogo vigente ya actualizado.
   guardarPrecio: (id, { id_tipo_servicio, precio, moneda }) =>
-    api.put(`/ascensores/${id}/precios`, { id_tipo_servicio, precio, moneda }).then(r => r.data?.data ?? r.data)
+    api.put(`/ascensores/${id}/precios`, { id_tipo_servicio, precio, moneda }).then(r => r.data?.data ?? r.data),
+  // Eliminar en cascada (solo Super Admin); distinto de setEstado(id, 0), que
+  // solo lo marca como Inactivo.
+  impactoEliminacion: (id) => api.get(`/ascensores/${id}/impacto-eliminacion`).then(r => r.data?.data ?? r.data),
+  eliminar: (id) => api.delete(`/ascensores/${id}`).then(r => r.data?.data ?? r.data)
 };
 
 export const tecnicosService = {
@@ -216,7 +220,11 @@ export const correctivosService = {
   get: (id) => api.get(`/correctivos/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/correctivos', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/correctivos/${id}`, d).then(r => r.data?.data ?? r.data),
-  remove: (id) => api.delete(`/correctivos/${id}`).then(r => r.data)
+  remove: (id) => api.delete(`/correctivos/${id}`).then(r => r.data),
+  // Adjuntos de contexto (fotos/videos de la falla), igual que en emergencias.
+  listarArchivos: (id) => api.get(`/correctivos/${id}/archivos`).then(r => r.data),
+  agregarArchivos: (id, archivos) => api.post(`/correctivos/${id}/archivos`, { archivos }).then(r => r.data?.data ?? r.data),
+  eliminarArchivo: (id, idVinculo) => api.delete(`/correctivos/${id}/archivos/${idVinculo}`).then(r => r.data)
 };
 
 export const mantenimientosService = {
@@ -226,6 +234,8 @@ export const mantenimientosService = {
   update: (id, d) => api.put(`/mantenimientos/${id}`, d).then(r => r.data?.data ?? r.data),
   frecuencias: () => api.get('/mantenimientos/frecuencias').then(r => r.data?.data ?? r.data),
   materializarEvento: (idEvento, body) => api.post(`/mantenimientos/eventos/${idEvento}/crear-servicio`, body || {}).then(r => r.data?.data ?? r.data),
+  // Crea el servicio de una visita del cronograma desde el detalle del plan.
+  crearServicioDeVisita: (idPlan, idVisita, body) => api.post(`/mantenimientos/${idPlan}/programacion/${idVisita}/crear-servicio`, body || {}).then(r => r.data?.data ?? r.data),
   instancias: (params) => api.get('/mantenimientos/instancias', { params }).then(r => r.data?.data ?? r.data),
   // Igual que `instancias` pero devuelve el sobre { data, total, page, ... }
   // que espera usePaginatedList. Sin `page` el backend responde sin paginar.
@@ -341,7 +351,9 @@ export const recordatoriosService = {
   leerTodos: () => api.patch('/recordatorios/leer-todos').then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/recordatorios/${id}`).then(r => r.data),
   contadores: () => api.get('/recordatorios/contadores').then(r => r.data?.data ?? r.data),
-  proximos: (limit = 10) => api.get('/recordatorios/proximos', { params: { limit } }).then(r => r.data?.data ?? r.data)
+  proximos: (limit = 10) => api.get('/recordatorios/proximos', { params: { limit } }).then(r => r.data?.data ?? r.data),
+  // Usuarios activos a quienes se puede registrar un recordatorio.
+  destinatarios: () => api.get('/recordatorios/destinatarios').then(r => r.data?.data ?? r.data)
 };
 
 export const usuariosService = {

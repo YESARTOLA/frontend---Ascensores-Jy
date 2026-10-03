@@ -10,6 +10,10 @@ const MAX_LANES = 3;      // carriles visibles antes de resumir en "+N más"
 const OVERFLOW_H = 16;
 const ROW_H = HEADER_H + MAX_LANES * LANE_H + OVERFLOW_H;
 
+// Línea que divide los días: marcada para distinguir cada celda aunque esté
+// llena de barras.
+const BORDE_GRILLA = 'border-slate-300';
+
 /**
  * Reparte las barras de una semana en carriles (filas) evitando solapes: dos
  * eventos que comparten alguna columna no pueden ir en el mismo carril, de modo
@@ -73,8 +77,10 @@ export default function CalendarioMes({ cursor, itemsPorDia = {}, onSelectDay })
 
   return (
     <div className="card overflow-hidden">
-      <div className="grid grid-cols-7 bg-slate-50 text-[11px] uppercase font-semibold text-slate-500 border-b border-slate-200">
-        {DIAS_SEMANA.map(d => <div key={d} className="px-2 py-2 text-center">{d}</div>)}
+      <div className={`grid grid-cols-7 bg-slate-50 text-[11px] uppercase font-semibold text-slate-500 border-b ${BORDE_GRILLA}`}>
+        {DIAS_SEMANA.map((d, col) => (
+          <div key={d} className={`px-2 py-2 text-center ${col < 6 ? `border-r ${BORDE_GRILLA}` : ''}`}>{d}</div>
+        ))}
       </div>
 
       {semanas.map((week, wIdx) => {
@@ -100,10 +106,13 @@ export default function CalendarioMes({ cursor, itemsPorDia = {}, onSelectDay })
                   onClick={() => onSelectDay?.(d)}
                   aria-label={`Ver ${fmtDiaLargo.format(diaLabel)}`}
                   style={{ minHeight: ROW_H }}
-                  className={`relative border-b border-r border-slate-100 text-xs text-left w-full cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-300 ${esOtroMes ? 'bg-slate-50/50 text-slate-400 hover:bg-slate-100/70' : 'bg-white hover:bg-slate-50'}`}
+                  className={`relative border-b ${col < 6 ? 'border-r' : ''} ${BORDE_GRILLA} text-xs text-left w-full cursor-pointer transition focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-300 ${esOtroMes ? 'bg-slate-50 text-slate-400 hover:bg-slate-100' : 'bg-white text-slate-700 hover:bg-slate-50'}`}
                 >
-                  <div className="px-1.5 pt-1.5">
-                    <div className={`text-right ${esHoy ? 'inline-block float-right bg-brand-600 text-white rounded-full h-6 w-6 leading-6 text-center font-semibold' : ''}`}>{d.dia}</div>
+                  {/* Número del día en su franja superior, donde no llegan las
+                      barras. Va posicionado: un <button> centra su contenido en
+                      vertical y el número quedaba tapado por los eventos. */}
+                  <div className="absolute top-0 right-0 flex items-center px-1.5" style={{ height: HEADER_H }}>
+                    <span className={`text-[12px] font-semibold ${esHoy ? 'bg-brand-600 text-white rounded-full h-5 min-w-[20px] px-1 leading-5 text-center' : ''}`}>{d.dia}</span>
                   </div>
                   {overflow[col] > 0 && (
                     <div className="absolute px-1.5 text-[10px] text-slate-500" style={{ top: HEADER_H + MAX_LANES * LANE_H }}>
@@ -133,7 +142,7 @@ export default function CalendarioMes({ cursor, itemsPorDia = {}, onSelectDay })
                     }}
                   >
                     <div
-                      className={`h-full flex text-white text-[10px] leading-tight overflow-hidden ${leftOpen ? 'rounded-l-none ml-0' : 'rounded-l ml-0.5'} ${rightOpen ? 'rounded-r-none mr-0' : 'rounded-r mr-0.5'}`}
+                      className={`h-full flex text-white text-[10px] leading-tight overflow-hidden ${leftOpen ? 'rounded-l-none ml-0' : 'rounded-l ml-1'} ${rightOpen ? 'rounded-r-none mr-0' : 'rounded-r mr-1'}`}
                       style={{ backgroundColor: it.color }}
                       title={it.title}
                     >

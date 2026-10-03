@@ -1,45 +1,64 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { emergenciasService } from '../../services';
-import Modal from '../common/Modal.jsx';
-import Loader from '../common/Loader.jsx';
-import EmptyState from '../common/EmptyState.jsx';
-import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import { emergenciasService, correctivosService } from '../../services';
+import Modal from './Modal.jsx';
+import Loader from './Loader.jsx';
+import EmptyState from './EmptyState.jsx';
+import BarraProgresoCarga from './BarraProgresoCarga.jsx';
 import useCargaArchivos from '../../hooks/useCargaArchivos.js';
-import { useToast } from '../common/Toast.jsx';
-import { useFilePreview } from '../common/FilePreview.jsx';
+import { useToast } from './Toast.jsx';
+import { useFilePreview } from './FilePreview.jsx';
 import { assetUrl } from '../../services/apiClient.js';
 import { formatFechaHora } from '../../utils/formatters.js';
 
+// Qué registro se adjunta: su API, su carpeta del storage y sus textos.
+export const ADJUNTOS_EMERGENCIA = {
+  api: emergenciasService,
+  tipoArchivo: 'emergencias',
+  titulo: 'Adjuntos de la emergencia',
+  porRegistro: 'por emergencia',
+  destino: 'su vista de la emergencia'
+};
+export const ADJUNTOS_CORRECTIVO = {
+  api: correctivosService,
+  tipoArchivo: 'correctivos',
+  titulo: 'Adjuntos del correctivo',
+  porRegistro: 'por correctivo',
+  destino: 'su vista del correctivo'
+};
+
 /**
- * Fotos y videos de contexto de una emergencia: los carga quien la reporta para
- * que el TÉCNICO asignado los revise antes de salir a campo.
+ * Fotos y videos de contexto de un registro operativo (emergencia, correctivo):
+ * los carga quien lo reporta para que el TÉCNICO asignado los revise antes de
+ * salir a campo.
  *
  * Funciona en dos modos:
  *
- *  - Persistido (`idEmergencia` presente): lee, sube y elimina contra el
+ *  - Persistido (`idRegistro` presente): lee, sube y elimina contra el
  *    backend. Es el que abre el chip de la columna "Adjuntos".
- *  - Borrador (`idEmergencia` nulo): la emergencia todavía no existe, así que
+ *  - Borrador (`idRegistro` nulo): el registro todavía no existe, así que
  *    los archivos se suben al storage —ya quedan en tbl_archivos— y sus ids se
  *    devuelven al formulario vía `onChangeBorrador` para que viajen en el
  *    payload de creación.
  *
  * Props:
+ *   config               — ADJUNTOS_EMERGENCIA | ADJUNTOS_CORRECTIVO
  *   open, onClose        — control del modal
- *   idEmergencia         — id, o null en modo borrador
+ *   idRegistro           — id, o null en modo borrador
  *   puedeGestionar       — si el rol puede adjuntar/eliminar (solo lectura si no)
  *   borrador             — array de adjuntos en modo borrador
  *   onChangeBorrador     — setter del array en modo borrador
  *   onCambio             — callback tras persistir, para que la tabla recargue
  */
-export default function AdjuntosEmergenciaModal({
-  open, onClose, idEmergencia, puedeGestionar = false,
+export default function AdjuntosRegistroModal({
+  config, open, onClose, idRegistro, puedeGestionar = false,
   borrador = [], onChangeBorrador, onCambio
 }) {
   const toast = useToast();
   const { open: abrirPreview } = useFilePreview();
   const inputRef = useRef(null);
+  const { api } = config;
 
-  const esBorrador = !idEmergencia;
+  const esBorrador = !idRegistro;
   const [items, setItems] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
@@ -55,7 +74,7 @@ export default function AdjuntosEmergenciaModal({
   const cargar = useCallback(() => {
     if (esBorrador || !open) return;
     setCargando(true);
-    emergenciasService.listarArchivos(idEmergencia)
+    api.listarArchivos(idRegistro)
       .then(r => {
         setItems(r?.data ?? []);
         if (r?.meta?.max != null) setMax(r.meta.max);
@@ -64,7 +83,7 @@ export default function AdjuntosEmergenciaModal({
       .catch(() => { setItems([]); toast.error('No se pudieron cargar los adjuntos'); })
       .finally(() => setCargando(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idEmergencia, esBorrador, open]);
+  }, [idRegistro, esBorrador, open]);
 
   useEffect(cargar, [cargar]);
 
@@ -75,12 +94,12 @@ export default function AdjuntosEmergenciaModal({
     e.target.value = '';
     if (archivos.length === 0) return;
     if (max != null && listaVisible.length + archivos.length > max) {
-      return toast.error(`Máximo ${max} adjuntos por emergencia.`);
+      return toast.error(`Máximo ${max} adjuntos ${config.porRegistro}.`);
     }
 
     setSubiendo(true);
     try {
-      const subidos = await carga.subirVarios(archivos, 'emergencias');
+      const subidos = await carga.subirVarios(archivos, config.tipoArchivo);
 
       if (esBorrador) {
         onChangeBorrador?.([
@@ -88,8 +107,8 @@ export default function AdjuntosEmergenciaModal({
           ...subidos.map((a, i) => ({ id_archivo: a.id, orden: borrador.length + i + 1, archivo: a }))
         ]);
       } else {
-        await emergenciasService.agregarArchivos(
-          idEmergencia,
+        await api.agregarArchivos(
+          idRegistro,
           subidos.map((a, i) => ({ id_archivo: a.id, orden: listaVisible.length + i + 1 }))
         );
         cargar();
@@ -113,7 +132,7 @@ export default function AdjuntosEmergenciaModal({
     }
     setEliminandoId(item.id);
     try {
-      await emergenciasService.eliminarArchivo(idEmergencia, item.id);
+      await api.eliminarArchivo(idRegistro, item.id);
       toast.success('Adjunto eliminado');
       cargar();
       onCambio?.();
@@ -137,7 +156,7 @@ export default function AdjuntosEmergenciaModal({
     <Modal
       open={open}
       onClose={subiendo ? () => {} : onClose}
-      title="Adjuntos de la emergencia"
+      title={config.titulo}
       size="lg"
       footer={
         <button type="button" className="btn-secondary" onClick={onClose} disabled={subiendo}>
@@ -147,7 +166,7 @@ export default function AdjuntosEmergenciaModal({
     >
       <div className="space-y-4">
         <p className="text-xs text-slate-500">
-          Fotos, videos y PDFs de la falla, sin límite de peso. El técnico asignado los verá desde su vista de la emergencia.
+          Fotos, videos y PDFs de la falla, sin límite de peso. El técnico asignado los verá desde {config.destino}.
         </p>
 
         {gestionable && (

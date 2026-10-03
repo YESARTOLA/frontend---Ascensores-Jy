@@ -8,6 +8,7 @@ import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import { generarFichaAscensorPDF } from '../utils/pdfReport.js';
+import { precioMensualDelPlan } from '../utils/planMantenimiento.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import AscensorForm, { ascensorToForm } from '../components/ascensores/AscensorForm.jsx';
 import FichaTecnicaAscensor from '../components/ascensores/FichaTecnicaAscensor.jsx';
@@ -122,7 +123,7 @@ export default function AscensorHistorial() {
                     <td className="table-td text-xs">{formatFecha(s.fecha_programada)}</td>
                     <td className="table-td text-xs">{s.asignaciones?.map(a => a.tecnico?.nombre).join(', ') || '—'}</td>
                     <td className="table-td"><span className={badgeEstado(s.estado_servicio)}>{s.estado_servicio}</span></td>
-                    {puedeVerPrecio && <td className="table-td text-right font-mono">{formatMonto(s.precio_interno, s.moneda)}</td>}
+                    {puedeVerPrecio && <td className="table-td text-right font-mono"><PrecioServicio s={s} /></td>}
                   </tr>
                 ))}
               </tbody>
@@ -255,6 +256,20 @@ export default function AscensorHistorial() {
         </Modal>
       )}
     </>
+  );
+}
+
+// Visita de plan: el importe es el mensual del plan (cubre todas las visitas
+// del mes), no un precio propio de esta fila.
+function PrecioServicio({ s }) {
+  if (s.sin_cobro === 1) return <span className="text-xs text-slate-500 font-sans">Sin costo</span>;
+  const plan = precioMensualDelPlan(s);
+  if (!plan) return formatMonto(s.precio_interno, s.moneda);
+  return (
+    <span title="Importe mensual del plan: cubre todas las visitas del mes y se factura una sola vez">
+      {formatMonto(plan.monto, plan.moneda)}
+      <span className="block text-[10px] text-slate-400 font-sans">al mes · plan</span>
+    </span>
   );
 }
 

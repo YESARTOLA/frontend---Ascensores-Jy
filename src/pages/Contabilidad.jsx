@@ -23,6 +23,7 @@ import { ESTADOS_FACTURACION, esFacturaActiva } from '../utils/estadoFactura.js'
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 import { etiquetaMoneda } from '../utils/excelNumeros.js';
+import { precioMensualDelPlan } from '../utils/planMantenimiento.js';
 
 const FILTROS_INICIALES = {
   q: '', tipo_categoria: '', situacion: '', estado_cobro: '', estado_facturacion: '',
@@ -153,21 +154,11 @@ function accionFacturar(r) {
 // precio del servicio (mismo criterio que usa el backend para validar).
 const totalCobrable = (r) => Number(r.servicio?.cobro?.monto_total ?? r.servicio?.precio_interno ?? 0);
 
-// Precio de una visita de plan. El servicio no tiene precio propio (nace con
-// precio_interno = 0: el importe pactado es el monto MENSUAL del plan, que no
-// cambia con cuántas visitas caigan en el mes), así que la columna mostraba
-// S/ 0.00 y se leía como gratuito. Se muestra el monto del plan, marcado como
-// mensual para no confundirlo con el total de esa fila.
+// Visita de plan (precioMensualDelPlan): se muestra el monto del plan, marcado
+// como mensual para no confundirlo con el total de esa fila.
 //
 // En el export va como TEXTO, sin valor numérico: el mismo mes aparece en tantas
 // filas como visitas tenga, y sumarlo multiplicaría el importe real del plan.
-const precioMensualDelPlan = (r) => {
-  const s = r.servicio;
-  if (!s?.id_mantenimiento_plan || Number(s.precio_interno || 0) !== 0) return null;
-  const monto = s.mantenimiento_plan?.monto_mensual;
-  if (monto == null) return null;
-  return { monto: Number(monto), moneda: s.mantenimiento_plan.moneda || s.moneda };
-};
 
 // Documento del cliente: "RUC 20..." / "DNI 4..." o '—' si no hay número.
 const docCliente = (r) => {
@@ -232,12 +223,12 @@ const COLUMNAS_EXPORT = [
     header: 'Total',
     align: 'right',
     get: r => {
-      const plan = precioMensualDelPlan(r);
+      const plan = precioMensualDelPlan(r.servicio);
       if (plan) return `${formatMonto(plan.monto, plan.moneda)} al mes (plan)`;
       return formatMonto(r.servicio?.precio_interno, monedaDe(r));
     },
     // El monto del plan no entra como número: se repite en cada visita del mes.
-    num: r => (precioMensualDelPlan(r) ? null : Number(r.servicio?.precio_interno))
+    num: r => (precioMensualDelPlan(r.servicio) ? null : Number(r.servicio?.precio_interno))
   },
   { header: 'Estado cobro', badge: true, get: r => r.estado_cobro },
   { header: 'Estado factura', badge: true, get: r => r.estado_facturacion },
@@ -619,7 +610,7 @@ export default function Contabilidad() {
                           {(() => {
                             // Visita de plan: el importe es el mensual del plan,
                             // no un total propio de esta fila.
-                            const plan = precioMensualDelPlan(r);
+                            const plan = precioMensualDelPlan(r.servicio);
                             if (!plan) return formatMonto(r.servicio?.precio_interno, r.servicio?.moneda);
                             return (
                               <span title="Importe mensual del plan: cubre todas las visitas del mes y se factura una sola vez">

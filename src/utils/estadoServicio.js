@@ -83,21 +83,20 @@ export function esServicioPostRevision(estadoServicio) {
   return ESTADOS_POST_EJECUCION.includes(estadoServicio);
 }
 
-// Catálogos de estados de los registros asociados a un servicio. Sirven para
-// poblar selects de filtro y para predicados (p.ej. "está cerrado").
-// Espejo de backend/utils/estadoServicio.js. El estado de la emergencia no se
-// edita a mano: lo deriva el servicio que la atiende, así que esta lista es
-// también el recorrido posible de ese ciclo.
-export const ESTADOS_EMERGENCIA = ['Reportada', 'En atención', 'Atendida', 'Cerrada', 'Cancelada'];
-export const ESTADOS_CORRECTIVO = ['Reportado', 'En atención', 'Resuelto', 'Cerrado'];
+// Estados de atención de emergencias y correctivos: solo tres (En atención,
+// Atendida, Cancelada; en el correctivo, en masculino). No se editan a mano: los
+// deriva el servicio que atiende el caso. Espejo de backend/utils/estadoAtencion.js.
+export const ESTADOS_EMERGENCIA = ['En atención', 'Atendida', 'Cancelada'];
+export const ESTADOS_CORRECTIVO = ['En atención', 'Atendido', 'Cancelado'];
 export const ESTADOS_ATENCION_RAPIDA = ['nueva', 'convertida', 'descartada'];
 
+// Cerrado = ya no está en atención (atendido o cancelado): no se edita.
 export function esEmergenciaCerrada(estado) {
-  return estado === 'Cerrada';
+  return !!estado && estado !== ESTADOS_EMERGENCIA[0];
 }
 
 export function esCorrectivoCerrado(estado) {
-  return estado === 'Cerrado';
+  return !!estado && estado !== ESTADOS_CORRECTIVO[0];
 }
 
 export function esAtencionRapidaConvertida(estado) {

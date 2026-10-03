@@ -13,7 +13,7 @@ import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensor
 import { prepararTablaExcel, insertarColumnaMoneda, celdaNumerica, etiquetaMoneda, FORMATO_EXCEL } from '../utils/excelNumeros.js';
 import { generarReportePDF } from '../utils/pdfReport.js';
 import { esFacturado } from '../utils/estadoFactura.js';
-import { ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
+import { ESTADOS_EMERGENCIA, ESTADOS_CORRECTIVO } from '../utils/estadoServicio.js';
 
 // Categoría agrupa los reportes operativos por entidad del negocio. El selector
 // superior actúa como filtro de la lista de tabs. "todos" muestra todos.
@@ -26,7 +26,6 @@ const CATEGORIAS = [
   { codigo: 'atencion_rapida', label: 'Atención rápida' }
 ];
 
-const ESTADOS_CORRECTIVO = ['Reportado', 'En atención', 'Resuelto', 'Cancelado'];
 const ESTADOS_ATENCION = ['nueva', 'en_proceso', 'convertida', 'descartada'];
 
 // `ocultarPara: [rol…]` retira un reporte de la lista para esos roles. A

@@ -11,6 +11,7 @@ import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import AscensorForm, { ascensorFormInicial, ascensorToForm, ESTADOS_OPERATIVOS_ASCENSOR } from '../components/ascensores/AscensorForm.jsx';
+import ImpactoEliminacionAscensor from '../components/ascensores/ImpactoEliminacionAscensor.jsx';
 import { useClasificaciones } from '../hooks/useClasificaciones.js';
 
 const FILTROS_INICIALES = { q: '', id_edificio: '', tipo: '', estado_operativo: '', clasificacion: '', estado: '1', sort: '', dir: 'asc' };
@@ -33,6 +34,8 @@ export default function Ascensores() {
   const [editId, setEditId] = useState(null);
   // Confirmación de baja lógica (PATCH /ascensores/:id/estado → solo super_admin y admin).
   const [aInactivar, setAInactivar] = useState(null);
+  // Eliminación en cascada (DELETE /ascensores/:id → solo super_admin).
+  const [aEliminar, setAEliminar] = useState(null);
   const [reactivando, setReactivando] = useState(null);
   const [exportando, setExportando] = useState(null);
   const clasificaciones = useClasificaciones();
@@ -50,7 +53,7 @@ export default function Ascensores() {
   const toast = useToast();
   const { esSuperAdmin, esAdmin, esCoordinador } = useAuth();
   const puedeEditar = esSuperAdmin || esAdmin || esCoordinador;
-  const puedeEliminar = esSuperAdmin || esAdmin;
+  const puedeInactivar = esSuperAdmin || esAdmin;
 
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(ascensoresService.paginate, filtros, { initialPageSize: 25 });
@@ -105,6 +108,18 @@ export default function Ascensores() {
       setAInactivar(null);
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'No se pudo inactivar el ascensor'); }
+  };
+
+  // Eliminación en cascada: se lleva también lo ejecutado o cobrado. La doble
+  // confirmación la impone ConfirmarEliminacion (escribir la palabra clave).
+  const eliminar = async () => {
+    if (!aEliminar) return;
+    try {
+      await ascensoresService.eliminar(aEliminar.id);
+      toast.success(`${aEliminar.codigo} eliminado`);
+      setAEliminar(null);
+      cargar();
+    } catch (err) { toast.error(err.response?.data?.error || 'No se pudo eliminar el ascensor'); }
   };
 
   // Alta lógica: vuelve a estado = 1 y sale del estado operativo 'Inactivo'. Los
@@ -261,15 +276,18 @@ export default function Ascensores() {
                           </span>
                         ) : <span className="text-slate-400 text-xs">—</span>}
                       </td>
-                      <td className="table-td"><span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span></td>
+                      <td className="table-td"><BadgeEstadoAscensor a={a} /></td>
                       <td className="table-td text-right space-x-2">
                         <Link to={`/ascensores/${a.id}`} className="text-brand-700 hover:underline text-xs">Historial</Link>
                         {puedeEditar && <button onClick={() => abrirEdit(a)} className="text-slate-600 text-xs">Editar</button>}
-                        {puedeEliminar && (a.estado === 0
+                        {puedeInactivar && (a.estado === 0
                           ? <button onClick={() => reactivar(a)} disabled={reactivando === a.id} className="text-emerald-700 text-xs disabled:opacity-50">
                               {reactivando === a.id ? 'Reactivando…' : 'Reactivar'}
                             </button>
                           : <button onClick={() => setAInactivar(a)} className="text-rose-600 text-xs">Marcar como Inactivo</button>
+                        )}
+                        {esSuperAdmin && !a.fecha_eliminacion && (
+                          <button onClick={() => setAEliminar(a)} className="text-rose-700 font-semibold text-xs">Eliminar</button>
                         )}
                       </td>
                     </tr>
@@ -284,7 +302,7 @@ export default function Ascensores() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
                       <Link to={`/ascensores/${a.id}`} className="font-mono text-sm text-brand-700">{a.codigo}</Link>
-                      <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>
+                      <BadgeEstadoAscensor a={a} />
                     </div>
                     <div className="text-sm text-slate-700 truncate">{nombreEdificio(a.edificio)}<span className="text-slate-400"> · {nombreCliente(a.edificio?.cliente)}</span></div>
                     <div className="text-xs text-slate-500">{a.tipo} · {a.marca} {a.modelo}</div>
@@ -299,11 +317,14 @@ export default function Ascensores() {
                     )}
                     <div className="mt-2 flex items-center gap-3">
                       {puedeEditar && <button onClick={() => abrirEdit(a)} className="text-xs text-slate-600">Editar</button>}
-                      {puedeEliminar && (a.estado === 0
+                      {puedeInactivar && (a.estado === 0
                         ? <button onClick={() => reactivar(a)} disabled={reactivando === a.id} className="text-xs text-emerald-700 disabled:opacity-50">
                             {reactivando === a.id ? 'Reactivando…' : 'Reactivar'}
                           </button>
                         : <button onClick={() => setAInactivar(a)} className="text-xs text-rose-600">Marcar como Inactivo</button>
+                      )}
+                      {esSuperAdmin && !a.fecha_eliminacion && (
+                        <button onClick={() => setAEliminar(a)} className="text-xs font-semibold text-rose-700">Eliminar</button>
                       )}
                     </div>
                   </div>
@@ -346,6 +367,25 @@ export default function Ascensores() {
           </div>
         }
       />
+
+      <ConfirmarEliminacion
+        open={!!aEliminar}
+        onClose={() => setAEliminar(null)}
+        titulo="Eliminar ascensor"
+        palabraClave="ELIMINAR"
+        textoBoton="Eliminar ascensor"
+        onConfirmar={eliminar}
+        descripcion={aEliminar && <ImpactoEliminacionAscensor ascensor={aEliminar} />}
+      />
     </>
   );
+}
+
+// Un eliminado también es Inactivo (estado 0): la etiqueta lo distingue. Solo
+// le llegan al Super Admin.
+function BadgeEstadoAscensor({ a }) {
+  if (a.fecha_eliminacion) {
+    return <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 ring-1 ring-rose-200">Eliminado</span>;
+  }
+  return <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>;
 }

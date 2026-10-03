@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { mantenimientosService, clientesService, ascensoresService, tiposServicioService, facturasService } from '../services';
+import { mantenimientosService, clientesService, ascensoresService, tiposServicioService, facturasService, tecnicosService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
@@ -18,13 +18,14 @@ import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import AscensoresFrecuenciaChecklist from '../components/common/AscensoresFrecuenciaChecklist.jsx';
 import CronogramaPlan from '../components/mantenimientos/CronogramaPlan.jsx';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
-import { visitasEnMeses, etiquetaVisitas } from '../utils/frecuenciaPlan.js';
+import { visitasEnMeses, etiquetaVisitas, mesesConVisita } from '../utils/frecuenciaPlan.js';
 import { totalesDelPlan } from '../utils/planMantenimiento.js';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, formatDiasEjecucion, hoyISO, toYMDLima, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../utils/catalogosComprobante.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { generarReportePorClientePDF } from '../utils/pdfReport.js';
-import { etiquetaProgramacion } from '../utils/programacion.js';
+import { etiquetaProgramacion, tramoDeUnDia, fechasDesdeTramos, payloadDias, errorDeTramos } from '../utils/programacion.js';
+import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
 
 const FORM_ID = 'form-nuevo-plan-mantenimiento';
 
@@ -32,11 +33,17 @@ const FORM_ID = 'form-nuevo-plan-mantenimiento';
 // duración en MESES y un monto global MENSUAL — el único importe facturable.
 const inicial = {
   id_cliente: '', ascensores_seleccion: {}, id_tipo_servicio: '', tipo_plan: 'continuo',
-  frecuencia: 'mensual', frecuencia_dias_custom: '', duracion_meses: '12',
+  duracion_meses: '12',
   monto_mensual: '', cantidad_mantenimientos_gratuitos: '0',
   fecha_inicio: hoyISO(), hora_programada: '09:00',
+  // Técnico del plan: se asigna a todos sus servicios (cada uno se puede
+  // cambiar a mano desde el servicio).
+  id_tecnico: '',
   observaciones: ''
 };
+
+// Frecuencia con la que entra un ascensor al marcarlo; luego se cambia en su fila.
+const FRECUENCIA_INICIAL = 'mensual';
 
 // Resume los ascensores de un plan (junction) para listas/detalle: nombre del
 // edificio/obra (del primero con dato, cae a la razón social) y los ascensores.
@@ -102,6 +109,11 @@ export default function Mantenimientos() {
   const puedeFacturarPlan = esSuperAdmin || esAdmin || esContabilidad;
   const puedeEliminarPlan = esSuperAdmin;
   const [planAEliminar, setPlanAEliminar] = useState(null);
+  // Técnicos para el técnico del plan (solo quien crea o edita planes).
+  const [tecnicos, setTecnicos] = useState([]);
+  // Visita del cronograma cuyo servicio se está creando: { visita, tramos, hora }.
+  const [creandoServicio, setCreandoServicio] = useState(null);
+  const [guardandoServicioVisita, setGuardandoServicioVisita] = useState(false);
   // Impacto del borrado en cascada, consultado al abrir el modal de confirmación.
   // null = aún cargando; el objeto trae los conteos reales que se van a dar de baja.
   const [impactoEliminacion, setImpactoEliminacion] = useState(null);
@@ -128,6 +140,9 @@ export default function Mantenimientos() {
       mantenimientosService.frecuencias()
     ]).then(([c, a, t, f]) => { setClientes(c); setAscensores(a); setTipos(t); setFrecuencias(f); });
   }, []);
+  useEffect(() => {
+    if (puedeCrear) tecnicosService.list().then(setTecnicos).catch(() => setTecnicos([]));
+  }, [puedeCrear]);
 
   // Solo los filtros con valor viajan al backend: un filtro vacío no debe
   // formar parte de la clave que dispara la recarga ni llegar como `?q=`.
@@ -157,8 +172,6 @@ export default function Mantenimientos() {
   // Solo subtipos vinculados al módulo Mantenimientos pueden tener plan.
   const tiposF = tipos.filter(t => !t.es_padre && t.modulo_asociado === 'mantenimiento');
   const esContinuo = form.tipo_plan === 'continuo';
-  const frecuenciaSeleccionada = frecuencias.find(f => f.codigo === form.frecuencia);
-  const esFrecuenciaCustom = frecuenciaSeleccionada?.unidad === 'custom';
   const tipoSeleccionado = tipos.find(t => String(t.id) === String(form.id_tipo_servicio));
   const esTipoPreventivo = !!tipoSeleccionado?.es_preventivo;
   // El cupo gratuito cuenta MESES del plan, no visitas sueltas: la unidad de
@@ -170,14 +183,20 @@ export default function Mantenimientos() {
   // recibirá a lo largo de la duración del plan.
   const ascensoresSeleccionados = ascensoresF.filter(a => form.ascensores_seleccion[a.id]);
   const seleccionOk = ascensoresSeleccionados.length > 0;
-  // Economía prevista del plan: los meses gratuitos NO se cobran, así que el
-  // total del contrato es `monto_mensual × (meses − gratuitos)`.
+  // Economía prevista del plan: se cobran los meses en que cae algún
+  // mantenimiento de alguno de los ascensores, salvo los gratuitos
+  // (trimestral × 12 meses a S/ 200 → 4 meses → S/ 800).
+  const mesesConMantForm = new Set(ascensoresSeleccionados.flatMap(a => {
+    const sel = form.ascensores_seleccion[a.id];
+    const fr = frecuencias.find(f => f.codigo === sel?.frecuencia);
+    return [...mesesConVisita(fr, esContinuo ? form.duracion_meses : 1, sel?.frecuencia_dias_custom)];
+  }));
   const totalesForm = totalesDelPlan({
     monto_mensual: form.monto_mensual,
     duracion_meses: form.duracion_meses,
     cantidad_mantenimientos_gratuitos: esTipoPreventivo ? form.cantidad_mantenimientos_gratuitos : 0,
     tipo_plan: form.tipo_plan
-  });
+  }, mesesConMantForm);
 
   // Total de visitas previsto del plan (suma de todos los ascensores). Es una
   // anticipación para el usuario: el cronograma real lo calcula el backend.
@@ -200,12 +219,12 @@ export default function Mantenimientos() {
 
   // Selecciona/deselecciona un ascensor del plan. Un plan puede cubrir VARIOS
   // ascensores (incluso de distintos edificios), cada uno con su propia
-  // frecuencia; al marcarlo hereda la frecuencia por defecto del plan.
+  // frecuencia: entra como mensual y se ajusta en su fila.
   const toggleAscensorPlan = (idAsc) =>
     setForm(f => {
       const sel = { ...f.ascensores_seleccion };
       if (sel[idAsc]) { delete sel[idAsc]; return { ...f, ascensores_seleccion: sel }; }
-      sel[idAsc] = { frecuencia: f.frecuencia, frecuencia_dias_custom: f.frecuencia_dias_custom || '' };
+      sel[idAsc] = { frecuencia: FRECUENCIA_INICIAL, frecuencia_dias_custom: '' };
       return { ...f, ascensores_seleccion: sel };
     });
 
@@ -244,13 +263,12 @@ export default function Mantenimientos() {
       ascensores_seleccion: seleccion,
       id_tipo_servicio: String(plan.id_tipo_servicio || ''),
       tipo_plan: plan.tipo_plan || 'continuo',
-      frecuencia: plan.frecuencia || 'mensual',
-      frecuencia_dias_custom: plan.frecuencia_dias_custom != null ? String(plan.frecuencia_dias_custom) : '',
       duracion_meses: plan.duracion_meses != null ? String(plan.duracion_meses) : '12',
       monto_mensual: plan.monto_mensual != null ? String(Number(plan.monto_mensual)) : '',
       cantidad_mantenimientos_gratuitos: plan.cantidad_mantenimientos_gratuitos != null ? String(plan.cantidad_mantenimientos_gratuitos) : '0',
       fecha_inicio: toYMDLima(plan.fecha_inicio) || hoyISO(),
       hora_programada: plan.hora_programada || '09:00',
+      id_tecnico: plan.id_tecnico ? String(plan.id_tecnico) : '',
       observaciones: plan.observaciones || ''
     });
     setOpen(true);
@@ -281,9 +299,10 @@ export default function Mantenimientos() {
         tipo_plan: form.tipo_plan,
         fecha_inicio: form.fecha_inicio,
         hora_programada: form.hora_programada,
+        id_tecnico: form.id_tecnico ? Number(form.id_tecnico) : null,
         observaciones: form.observaciones,
-        // Monto global mensual: el único importe facturable del plan. Se cobra
-        // igual cada mes sin importar cuántos mantenimientos caigan en él.
+        // Monto mensual: el único importe facturable del plan. Se cobra una vez
+        // en cada mes con mantenimiento, sin importar cuántos caigan en él.
         monto_mensual: Number(form.monto_mensual || 0),
         cantidad_mantenimientos_gratuitos: esTipoPreventivo
           ? Number(form.cantidad_mantenimientos_gratuitos || 0)
@@ -297,20 +316,21 @@ export default function Mantenimientos() {
         const fr = frecuencias.find(f => f.codigo === sel.frecuencia);
         return {
           id_ascensor: a.id,
-          frecuencia: sel.frecuencia || form.frecuencia,
+          frecuencia: sel.frecuencia || FRECUENCIA_INICIAL,
           ...(fr?.unidad === 'custom' ? { frecuencia_dias_custom: Number(sel.frecuencia_dias_custom) } : {})
         };
       });
       payload.id_cliente = form.id_cliente;
       payload.ascensores = frecuenciasAsc;
-      if (esContinuo) {
-        payload.frecuencia = form.frecuencia;
-        payload.duracion_meses = Number(form.duracion_meses);
-        if (esFrecuenciaCustom) payload.frecuencia_dias_custom = Number(form.frecuencia_dias_custom);
-      }
+      // La frecuencia del plan la deriva el backend de sus ascensores.
+      if (esContinuo) payload.duracion_meses = Number(form.duracion_meses);
       if (editando) {
-        await mantenimientosService.update(editando, payload);
-        toast.success('Plan actualizado');
+        const r = await mantenimientosService.update(editando, payload);
+        const conTecnico = Number(r?.servicios_con_tecnico_del_plan || 0);
+        toast.success(conTecnico > 0
+          ? `Plan actualizado · técnico asignado a ${conTecnico} servicio(s) pendiente(s)`
+          : 'Plan actualizado');
+        recargarInstancias();
       } else {
         await mantenimientosService.create(payload);
         toast.success('Plan creado');
@@ -551,6 +571,54 @@ export default function Mantenimientos() {
       .then(setInstanciasPlan)
       .catch(() => {})
       .finally(() => setCargandoInstanciasPlan(false));
+  };
+
+  // --- Crear el servicio de una visita del cronograma ----------------------
+  // Desde el detalle del plan o desde la lista de mantenimientos, sin pasar por
+  // el calendario. El servicio nace con el técnico del plan; luego se puede
+  // cambiar a mano desde el propio servicio.
+
+  const abrirCrearServicio = (visita) => setCreandoServicio({
+    visita,
+    tramos: [tramoDeUnDia(toYMDLima(visita.fecha_programada))],
+    // Vacía = la hora del plan (el backend la toma de ahí).
+    hora: planDetalle?.id === visita.id_plan ? (planDetalle.hora_programada || '') : ''
+  });
+
+  const confirmarCrearServicio = async (e) => {
+    e.preventDefault();
+    if (!creandoServicio || guardandoServicioVisita) return;
+    const { visita, tramos, hora } = creandoServicio;
+    const errorProgramacion = errorDeTramos(tramos);
+    if (errorProgramacion) return toast.error(errorProgramacion);
+    setGuardandoServicioVisita(true);
+    try {
+      const r = await mantenimientosService.crearServicioDeVisita(visita.id_plan, visita.id_programacion, {
+        dias: payloadDias(tramos),
+        fecha_programada: fechasDesdeTramos(tramos)[0],
+        ...(hora ? { hora_programada: hora } : {})
+      });
+      toast.success(r?.servicio?.codigo ? `Servicio ${r.servicio.codigo} creado` : 'Servicio creado');
+      setCreandoServicio(null);
+      recargarInstancias();
+      if (planDetalle?.id === visita.id_plan) {
+        recargarInstanciasPlan();
+        recargarPeriodos();
+        recargarProgramacion();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'No se pudo crear el servicio');
+    } finally {
+      setGuardandoServicioVisita(false);
+    }
+  };
+
+  // Técnico de una fila de mantenimiento: el del servicio o, si aún no se creó,
+  // el del plan (que recibirá al crearse).
+  const tecnicoDeInstancia = (it) => {
+    if (it.id_servicio) return it.tecnicos || <span className="text-slate-400">Sin asignar</span>;
+    if (it.tecnico_plan) return <span className="text-slate-500" title="Técnico del plan: se asigna al crear el servicio">{it.tecnico_plan} <span className="text-slate-400">(del plan)</span></span>;
+    return <span className="text-slate-400">—</span>;
   };
 
   // --- Monto mensual: el único precio del plan -----------------------------
@@ -830,7 +898,7 @@ export default function Mantenimientos() {
                             <Link to={`/servicios/${it.id_servicio}`} className="font-mono text-brand-700 hover:underline">{it.codigo_servicio}</Link>
                           ) : <span className="text-slate-400">no creado</span>}
                         </td>
-                        <td className="table-td text-xs">{it.tecnicos || '—'}</td>
+                        <td className="table-td text-xs">{tecnicoDeInstancia(it)}</td>
                         <td className="table-td text-xs" title={etiquetaProgramacion(it).detalle}>{etiquetaProgramacion(it).texto}</td>
                         <td className="table-td text-xs">{formatFechaHora(it.fecha_inicio_real)}</td>
                         <td className="table-td text-xs">{formatFechaHora(it.fecha_fin_real)}</td>
@@ -839,6 +907,8 @@ export default function Mantenimientos() {
                         <td className="table-td text-right">
                           {it.id_servicio ? (
                             <Link to={`/servicios/${it.id_servicio}`} className="text-brand-700 text-xs hover:underline">Ver detalle</Link>
+                          ) : puedeCrear && it.id_programacion ? (
+                            <button type="button" onClick={() => abrirCrearServicio(it)} className="text-brand-700 text-xs font-semibold hover:underline whitespace-nowrap">Crear servicio</button>
                           ) : <span className="text-slate-400 text-xs" title="Programado a futuro: aún no se ha creado el servicio">—</span>}
                         </td>
                       </tr>
@@ -867,14 +937,16 @@ export default function Mantenimientos() {
                     }
                     datos={[
                       ['Programada', etiquetaProgramacion(it).texto],
-                      ['Técnico', it.tecnicos || 'Sin asignar'],
+                      ['Técnico', it.tecnicos || (it.tecnico_plan ? `${it.tecnico_plan} (del plan)` : 'Sin asignar')],
                       ['Inicio', it.fecha_inicio_real ? formatFechaHora(it.fecha_inicio_real) : null],
                       ['Término', it.fecha_fin_real ? formatFechaHora(it.fecha_fin_real) : null],
                       ['Días', formatDiasEjecucion(it.dias_ejecucion)]
                     ]}
                     acciones={it.id_servicio
                       ? <AccionFila to={`/servicios/${it.id_servicio}`}>Ver detalle</AccionFila>
-                      : null}
+                      : (puedeCrear && it.id_programacion
+                        ? <AccionFila onClick={() => abrirCrearServicio(it)}>Crear servicio</AccionFila>
+                        : null)}
                   />
                 ))}
               </ListaMovil>
@@ -1091,13 +1163,20 @@ export default function Mantenimientos() {
                           {formatMonto(planDetalle.monto_mensual, planDetalle.moneda)}<span className="text-xs text-slate-500 font-sans"> / mes</span>
                         </div>
                         {planDetalle.tipo_plan === 'continuo' && planDetalle.duracion_meses > 0 && (() => {
-                          const tp = totalesDelPlan(planDetalle);
+                          // El backend calcula el total sobre el cronograma real;
+                          // mientras carga, se anticipa con las frecuencias.
+                          const tp = periodos?.totales || totalesDelPlan(planDetalle, new Set(
+                            (planDetalle.ascensores || []).flatMap(pa => [...mesesConVisita(
+                              frecuencias.find(f => f.codigo === (pa.frecuencia || planDetalle.frecuencia)),
+                              planDetalle.duracion_meses,
+                              pa.frecuencia_dias_custom ?? planDetalle.frecuencia_dias_custom
+                            )])
+                          ));
                           return (
                             <div className="text-[11px] text-slate-500">
                               Total del plan: {formatMonto(tp.total, planDetalle.moneda)}
-                              {tp.meses_gratuitos > 0
-                                ? ` (${tp.meses_facturables} de ${tp.meses} meses · ${tp.meses_gratuitos} gratuito(s))`
-                                : ` (${tp.meses} meses)`}
+                              {` (${tp.meses_facturables} mes(es) con cobro de ${tp.meses}`}
+                              {tp.meses_gratuitos > 0 ? ` · ${tp.meses_gratuitos} gratuito(s))` : ')'}
                             </div>
                           );
                         })()}
@@ -1131,6 +1210,14 @@ export default function Mantenimientos() {
                 <div>
                   <div className="text-xs uppercase tracking-wide text-slate-500">Fecha inicio</div>
                   <div className="text-slate-800">{formatFecha(planDetalle.fecha_inicio)} {planDetalle.hora_programada || ''}</div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Técnico del plan</div>
+                  <div className="text-slate-800">
+                    {planDetalle.tecnico?.nombre || <span className="text-slate-400">Sin técnico</span>}
+                    {planDetalle.tecnico && planDetalle.tecnico.estado !== 1 && <span className="ml-1 text-xs text-amber-700">(dado de baja)</span>}
+                  </div>
+                  <div className="text-[11px] text-slate-500">Se asigna a todos sus servicios; cada uno se puede cambiar desde el servicio.</div>
                 </div>
                 <div>
                   <div className="text-xs uppercase tracking-wide text-slate-500">Mantenimientos programados</div>
@@ -1307,21 +1394,27 @@ export default function Mantenimientos() {
                                   {p.omitidas > 0 && <span className="text-[10px] text-amber-700 ml-1">+{p.omitidas} om.</span>}
                                 </td>
                                 <td className="table-td text-right font-mono">
-                                  {p.es_gratuito ? <span className="badge-green">Gratuito</span> : formatMonto(p.monto, p.moneda)}
+                                  {p.con_mantenimiento === false
+                                    ? <span className="text-xs text-slate-400 font-sans">No se cobra</span>
+                                    : p.es_gratuito ? <span className="badge-green">Gratuito</span> : formatMonto(p.monto, p.moneda)}
                                 </td>
-                                <td className="table-td"><span className={badgeEstado(p.estado_periodo)}>{p.estado_periodo}</span></td>
+                                <td className="table-td">
+                                  {p.con_mantenimiento === false
+                                    ? <span className="badge-gray">Sin mantenimiento</span>
+                                    : <span className={badgeEstado(p.estado_periodo)}>{p.estado_periodo}</span>}
+                                </td>
                                 <td className="table-td text-right whitespace-nowrap">
                                   {/* Un mes gratuito se registra pero no se factura: su cuota
                                       nace en 0 y saldada, y no entra a Gestión de cobros.
                                       Un plan no activo no aprueba meses nuevos (espejo del
                                       guard del backend); lo ya aprobado sigue su curso. */}
-                                  {puedeEditarPlan && planDetalle.estado_plan === 'activo' && !p.cuota && p.completo && (
+                                  {puedeEditarPlan && planDetalle.estado_plan === 'activo' && !p.cuota && p.completo && p.con_mantenimiento !== false && (
                                     <button type="button" onClick={() => aprobarPeriodoUI(p)} disabled={aprobandoPeriodo}
                                       className="btn-primary text-xs !py-1 !px-2">
                                       {p.es_gratuito ? 'Registrar mes' : 'Aprobar y facturar'}
                                     </button>
                                   )}
-                                  {puedeEditarPlan && planDetalle.estado_plan === 'activo' && !p.cuota && !p.completo && (
+                                  {puedeEditarPlan && planDetalle.estado_plan === 'activo' && !p.cuota && !p.completo && p.con_mantenimiento !== false && (
                                     <button type="button" onClick={() => setForzando(p)}
                                       className="btn-secondary text-xs !py-1 !px-2">Aprobar igual</button>
                                   )}
@@ -1409,17 +1502,23 @@ export default function Mantenimientos() {
                         </div>
                         <dl className="mt-2 space-y-1">
                           <div className="dato-movil"><dt>Programada</dt><dd>{formatFecha(it.fecha_programada)}</dd></div>
+                          <div className="dato-movil"><dt>Técnico</dt><dd>{tecnicoDeInstancia(it)}</dd></div>
                           {it.fecha_inicio_real && <div className="dato-movil"><dt>Inicio</dt><dd>{formatFechaHora(it.fecha_inicio_real)}</dd></div>}
                           {it.fecha_fin_real && <div className="dato-movil"><dt>Término</dt><dd>{formatFechaHora(it.fecha_fin_real)}</dd></div>}
                           {formatDiasEjecucion(it.dias_ejecucion) !== '—' && (
                             <div className="dato-movil"><dt>Días</dt><dd className="font-mono">{formatDiasEjecucion(it.dias_ejecucion)}</dd></div>
                           )}
                         </dl>
-                        {it.id_servicio && (
+                        {it.id_servicio ? (
                           <Link to={`/servicios/${it.id_servicio}`}
                                 className="inline-flex items-center min-h-[36px] mt-1 text-xs font-semibold text-brand-700">
                             Ver detalle
                           </Link>
+                        ) : puedeCrear && it.id_programacion && (
+                          <button type="button" onClick={() => abrirCrearServicio(it)}
+                                  className="inline-flex items-center min-h-[36px] mt-1 text-xs font-semibold text-brand-700">
+                            Crear servicio
+                          </button>
                         )}
                       </li>
                     ))}
@@ -1429,6 +1528,7 @@ export default function Mantenimientos() {
                       <thead><tr>
                         <th className="table-th">Servicio</th>
                         <th className="table-th">Programada</th>
+                        <th className="table-th">Técnico</th>
                         <th className="table-th">Inicio</th>
                         <th className="table-th">Término</th>
                         <th className="table-th text-center">Días</th>
@@ -1445,15 +1545,18 @@ export default function Mantenimientos() {
                               {it.es_mantenimiento_gratuito && <span className="ml-1 badge-green text-[10px]">Gratis</span>}
                             </td>
                             <td className="table-td text-xs">{formatFecha(it.fecha_programada)}</td>
+                            <td className="table-td text-xs">{tecnicoDeInstancia(it)}</td>
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_inicio_real)}</td>
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_fin_real)}</td>
                             <td className="table-td text-xs text-center font-mono">{formatDiasEjecucion(it.dias_ejecucion)}</td>
                             <td className="table-td"><span className={badgeEstado(it.estado_ejecucion)}>{it.estado_ejecucion}</span></td>
                             <td className="table-td text-right whitespace-nowrap">
                               {it.id_servicio ? (
-                                <>
-                                  <Link to={`/servicios/${it.id_servicio}`} className="text-brand-700 text-xs hover:underline">Ver</Link>
-                                </>
+                                <Link to={`/servicios/${it.id_servicio}`} className="text-brand-700 text-xs hover:underline"
+                                      title="Ver el servicio (ahí se cambia su técnico)">Ver</Link>
+                              ) : puedeCrear && it.id_programacion ? (
+                                <button type="button" onClick={() => abrirCrearServicio(it)}
+                                        className="text-brand-700 text-xs font-semibold hover:underline">Crear servicio</button>
                               ) : <span className="text-slate-400 text-xs">—</span>}
                             </td>
                           </tr>
@@ -1467,6 +1570,61 @@ export default function Mantenimientos() {
             </div>
           );
         })()}
+      </Modal>
+
+      {/* Crear el servicio de una visita del cronograma sin pasar por el calendario. */}
+      <Modal
+        open={!!creandoServicio}
+        onClose={() => !guardandoServicioVisita && setCreandoServicio(null)}
+        title="Crear servicio de mantenimiento"
+        size="md"
+        footer={<>
+          <button type="button" className="btn-secondary" onClick={() => setCreandoServicio(null)} disabled={guardandoServicioVisita}>Cancelar</button>
+          <button type="submit" form="form-crear-servicio-visita" className="btn-primary" disabled={guardandoServicioVisita}>
+            {guardandoServicioVisita ? 'Creando…' : 'Crear servicio'}
+          </button>
+        </>}
+      >
+        {creandoServicio && (
+          <form id="form-crear-servicio-visita" onSubmit={confirmarCrearServicio} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm bg-slate-50 ring-1 ring-slate-100 rounded-lg p-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">Edificio-Obra</div>
+                <div className="text-slate-800 font-medium">{creandoServicio.visita.cliente_nombre || '—'}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">Ascensor</div>
+                <div className="text-slate-800 font-mono">{creandoServicio.visita.ascensor_codigo || '—'}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">Fecha del cronograma</div>
+                <div className="text-slate-800">{formatFecha(creandoServicio.visita.fecha_programada)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">Técnico</div>
+                <div className="text-slate-800">
+                  {creandoServicio.visita.tecnico_plan || <span className="text-amber-700">Sin técnico en el plan</span>}
+                </div>
+              </div>
+            </div>
+            <ProgramacionDias
+              tramos={creandoServicio.tramos}
+              onChange={tramos => setCreandoServicio(c => ({ ...c, tramos }))}
+              ayuda="Rango de fechas, días sueltos o ambos. Solo esos días entran en el calendario del técnico." />
+            <div>
+              <label className="label">Hora</label>
+              <input type="time" className="input" value={creandoServicio.hora}
+                onChange={e => setCreandoServicio(c => ({ ...c, hora: e.target.value }))} />
+              {!creandoServicio.hora && <p className="text-[11px] text-slate-500 mt-1">Vacía: se usa la hora del plan.</p>}
+            </div>
+            <p className="text-xs text-slate-500">
+              {creandoServicio.visita.tecnico_plan
+                ? 'El servicio se crea asignado al técnico del plan. Si este mantenimiento lo hará otro, cámbialo desde el servicio.'
+                : 'El servicio se crea en «Pendiente»: asígnale el técnico desde el servicio, o define el técnico en el plan.'}
+              {' '}Cambiar las fechas aquí mueve solo esta visita; el resto del plan no cambia.
+            </p>
+          </form>
+        )}
       </Modal>
 
       {/* Omitir fechas del cronograma. El monto mensual NO cambia: es lo pactado. */}
@@ -1655,11 +1813,12 @@ export default function Mantenimientos() {
                     <strong className="font-mono text-slate-900 block">
                       {formatMonto(totalesForm.monto_mensual, 'PEN')}/mes · total {formatMonto(totalesForm.total, 'PEN')}
                     </strong>
-                    {totalesForm.meses_gratuitos > 0 && (
-                      <span className="text-[11px] text-emerald-700">
-                        {totalesForm.meses_facturables} mes(es) facturable(s) · {totalesForm.meses_gratuitos} gratuito(s)
-                      </span>
-                    )}
+                    <span className="text-[11px] text-slate-500">
+                      {totalesForm.meses_facturables} mes(es) con cobro × {formatMonto(totalesForm.monto_mensual, 'PEN')}
+                      {totalesForm.meses_gratuitos > 0 && (
+                        <span className="text-emerald-700"> · {totalesForm.meses_gratuitos} gratuito(s)</span>
+                      )}
+                    </span>
                   </span>
                 )}
               </div>
@@ -1689,23 +1848,6 @@ export default function Mantenimientos() {
                   Cada ascensor recibirá tantos mantenimientos como resulte de cruzar su frecuencia con estos meses.
                 </p>
               </div>
-              <div>
-                <label className="label">Frecuencia por defecto *</label>
-                <select className="select" required value={form.frecuencia} onChange={e => setForm(f => ({ ...f, frecuencia: e.target.value }))}>
-                  {frecuencias.map(fr => <option key={fr.codigo} value={fr.codigo}>{fr.etiqueta}</option>)}
-                </select>
-                <p className="text-xs text-slate-500 mt-1">
-                  Es la que se propone al marcar un ascensor. Cada uno puede cambiarla arriba.
-                </p>
-              </div>
-              {esFrecuenciaCustom && (
-                <div>
-                  <label className="label">Días entre mantenimientos (por defecto) *</label>
-                  <input type="number" min="1" step="1" className="input" required
-                    value={form.frecuencia_dias_custom}
-                    onChange={e => setForm(f => ({ ...f, frecuencia_dias_custom: e.target.value }))} />
-                </div>
-              )}
             </>
           )}
 
@@ -1716,7 +1858,8 @@ export default function Mantenimientos() {
                 value={form.monto_mensual}
                 onChange={e => setForm(f => ({ ...f, monto_mensual: e.target.value }))} />
               <p className="text-xs text-slate-500 mt-1">
-                Importe global que se cobra <strong>cada mes</strong>, sin importar cuántos mantenimientos caigan en él.
+                Importe de <strong>un mes con mantenimiento</strong> (referencia: frecuencia mensual). Solo se cobran los
+                meses con mantenimiento: un plan trimestral de 12 meses se cobra 4 veces.
               </p>
             </div>
           )}
@@ -1737,6 +1880,19 @@ export default function Mantenimientos() {
 
           <div><label className="label">Fecha inicio *</label><input type="date" className="input" required value={form.fecha_inicio} onChange={e => setForm(f => ({ ...f, fecha_inicio: e.target.value }))} /></div>
           <div><label className="label">Hora</label><input type="time" className="input" value={form.hora_programada} onChange={e => setForm(f => ({ ...f, hora_programada: e.target.value }))} /></div>
+          <div className="sm:col-span-2">
+            <label className="label">Técnico del plan</label>
+            <select className="select" value={form.id_tecnico} onChange={e => setForm(f => ({ ...f, id_tecnico: e.target.value }))}>
+              <option value="">— Sin técnico —</option>
+              {form.id_tecnico && !tecnicos.some(t => String(t.id) === form.id_tecnico) && (
+                <option value={form.id_tecnico}>Técnico actual (no disponible)</option>
+              )}
+              {tecnicos.map(t => <option key={t.id} value={String(t.id)}>{t.nombre}</option>)}
+            </select>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Se asigna a todos los servicios del plan{editando ? ' que aún no empezaron' : ''}. En cada servicio se puede cambiar a mano, y ese cambio se respeta si después cambias el técnico del plan.
+            </p>
+          </div>
           <div className="sm:col-span-2 text-xs text-slate-500 bg-slate-50 ring-1 ring-slate-200 rounded-md px-3 py-2">
             Al guardar se genera el cronograma completo: todas las fechas de cada ascensor para los meses del plan. Podrá revisarlas y <strong>omitir</strong> las que no se ejecutarán desde el detalle del plan; el monto mensual no cambia por omitir fechas.
           </div>

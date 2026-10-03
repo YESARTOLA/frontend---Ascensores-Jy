@@ -1059,6 +1059,7 @@ export default function CotizacionDetalle() {
                           <option value="mensual">Mensual</option>
                           <option value="bimestral">Bimestral</option>
                           <option value="trimestral">Trimestral</option>
+                          <option value="cuatrimestral">Cuatrimestral</option>
                           <option value="semestral">Semestral</option>
                           <option value="anual">Anual</option>
                           <option value="personalizada">Personalizada (días)</option>

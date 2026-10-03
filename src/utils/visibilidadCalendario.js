@@ -59,6 +59,19 @@ export function tiposRecordatorioPermitidos(rol) {
   return reglas(rol)?.tipos_recordatorio || [];
 }
 
+// Cualquier usuario puede tener recordatorios manuales —los que registra para sí
+// o los que otra persona registra para él—, así que ese tipo es visible para
+// todos los roles aunque no figure en su matriz (backend:
+// utils/visibilidadRecordatorios.js).
+const TIPO_MANUAL = 'manual';
+
+// Tipos de recordatorio que el rol puede llegar a ver, con su etiqueta y color,
+// para el filtro de Tipo del módulo de Recordatorios.
+export function tiposRecordatorioVisibles(rol) {
+  const permitidos = new Set([...tiposRecordatorioPermitidos(rol), TIPO_MANUAL]);
+  return CATALOGO_TIPOS_EVENTO.filter(t => permitidos.has(t.value));
+}
+
 // Tipos de evento visibles para el rol: los operativos si el rol ve operativos,
 // más cualquier tipo de "recordatorio puro" (cobro, observacion) que esté
 // autorizado en `tipos_recordatorio`. Devuelve la lista con `value` y `label`
@@ -69,7 +82,7 @@ export function tiposEventoVisibles(rol) {
   const tiposRec = tiposRecordatorioPermitidos(rol);
   return CATALOGO_TIPOS_EVENTO.filter(t => {
     if (t.dominio === 'operativo') return verOperativos;
-    return tiposRec.includes(t.value);
+    return tiposRec.includes(t.value) || t.value === TIPO_MANUAL;
   });
 }
 

@@ -28,6 +28,34 @@ export function visitasEnMeses(frecuencia, meses, diasCustom) {
   return Math.ceil((m * 30.4375) / paso);
 }
 
+/**
+ * Meses del plan (1-based) en que cae al menos una visita de esta frecuencia.
+ * Son los meses que se cobran (ver utils/planMantenimiento.js#totalesDelPlan):
+ * trimestral × 12 meses → {1, 4, 7, 10}. Anticipación para el formulario; el
+ * backend calcula los reales sobre el cronograma.
+ *
+ * @returns {Set<number>}
+ */
+export function mesesConVisita(frecuencia, meses, diasCustom) {
+  const m = Number(meses);
+  const salida = new Set();
+  if (!frecuencia || !Number.isInteger(m) || m < 1) return salida;
+  if (frecuencia.cada_meses) {
+    for (let i = 1; i <= m; i += frecuencia.cada_meses) salida.add(i);
+    return salida;
+  }
+  if (frecuencia.por_mes) {
+    for (let i = 1; i <= m; i++) salida.add(i);
+    return salida;
+  }
+  // Paso en días (diaria / personalizada): con el mes medio real.
+  const paso = frecuencia.codigo === 'custom' ? Number(diasCustom) : 1;
+  if (!Number.isInteger(paso) || paso <= 0) return salida;
+  const MES = 30.4375;
+  for (let d = 0; d < m * MES; d += paso) salida.add(Math.floor(d / MES) + 1);
+  return salida;
+}
+
 /** Texto corto del rendimiento: "12 visitas" / "24 visitas". */
 export function etiquetaVisitas(frecuencia, meses, diasCustom) {
   const n = visitasEnMeses(frecuencia, meses, diasCustom);

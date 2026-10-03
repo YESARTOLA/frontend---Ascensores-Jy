@@ -650,7 +650,7 @@ function labelFrecuencia(plan) {
   const codigos = {
     diaria: 'Diaria', semanal: 'Semanal', quincenal: 'Quincenal',
     mensual: 'Mensual', bimestral: 'Bimestral', trimestral: 'Trimestral',
-    semestral: 'Semestral', anual: 'Anual', custom: 'Personalizada'
+    cuatrimestral: 'Cuatrimestral', semestral: 'Semestral', anual: 'Anual', custom: 'Personalizada'
   };
   let etiqueta = codigos[plan.frecuencia] || plan.frecuencia || '';
   if (plan.frecuencia === 'custom' && plan.frecuencia_dias_custom) {

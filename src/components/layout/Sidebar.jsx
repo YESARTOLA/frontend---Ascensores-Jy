@@ -184,9 +184,7 @@ function Nav({ onClose, visibleFor, rol, accesoServicios, accesoProyectos }) {
       {visibleFor('super_admin', 'admin', 'contabilidad', 'tecnico', 'coordinador') && accesoProyectos && (
         <Link to="/servicios" icon={ICONS.briefcase} label="Proyectos" onClose={onClose} />
       )}
-      {visibleFor('super_admin', 'admin', 'coordinador') && (
-        <Link to="/asignaciones" icon={ICONS.list} label="Asignaciones" onClose={onClose} />
-      )}
+      {/* Asignaciones: módulo oculto para todos los roles (ver App.jsx). */}
       {visibleFor('tecnico') && (
         <Link to="/panel-tecnico" icon={ICONS.check} label="Panel técnico" onClose={onClose} />
       )}

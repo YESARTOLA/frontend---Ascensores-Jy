@@ -16,7 +16,7 @@ import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx'
 import ContratoNuevoModal from '../components/clientes/ContratoNuevoModal.jsx';
 import { ChipsDocumentosFactura } from '../components/facturas/DocumentosFactura.jsx';
 import { useClasificaciones } from '../hooks/useClasificaciones.js';
-import { AREAS_CLIENTE, ETIQUETA_AREA, areasPorContrato } from '../utils/areasCliente.js';
+import { AREAS_CLIENTE, ETIQUETA_AREA, areasDelCliente } from '../utils/areasCliente.js';
 
 // Pendientes y en curso comparten una sola tabla: la columna Estado distingue
 // cada uno. Se listan del más avanzado al menos avanzado.
@@ -134,7 +134,7 @@ export default function Cliente360() {
           <div className="card-body grid grid-cols-2 gap-3 text-sm">
             <Info label="Razón social" value={data.nombre || '—'} cols={2} />
             {/* El contrato del área del cliente (es de una sola), si el usuario la ve. */}
-            {(areasPorContrato(data).length ? areasPorContrato(data) : AREAS_CLIENTE)
+            {(areasDelCliente(data).length ? areasDelCliente(data) : AREAS_CLIENTE)
               .filter(area => area === 'servicio' ? accesoServicios : accesoProyectos)
               .map(area => {
                 const etiqueta = ETIQUETA_AREA[area];
@@ -266,7 +266,7 @@ export default function Cliente360() {
                           {a.ubicacion && <div className="text-xs text-slate-500">{a.ubicacion}</div>}
                         </div>
                         {a.estado === 0
-                          ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 ring-1 ring-rose-200 shrink-0">Inactivo</span>
+                          ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 ring-1 ring-rose-200 shrink-0">{a.fecha_eliminacion ? 'Eliminado' : 'Inactivo'}</span>
                           : <span className={badgeEstado(a.estado_operativo)}>{a.estado_operativo}</span>}
                       </div>
                     </Link>

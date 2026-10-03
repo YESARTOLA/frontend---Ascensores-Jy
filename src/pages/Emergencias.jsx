@@ -12,7 +12,8 @@ import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
-import AdjuntosEmergenciaModal from '../components/emergencias/AdjuntosEmergenciaModal.jsx';
+import AdjuntosRegistroModal, { ADJUNTOS_EMERGENCIA } from '../components/common/AdjuntosRegistroModal.jsx';
+import FiltrosEjecucionTecnico, { FILTROS_EJECUCION_VACIOS, contarFiltrosActivos } from '../components/common/FiltrosEjecucionTecnico.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, hoyISO, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
 import { esServicioEditable, esEmergenciaCerrada, estaServicioFinalizado, ESTADOS_EMERGENCIA } from '../utils/estadoServicio.js';
@@ -34,6 +35,8 @@ const FORM_ID = 'form-emergencia';
 // Sin campos económicos: la emergencia se registra siempre sin costo (el
 // backend la crea en 0 y marcada `sin_cobro`).
 const inicial = { id_cliente: '', id_ascensor: '', motivo: '', nivel_urgencia: 'alta', tramos: [], hora_programada: '', fecha_estimada_entrega: '', observaciones: '' };
+
+const FILTROS_VACIOS = { q: '', estado_emergencia: '', nivel_urgencia: '', ...FILTROS_EJECUCION_VACIOS };
 
 export default function Emergencias() {
   const [clientes, setClientes] = useState([]);
@@ -58,7 +61,7 @@ export default function Emergencias() {
   // Eliminar una emergencia (y su servicio vinculado) queda restringido al superadministrador.
   const puedeEliminar = esSuperAdmin;
 
-  const [filtros, setFiltros] = useState({ q: '', estado_emergencia: '', nivel_urgencia: '' });
+  const [filtros, setFiltros] = useState(FILTROS_VACIOS);
   const { data, loading, total, page, pageSize, totalPages, setPage, setPageSize, recargar } =
     usePaginatedList(emergenciasService.paginate, filtros, { initialPageSize: 25 });
   const cargar = recargar;
@@ -208,10 +211,13 @@ export default function Emergencias() {
     <>
       <PageHeader title="Emergencias" subtitle={`${total} emergencia(s)`} actions={puedeCrear && <button onClick={abrirNuevo} className="btn-danger">+ Nueva emergencia</button>} />
 
+      {/* relative z-20: el calendario del rango debe quedar sobre la tabla
+          (cada .card crea su propio contexto de apilado). */}
       <PanelFiltros
-        activos={Object.values(filtros).filter(Boolean).length}
-        onLimpiar={() => setFiltros({ q: '', estado_emergencia: '', nivel_urgencia: '' })}>
-        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+        className="relative z-20"
+        activos={contarFiltrosActivos(filtros)}
+        onLimpiar={() => setFiltros(FILTROS_VACIOS)}>
+        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
           <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
             value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_emergencia}
@@ -224,6 +230,7 @@ export default function Emergencias() {
             <option value="">Todas las urgencias</option>
             {NIVELES_URGENCIA.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
+          <FiltrosEjecucionTecnico filtros={filtros} setFiltros={setFiltros} />
         </div>
       </PanelFiltros>
 
@@ -505,19 +512,21 @@ export default function Emergencias() {
       </Modal>
 
       {/* Adjuntos de una emergencia ya existente (chip de la tabla). */}
-      <AdjuntosEmergenciaModal
+      <AdjuntosRegistroModal
+        config={ADJUNTOS_EMERGENCIA}
         open={!!adjuntosDe}
         onClose={() => setAdjuntosDe(null)}
-        idEmergencia={adjuntosDe?.id}
+        idRegistro={adjuntosDe?.id}
         puedeGestionar={puedeEditar}
         onCambio={cargar}
       />
 
       {/* Adjuntos en borrador durante la creación (aún no hay id de emergencia). */}
-      <AdjuntosEmergenciaModal
+      <AdjuntosRegistroModal
+        config={ADJUNTOS_EMERGENCIA}
         open={adjuntosBorradorAbierto}
         onClose={() => setAdjuntosBorradorAbierto(false)}
-        idEmergencia={null}
+        idRegistro={null}
         puedeGestionar={puedeCrear}
         borrador={adjuntosBorrador}
         onChangeBorrador={setAdjuntosBorrador}

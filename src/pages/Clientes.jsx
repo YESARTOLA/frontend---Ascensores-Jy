@@ -16,6 +16,7 @@ import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx'
 import ImpactoEliminacionCliente from '../components/clientes/ImpactoEliminacionCliente.jsx';
 import { FILTROS_ESTADO_REGISTRO, FILTRO_ESTADO_ACTIVOS } from '../utils/filtroEstadoRegistro.js';
 import { useClasificaciones } from '../hooks/useClasificaciones.js';
+import { areasDelCliente } from '../utils/areasCliente.js';
 
 const estadosContrato = (diasAviso) => [
   { value: '', label: 'Todos los contratos' },
@@ -123,10 +124,17 @@ export default function Clientes() {
   // Áreas de contrato visibles según el ámbito del usuario (Servicios/Proyectos).
   const areasContrato = ['servicio', 'proyecto'].filter(a => a === 'servicio' ? accesoServicios : accesoProyectos);
 
+  // El cliente es de una sola área: en la otra no le falta contrato, no le
+  // corresponde (se muestra «—» en vez de «Sin contrato»).
+  const esAreaAjena = (c, area) => {
+    const delCliente = areasDelCliente(c);
+    return delCliente.length > 0 && !delCliente.includes(area);
+  };
+
   // Resumen de contrato por área para el listado (badge + fechas + PDF).
   const renderContratoCell = (c) => (
     <div className="space-y-1">
-      {areasContrato.map(area => {
+      {areasContrato.filter(area => !esAreaAjena(c, area)).map(area => {
         const inicio = c[`contrato_${area}_inicio`];
         const fin = c[`contrato_${area}_fin`];
         const arch = c[`archivo_contrato_${area}`];
@@ -390,6 +398,13 @@ export default function Clientes() {
                           <Coincidencias cliente={c} />
                         </td>
                         {areasContrato.map(area => {
+                          if (esAreaAjena(c, area)) {
+                            return (
+                              <Fragment key={area}>
+                                {[0, 1, 2, 3].map(i => <td key={i} className="table-td text-xs text-slate-400">—</td>)}
+                              </Fragment>
+                            );
+                          }
                           const inicio = c[`contrato_${area}_inicio`];
                           const fin = c[`contrato_${area}_fin`];
                           const arch = c[`archivo_contrato_${area}`];

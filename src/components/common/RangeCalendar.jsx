@@ -35,8 +35,10 @@ function ymdLegible(s) {
  * Selector de rango de fechas con UN SOLO calendario: el primer clic fija el
  * inicio y el segundo el fin. Controlado por las props `desde`/`hasta`
  * ("YYYY-MM-DD" o ''), notifica cambios vía `onChange({ desde, hasta })`.
+ * `prefijo` (opcional) antecede a las fechas elegidas, para que un filtro sin
+ * label siga diciendo de qué es (p. ej. "Inicio: 01/10/2026 – 05/10/2026").
  */
-export default function RangeCalendar({ desde, hasta, onChange, placeholder = 'Rango de fechas' }) {
+export default function RangeCalendar({ desde, hasta, onChange, placeholder = 'Rango de fechas', prefijo = '' }) {
   const [abierto, setAbierto] = useState(false);
   const contenedorRef = useRef(null);
 
@@ -58,14 +60,14 @@ export default function RangeCalendar({ desde, hasta, onChange, placeholder = 'R
   };
 
   const etiqueta = desde || hasta
-    ? `${ymdLegible(desde) || '…'} – ${ymdLegible(hasta) || '…'}`
+    ? `${prefijo ? `${prefijo}: ` : ''}${ymdLegible(desde) || '…'} – ${ymdLegible(hasta) || '…'}`
     : placeholder;
 
   return (
     <div className="relative" ref={contenedorRef}>
       <button type="button" onClick={() => setAbierto(o => !o)}
         className="input flex items-center justify-between gap-2 w-full text-left">
-        <span className={desde || hasta ? 'text-slate-800' : 'text-slate-400'}>{etiqueta}</span>
+        <span className={`truncate ${desde || hasta ? 'text-slate-800' : 'text-slate-400'}`}>{etiqueta}</span>
         <span className="text-slate-400 shrink-0">📅</span>
       </button>
 

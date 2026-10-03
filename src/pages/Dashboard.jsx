@@ -206,7 +206,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 sm:gap-4">
             <KpiCard label="Agenda hoy"           value={data.coordinador?.agendaHoy?.length || 0} tone="brand"  icon={Icons.cal}     delay={0}   href="/calendario" />
             <KpiCard label="Emergencias activas"  value={data.emergenciasActivas}                  tone="red"    icon={Icons.alert}   delay={60}  href="/emergencias" />
-            <KpiCard label="Servicios pendientes" value={data.pendientes}                          tone="amber"  icon={Icons.pending} delay={120} href="/asignaciones" />
+            <KpiCard label="Servicios pendientes" value={data.pendientes}                          tone="amber"  icon={Icons.pending} delay={120} />
             <KpiCard label="Técnicos disponibles" value={data.tecnicosDisponibles}                 tone="slate"  icon={Icons.users}   delay={180} href="/tecnicos" />
             <KpiCard label="Mant. activos"        value={data.mantenimientosProximos}              tone="violet" icon={Icons.cal}     delay={240} href="/mantenimientos" />
           </div>
@@ -253,7 +253,7 @@ export default function Dashboard() {
         <>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 sm:gap-4">
             <KpiCard label="Pendientes"           value={data.pendientes}          tone="amber"  icon={Icons.pending} delay={0}   href="/servicios" />
-            <KpiCard label="Asignados"            value={data.asignados}           tone="brand"  icon={Icons.users}   delay={50}  href="/asignaciones" />
+            <KpiCard label="Asignados"            value={data.asignados}           tone="brand"  icon={Icons.users}   delay={50} />
             <KpiCard label="En curso"             value={data.enCurso}             tone="violet" icon={Icons.check}   delay={100} href="/servicios" />
             <KpiCard label="Finalizados"          value={data.finalizados}         tone="green"  icon={Icons.check}   delay={150} href="/servicios-realizados" />
             <KpiCard label="Emergencias activas"  value={data.emergenciasActivas}  tone="red"    icon={Icons.alert}   delay={200} href="/emergencias" />

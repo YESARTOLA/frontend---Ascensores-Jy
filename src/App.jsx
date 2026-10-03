@@ -52,7 +52,6 @@ import TiposAscensor from './pages/TiposAscensor.jsx';
 import Servicios from './pages/Servicios.jsx';
 import ServicioDetalle from './pages/ServicioDetalle.jsx';
 import PanelTecnico from './pages/PanelTecnico.jsx';
-import Asignaciones from './pages/Asignaciones.jsx';
 import ServiciosRealizados from './pages/ServiciosRealizados.jsx';
 import Cobros from './pages/Cobros.jsx';
 import CobroDetalle from './pages/CobroDetalle.jsx';
@@ -126,7 +125,11 @@ export default function App() {
         <Route path="/servicios" element={<RequireRole allow={['super_admin','admin','contabilidad','tecnico','coordinador']}><RequireAlcance ambito="proyectos"><Servicios /></RequireAlcance></RequireRole>} />
         <Route path="/servicios/:id" element={<ServicioDetalle />} />
         <Route path="/panel-tecnico" element={<PanelTecnico />} />
-        <Route path="/asignaciones" element={<Asignaciones />} />
+        {/* Asignaciones: módulo OCULTO para todos los roles. La pantalla
+            (pages/Asignaciones.jsx) se conserva; quien entre por la URL vuelve
+            al inicio. Para reactivarlo: restaurar esta ruta y el enlace del
+            menú (Sidebar / MobileNav). */}
+        <Route path="/asignaciones" element={<Navigate to="/" replace />} />
         <Route path="/servicios-realizados" element={<ServiciosRealizados />} />
         <Route path="/entregas" element={<Entregas />} />
         <Route path="/cobros" element={<Cobros />} />

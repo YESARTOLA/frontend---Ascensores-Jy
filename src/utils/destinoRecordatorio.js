@@ -31,7 +31,9 @@ export function destinoRecordatorio(r) {
  */
 export function etiquetaDestinoRecordatorio(r) {
   if (!r) return null;
-  if (r.servicio?.id) return `Servicio ${r.servicio.codigo || ''}`.trim();
+  if (r.servicio?.id) {
+    return `${r.servicio.tipo_registro === 'proyecto' ? 'Proyecto' : 'Servicio'} ${r.servicio.codigo || ''}`.trim();
+  }
   if (r.emergencia?.servicio?.id) {
     return `Servicio ${r.emergencia.servicio.codigo || ''}`.trim() + ' · Emergencia';
   }

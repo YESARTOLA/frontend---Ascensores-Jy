@@ -46,15 +46,15 @@ export const clienteFormInicial = {
   contacto_cobranzas_nombre: '', contacto_cobranzas_correo: '', contacto_cobranzas_telefono: '',
   contacto_admin_nombre: '', contacto_admin_correo: '', contacto_admin_telefono: '',
   clasificacion: '',
-  // Área del cliente (UI, no se envía tal cual): 'servicio' o 'proyecto', nunca
-  // las dos. Es lo PRIMERO que se elige: decide qué contrato y documentación se
-  // piden y qué clasificaciones se ofrecen. Arranca vacía para que se elija a
-  // conciencia.
+  // Área del cliente: 'servicio' o 'proyecto', nunca las dos. Es lo PRIMERO que
+  // se elige y se guarda en el cliente: decide qué usuarios lo ven, qué contrato
+  // y documentación se registran y qué clasificaciones se ofrecen. Arranca vacía
+  // para que se elija a conciencia.
   area: '',
-  // Solo al editar (UI): áreas con datos que el cliente ya tenía al abrirlo.
+  // Solo al editar (UI): áreas a las que el cliente ya pertenecía al abrirlo.
   areasRegistradas: [],
-  // Contrato de servicio del área del cliente (fechas + documento firmado). Hay
-  // un juego de campos por área, pero solo se llena el de la elegida.
+  // Contrato de servicio del área del cliente (fechas + documento firmado). Es
+  // opcional. Hay un juego de campos por área, pero solo se llena el de la elegida.
   contrato_servicio_inicio: '', contrato_servicio_fin: '',
   id_archivo_contrato_servicio: null, archivo_contrato_servicio: null,
   contrato_proyecto_inicio: '', contrato_proyecto_fin: '',
@@ -67,14 +67,14 @@ export const clienteFormInicial = {
 /** Mapea un cliente del backend al estado del formulario (modo edición). */
 export function clienteToForm(c, archivos = []) {
   const porArea = (area) => (archivos || []).filter(a => (a.area || 'servicio') === area);
-  // Al editar, el área es la que ya tiene datos (contrato o adjuntos). Si tiene
-  // las dos (cliente de cuando existía la opción «Ambas») queda sin elegir: hay
-  // que decidir a cuál pertenece.
-  const conData = AREAS_CLIENTE.filter(a =>
+  // Al editar, el área es la guardada en el cliente, más las que tengan datos
+  // (contrato o adjuntos). Si resultan las dos (cliente de cuando existía la
+  // opción «Ambas») queda sin elegir: hay que decidir a cuál pertenece.
+  const registradas = AREAS_CLIENTE.filter(a => a === c.area ||
     c[`contrato_${a}_inicio`] || c[`contrato_${a}_fin`] || c[`id_archivo_contrato_${a}`] || porArea(a).length > 0);
   return {
-    area: conData.length === 1 ? conData[0] : '',
-    areasRegistradas: conData,
+    area: registradas.length === 1 ? registradas[0] : '',
+    areasRegistradas: registradas,
     tipo_documento: c.tipo_documento, numero_documento: c.numero_documento || '',
     nombre: c.nombre,
     contacto_principal_nombre: c.contacto_principal_nombre || '',
@@ -231,15 +231,18 @@ export default function ClienteForm({ formId, value, onChange, onSubmit }) {
       toast.error('Primero elige el área del cliente: Servicios o Proyectos.');
       return;
     }
-    // El contrato (inicio + fin) del área del cliente es obligatorio. El backend
-    // revalida.
-    if (area && !(value[`contrato_${area}_inicio`] && value[`contrato_${area}_fin`])) {
-      toast.error(`Registre el contrato (inicio y fin) del Área de ${ETIQUETA_AREA[area]}.`);
+    // El contrato es opcional (se puede registrar el cliente sin fechas ni
+    // documento), pero si se pone una fecha van las dos. El backend revalida.
+    if (area && !value[`contrato_${area}_inicio`] !== !value[`contrato_${area}_fin`]) {
+      toast.error('Complete el inicio y el fin del contrato, o deje ambas fechas vacías.');
       return;
     }
     const payload = { ...value };
-    delete payload.area; // campos de UI, no se persisten
-    delete payload.areasRegistradas;
+    delete payload.areasRegistradas; // campo de UI, no se persiste
+    // Sin área (cliente de un área que este usuario no gestiona) no se manda y
+    // el backend conserva la suya.
+    if (area) payload.area = area;
+    else delete payload.area;
     for (const a of AREAS_CLIENTE) {
       const k = kContrato(a);
       delete payload[k.archivo]; // solo se manda el id del archivo, no el objeto
@@ -276,7 +279,10 @@ export default function ClienteForm({ formId, value, onChange, onSubmit }) {
     const lista = value[campo] || [];
     return (
       <div className="sm:col-span-2 border border-slate-300 rounded-lg p-4 bg-white space-y-3">
-        <div className="text-sm font-semibold text-slate-800">{titulo}</div>
+        <div>
+          <div className="text-sm font-semibold text-slate-800">{titulo}</div>
+          <p className="text-[11px] text-slate-500">Opcional: el cliente se puede registrar sin contrato y agregarlo después.</p>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label">Inicio contrato</label>

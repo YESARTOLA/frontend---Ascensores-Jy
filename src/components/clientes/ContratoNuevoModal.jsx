@@ -7,15 +7,15 @@ import { FileLink } from '../common/FilePreview.jsx';
 import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
 import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { formatFecha } from '../../utils/formatters.js';
-import { AREAS_CLIENTE, ETIQUETA_AREA, areasPorContrato } from '../../utils/areasCliente.js';
+import { AREAS_CLIENTE, ETIQUETA_AREA, areasDelCliente } from '../../utils/areasCliente.js';
 
 const soloFecha = (v) => (v ? String(v).substring(0, 10) : '');
 
 // Un cliente es de una sola área: el contrato nuevo se registra en la suya (y
-// solo si el usuario la gestiona). Sin contrato registrado, en cualquiera de
-// las del usuario.
+// solo si el usuario la gestiona), tenga o no contrato. Un cliente antiguo sin
+// área ni contrato, en cualquiera de las del usuario.
 function areasRenovables(cliente, areasDisponibles) {
-  const delCliente = areasPorContrato(cliente);
+  const delCliente = areasDelCliente(cliente);
   return delCliente.length ? areasDisponibles.filter(a => delCliente.includes(a)) : areasDisponibles;
 }
 
@@ -74,7 +74,7 @@ export default function ContratoNuevoModal({ cliente, onClose, onSaved }) {
             Cliente: <span className="font-semibold text-slate-800">{cliente.nombre}</span>
           </div>
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-            Este cliente es del Área de {ETIQUETA_AREA[areasPorContrato(cliente)[0]]}: su contrato lo registra esa área.
+            Este cliente es del Área de {ETIQUETA_AREA[areasDelCliente(cliente)[0]]}: su contrato lo registra esa área.
           </div>
         </div>
       </Modal>

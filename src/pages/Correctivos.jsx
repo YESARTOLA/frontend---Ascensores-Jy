@@ -12,35 +12,21 @@ import PanelFiltros from '../components/common/PanelFiltros.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
+import AdjuntosRegistroModal, { ADJUNTOS_CORRECTIVO } from '../components/common/AdjuntosRegistroModal.jsx';
+import FiltrosEjecucionTecnico, { FILTROS_EJECUCION_VACIOS, contarFiltrosActivos } from '../components/common/FiltrosEjecucionTecnico.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, hoyISO, nombreCliente, nombreEdificio } from '../utils/formatters.js';
 import { esAscensorServiciable } from '../utils/ascensoresSeleccion.js';
 import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
 import {
   tramoDeUnDia, tramosDeServicio, fechasDesdeTramos, payloadDias, errorDeTramos, etiquetaProgramacion
 } from '../utils/programacion.js';
-
-// Duración de trabajo entre inicio y término reales, en formato compacto (ej. "1h 25m").
-function formatDuracion(inicio, fin) {
-  if (!inicio || !fin) return '—';
-  const ms = new Date(fin).getTime() - new Date(inicio).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '—';
-  const min = Math.round(ms / 60000);
-  const d = Math.floor(min / 1440);
-  const h = Math.floor((min % 1440) / 60);
-  const m = min % 60;
-  const partes = [];
-  if (d) partes.push(`${d}d`);
-  if (h) partes.push(`${h}h`);
-  if (m || partes.length === 0) partes.push(`${m}m`);
-  return partes.join(' ');
-}
 import { esServicioEditable, ESTADOS_CORRECTIVO, esCorrectivoCerrado } from '../utils/estadoServicio.js';
 import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisponiblesPara } from '../utils/asignaciones.js';
 
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
 const NIVELES = ['alta', 'media', 'baja'];
-const ESTADOS_FILTRO_CORRECTIVO = ['', ...ESTADOS_CORRECTIVO];
 const FORM_ID = 'form-correctivo';
+const FILTROS_VACIOS = { q: '', estado_correctivo: '', nivel_urgencia: '', ...FILTROS_EJECUCION_VACIOS };
 
 const inicial = {
   id_cliente: '', id_ascensor: '', falla: '',
@@ -53,21 +39,21 @@ const inicial = {
   requiere_factura: true, observaciones: ''
 };
 
-function badgeUrgencia(n) {
-  if (n === 'alta') return 'badge-red';
-  if (n === 'media') return 'badge-amber';
-  return 'badge-gray';
-}
-
 export default function Correctivos() {
   const [clientes, setClientes] = useState([]);
   const [ascensores, setAscensores] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
-  const [filtros, setFiltros] = useState({ q: '', estado_correctivo: '', nivel_urgencia: '' });
+  const [filtros, setFiltros] = useState(FILTROS_VACIOS);
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(inicial);
   const [asignaciones, setAsignaciones] = useState([]);
+  // Correctivo cuyo modal de adjuntos está abierto desde la tabla.
+  const [adjuntosDe, setAdjuntosDe] = useState(null);
+  // Adjuntos cargados durante la CREACIÓN: el correctivo aún no existe, así que
+  // se guardan aquí y viajan como ids en el payload de create.
+  const [adjuntosBorrador, setAdjuntosBorrador] = useState([]);
+  const [adjuntosBorradorAbierto, setAdjuntosBorradorAbierto] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const toast = useToast();
@@ -123,6 +109,7 @@ export default function Correctivos() {
       requiere_factura: puedeVerPrecio ? inicial.requiere_factura : false
     });
     setAsignaciones([]);
+    setAdjuntosBorrador([]);
     setOpen(true);
   };
 
@@ -176,6 +163,8 @@ export default function Correctivos() {
     setEditando(null);
     setForm(inicial);
     setAsignaciones([]);
+    setAdjuntosBorrador([]);
+    setAdjuntosBorradorAbierto(false);
   };
 
   const guardar = async (e) => {
@@ -218,6 +207,7 @@ export default function Correctivos() {
           precio_interno: form.sin_cobro ? 0 : form.precio_interno,
           requiere_factura: form.sin_cobro ? false : form.requiere_factura,
           tecnicos: asignaciones,
+          archivos: adjuntosBorrador.map((a, i) => ({ id_archivo: a.id_archivo, orden: i + 1 }))
         };
         await correctivosService.create(payload);
         toast.success('Correctivo registrado');
@@ -241,28 +231,34 @@ export default function Correctivos() {
         actions={puedeCrear && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo correctivo</button>}
       />
 
+      {/* relative z-20: el calendario del rango debe quedar sobre la tabla
+          (cada .card crea su propio contexto de apilado). */}
       <PanelFiltros
-        activos={Object.values(filtros).filter(Boolean).length}
-        onLimpiar={() => setFiltros({ q: '', estado_correctivo: '', nivel_urgencia: '' })}>
-        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+        className="relative z-20"
+        activos={contarFiltrosActivos(filtros)}
+        onLimpiar={() => setFiltros(FILTROS_VACIOS)}>
+        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
           <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
             value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
           <select className="select" value={filtros.estado_correctivo}
             onChange={e => setFiltros(f => ({ ...f, estado_correctivo: e.target.value }))}>
-            {ESTADOS_FILTRO_CORRECTIVO.map(s => <option key={s} value={s}>{s || 'Todos los estados'}</option>)}
+            <option value="">Todos los estados</option>
+            {ESTADOS_CORRECTIVO.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <select className="select" value={filtros.nivel_urgencia}
             onChange={e => setFiltros(f => ({ ...f, nivel_urgencia: e.target.value }))}>
             <option value="">Todas las urgencias</option>
             {NIVELES.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
+          <FiltrosEjecucionTecnico filtros={filtros} setFiltros={setFiltros} />
         </div>
       </PanelFiltros>
 
       <div className="card">
         {loading ? <Loader /> : data.length === 0 ? <EmptyState title="Sin correctivos" /> : (
           <>
-          <div className="hidden lg:block overflow-x-auto scroll-thin">
+          {/* Mismas columnas que Emergencias. */}
+          <div className="hidden md:block overflow-x-auto scroll-thin">
             <table className="table-base">
               <thead>
                 <tr>
@@ -272,20 +268,14 @@ export default function Correctivos() {
                   <th className="table-th">Fecha programada</th>
                   <th className="table-th">Fecha estimada término</th>
                   <th className="table-th">Estado</th>
-                  <th className="table-th">Urgencia</th>
                   <th className="table-th">Servicio</th>
-                  <th className="table-th">Ejecución</th>
                   <th className="table-th">Técnico</th>
-                  <th className="table-th">Inicio</th>
-                  <th className="table-th">Término</th>
-                  <th className="table-th">Días</th>
-                  <th className="table-th">Observaciones</th>
+                  <th className="table-th">Adjuntos</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data.map(c => {
-                  const ej = c.ejecucion || {};
                   const editable = puedeEditar
                     && !esCorrectivoCerrado(c.estado_correctivo)
                     && (!c.servicio || esServicioEditable(c.servicio.estado_servicio));
@@ -299,11 +289,10 @@ export default function Correctivos() {
                     <td className="table-td text-sm">{c.falla}</td>
                     <td className="table-td text-xs" title={etiquetaProgramacion(c.servicio).detalle}>{etiquetaProgramacion(c.servicio).texto}</td>
                     <td className="table-td text-xs">{c.servicio?.fecha_estimada_entrega ? formatFecha(c.servicio.fecha_estimada_entrega) : '—'}</td>
-                    <td className="table-td"><span className={`badge ${badgeEstado(c.estado_correctivo)}`}>{c.estado_correctivo}</span></td>
-                    <td className="table-td"><span className={`badge ${badgeUrgencia(c.nivel_urgencia)}`}>{c.nivel_urgencia}</span></td>
+                    <td className="table-td"><span className={badgeEstado(c.estado_correctivo)}>{c.estado_correctivo}</span></td>
                     <td className="table-td">
                       {c.servicio ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <Link to={`/servicios/${c.servicio.id}`} className="font-mono text-xs text-brand-700">{c.servicio.codigo}</Link>
                           {/* Distintivo del correctivo gratuito: lo ven todos los
                               roles, no solo los financieros. */}
@@ -326,13 +315,21 @@ export default function Correctivos() {
                         </div>
                       ) : '—'}
                     </td>
-                    <td className="table-td"><span className={badgeEstado(ej.estado_ejecucion)}>{ej.estado_ejecucion || '—'}</span></td>
                     <td className="table-td text-xs">{(c.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ') || '—'}</td>
-                    <td className="table-td text-xs">{ej.fecha_inicio_real ? formatFechaHora(ej.fecha_inicio_real) : '—'}</td>
-                    <td className="table-td text-xs">{ej.fecha_fin_real ? formatFechaHora(ej.fecha_fin_real) : '—'}</td>
-                    <td className="table-td text-xs">{formatDuracion(ej.fecha_inicio_real, ej.fecha_fin_real)}</td>
-                    <td className="table-td text-xs text-slate-600 max-w-[16rem]">
-                      {c.observaciones || <span className="text-slate-400">—</span>}
+                    <td className="table-td text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setAdjuntosDe(c)}
+                        title="Ver fotos y videos del correctivo"
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ring-1 transition ${
+                          (c._count?.archivos || 0) > 0
+                            ? 'bg-brand-50 text-brand-700 ring-brand-200 hover:bg-brand-100'
+                            : 'text-slate-400 ring-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span aria-hidden="true">📎</span>
+                        {c._count?.archivos || 0}
+                      </button>
                     </td>
                     <td className="table-td text-right whitespace-nowrap">
                       {c.servicio && (
@@ -359,16 +356,15 @@ export default function Correctivos() {
             </table>
           </div>
 
-          {/* MÓVIL. La tabla tiene quince columnas: en un teléfono obligaba a
-              arrastrar de lado perdiendo de vista el edificio. Cada correctivo
-              pasa a ser una tarjeta con los MISMOS datos y las mismas acciones. */}
-          <ListaMovil hasta="lg">
+          {/* MÓVIL. Cada correctivo es una tarjeta con los MISMOS datos y las
+              mismas acciones que la tabla, igual que en Emergencias. */}
+          <ListaMovil>
             {data.map(c => {
-              const ej = c.ejecucion || {};
               const editable = puedeEditar
                 && !esCorrectivoCerrado(c.estado_correctivo)
                 && (!c.servicio || esServicioEditable(c.servicio.estado_servicio));
               const tecnicos = (c.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ');
+              const adjuntos = c._count?.archivos || 0;
               return (
                 <FilaMovil
                   key={c.id}
@@ -380,8 +376,7 @@ export default function Correctivos() {
                   badge={<span className={badgeEstado(c.estado_correctivo)}>{c.estado_correctivo}</span>}
                   chips={
                     <>
-                      <span className={`badge ${badgeUrgencia(c.nivel_urgencia)}`}>{c.nivel_urgencia}</span>
-                      {ej.estado_ejecucion && <span className={badgeEstado(ej.estado_ejecucion)}>{ej.estado_ejecucion}</span>}
+                      {adjuntos > 0 && <span className="badge-blue text-[10px]">📎 {adjuntos} adjunto{adjuntos > 1 ? 's' : ''}</span>}
                       {c.servicio?.sin_cobro === 1 && <span className="badge-amber text-[10px]">Gratuito</span>}
                       {c.servicio && (
                         <span className={`text-[10px] ${c.servicio.sin_cobro === 1 || c.servicio.requiere_factura === 0 ? 'badge-gray' : 'badge-blue'}`}>
@@ -394,15 +389,12 @@ export default function Correctivos() {
                     ['Reportado', formatFechaHora(c.fecha_reporte)],
                     ['Programada', etiquetaProgramacion(c.servicio).texto],
                     ['Estimada término', c.servicio?.fecha_estimada_entrega ? formatFecha(c.servicio.fecha_estimada_entrega) : null],
-                    ['Técnico', tecnicos || 'Sin asignar'],
-                    ['Inicio', ej.fecha_inicio_real ? formatFechaHora(ej.fecha_inicio_real) : null],
-                    ['Término', ej.fecha_fin_real ? formatFechaHora(ej.fecha_fin_real) : null],
-                    ['Duración', formatDuracion(ej.fecha_inicio_real, ej.fecha_fin_real) !== '—' ? formatDuracion(ej.fecha_inicio_real, ej.fecha_fin_real) : null],
-                    ['Observaciones', c.observaciones]
+                    ['Técnico', tecnicos || 'Sin asignar']
                   ]}
-                  acciones={(c.servicio || editable || puedeEliminar) && (
+                  acciones={
                     <>
                       {c.servicio && <AccionFila to={`/servicios/${c.servicio.id}`}>Ver detalle</AccionFila>}
+                      <AccionFila onClick={() => setAdjuntosDe(c)}>📎 Adjuntos ({adjuntos})</AccionFila>
                       {editable && <AccionFila onClick={() => abrirEditar(c)}>Editar</AccionFila>}
                       {/* El interruptor con/sin factura vive aquí y no entre los
                           chips: dentro del enlace de la fila sería un botón
@@ -414,7 +406,7 @@ export default function Correctivos() {
                       )}
                       {puedeEliminar && <AccionFila tono="rose" onClick={() => setAEliminar(c)}>Eliminar</AccionFila>}
                     </>
-                  )}
+                  }
                 />
               );
             })}
@@ -556,6 +548,20 @@ export default function Correctivos() {
             <>
               <div className="border-t border-slate-100 pt-4">
                 <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium text-slate-800">Fotos y videos (opcional)</h4>
+                  <button type="button" onClick={() => setAdjuntosBorradorAbierto(true)} className="btn-secondary text-xs">
+                    {adjuntosBorrador.length > 0 ? `Gestionar (${adjuntosBorrador.length})` : '+ Agregar adjuntos'}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  {adjuntosBorrador.length === 0
+                    ? 'Adjunta fotos o videos de la falla para que el técnico asignado los revise antes de salir a campo.'
+                    : `${adjuntosBorrador.length} archivo(s) listo(s) para vincularse al registrar.`}
+                </p>
+              </div>
+
+              <div className="border-t border-slate-100 pt-4">
+                <div className="flex items-center justify-between mb-2">
                   <h4 className="font-medium text-slate-800">Técnicos asignados (opcional)</h4>
                   <button type="button" onClick={agregarTec} className="btn-secondary text-xs">+ Agregar técnico</button>
                 </div>
@@ -600,6 +606,27 @@ export default function Correctivos() {
           )}
         </div>
       </Modal>
+
+      {/* Adjuntos de un correctivo ya existente (chip de la tabla). */}
+      <AdjuntosRegistroModal
+        config={ADJUNTOS_CORRECTIVO}
+        open={!!adjuntosDe}
+        onClose={() => setAdjuntosDe(null)}
+        idRegistro={adjuntosDe?.id}
+        puedeGestionar={puedeEditar}
+        onCambio={cargar}
+      />
+
+      {/* Adjuntos en borrador durante la creación (aún no hay id de correctivo). */}
+      <AdjuntosRegistroModal
+        config={ADJUNTOS_CORRECTIVO}
+        open={adjuntosBorradorAbierto}
+        onClose={() => setAdjuntosBorradorAbierto(false)}
+        idRegistro={null}
+        puedeGestionar={puedeCrear}
+        borrador={adjuntosBorrador}
+        onChangeBorrador={setAdjuntosBorrador}
+      />
 
       <ConfirmarEliminacion
         open={!!aEliminar}

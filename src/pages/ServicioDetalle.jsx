@@ -20,6 +20,7 @@ import { ESTADOS_GUIA, ESTADO_GUIA_OBSERVADA, ESTADO_GUIA_ADJUNTA, estadoGuiaSeg
 import ObservacionesServicioPanel from '../components/servicios/ObservacionesServicioPanel.jsx';
 import ChecklistFinalizacionPanel from '../components/servicios/ChecklistFinalizacionPanel.jsx';
 import InformePreviewModal from '../components/servicios/InformePreviewModal.jsx';
+import RecordatorioFormModal from '../components/recordatorios/RecordatorioFormModal.jsx';
 import MapaUbicacion from '../components/common/MapaUbicacion.jsx';
 import SeccionColapsable from '../components/common/SeccionColapsable.jsx';
 import { useEsMovil } from '../hooks/useMediaQuery.js';
@@ -31,6 +32,7 @@ import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import {
   tramoDeUnDia, tramosDeServicio, payloadDias, errorDeTramos, resumenProgramacion
 } from '../utils/programacion.js';
+import { precioMensualDelPlan } from '../utils/planMantenimiento.js';
 
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
 const TIPOS_EVIDENCIA = ['Foto', 'Video', 'Documento', 'Otro'];
@@ -244,6 +246,8 @@ export default function ServicioDetalle() {
   const [checklistResumen, setChecklistResumen] = useState({ completo: false });
   const [generandoInforme, setGenerandoInforme] = useState(false);
   const [openEntrega, setOpenEntrega] = useState(false);
+  // Recordatorio ligado a este servicio/proyecto, para uno mismo o para otra persona.
+  const [openRecordatorio, setOpenRecordatorio] = useState(false);
   const [openEvidencia, setOpenEvidencia] = useState(false);
   const [asignaciones, setAsignaciones] = useState([]);
   // Previsualización del informe: el técnico revisa y corrige los textos antes
@@ -353,20 +357,9 @@ export default function ServicioDetalle() {
   // corrige desde el plan (Mantenimientos → detalle → Precio) y la fecha con
   // "Reprogramar".
   const esMantenimientoDePlan = !!s.id_mantenimiento_plan;
-  // Precio de un mantenimiento de plan. La visita NO tiene precio propio: nace
-  // con precio_interno = 0 porque el importe pactado es el monto MENSUAL del
-  // plan, que no cambia con cuántas visitas caigan en el mes (una sola factura
-  // al mes, contra la cuota del plan). Mostrar ese 0 hacía leer el mantenimiento
-  // como gratuito, así que se muestra el precio del plan, etiquetado como tal.
-  // Si la visita sí trae precio propio (planes del modelo anterior) manda el suyo.
-  const precioDelPlan = (esMantenimientoDePlan
-    && Number(s.precio_interno || 0) === 0
-    && s.mantenimiento_plan?.monto_mensual != null)
-    ? {
-        monto: Number(s.mantenimiento_plan.monto_mensual),
-        moneda: s.mantenimiento_plan.moneda || s.moneda
-      }
-    : null;
+  // Precio de un mantenimiento de plan: el monto mensual del plan, etiquetado
+  // como tal. Si la visita trae precio propio (modelo anterior) manda el suyo.
+  const precioDelPlan = precioMensualDelPlan(s);
   // Reprogramar sí aplica a los mantenimientos del plan (mueve la fecha de esa
   // ocurrencia); la edición libre del formulario de Proyectos, no.
   const puedeReprogramar = (esSuperAdmin || esAdmin) && esServicioEditable(s.estado_servicio);
@@ -989,6 +982,7 @@ export default function ServicioDetalle() {
             {puedeRevisar && <button onClick={() => abrirRevisar('observado')} className="btn-secondary !text-ember-700 !border-ember-200">Observar</button>}
             {puedeRevisar && <button onClick={() => abrirRevisar('rechazado')} className="btn-secondary !text-rose-700 !border-rose-200">Rechazar</button>}
             {puedeGestionarEntregas && <button onClick={() => setOpenEntrega(true)} className="btn-secondary">+ Entrega</button>}
+            <button onClick={() => setOpenRecordatorio(true)} className="btn-secondary">+ Recordatorio</button>
             {(esSuperAdmin || esAdmin) && !['Cerrado', 'Cancelado'].includes(s.estado_servicio) && <button onClick={cancelar} className="btn-danger">Cancelar</button>}
           </>
         } />
@@ -1967,6 +1961,13 @@ export default function ServicioDetalle() {
           );
         })()}
       </Modal>
+
+      <RecordatorioFormModal
+        open={openRecordatorio}
+        procesoFijo={{ id_servicio: s.id, etiqueta: `${s.tipo_registro === 'proyecto' ? 'Proyecto' : 'Servicio'} ${s.codigo} · ${s.titulo}` }}
+        onClose={() => setOpenRecordatorio(false)}
+        onSaved={() => setOpenRecordatorio(false)}
+      />
 
       <Modal open={openEntrega} onClose={() => setOpenEntrega(false)} title="Nueva entrega" size="lg"
         footer={<><button className="btn-secondary" onClick={() => setOpenEntrega(false)}>Cancelar</button><button className="btn-primary" onClick={guardarEntrega}>Guardar</button></>}>

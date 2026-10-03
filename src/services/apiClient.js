@@ -32,9 +32,33 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// Reintentos ante un backend momentáneamente caído: en desarrollo nodemon lo
+// reinicia con cada cambio de código (ver backendNoDisponible en vite.config.js)
+// y en producción puede coincidir con un redeploy. Solo se repite lo que es
+// seguro repetir: cualquier petición que no llegó a salir hacia el backend, y
+// las lecturas (GET) que se cortaron a medias.
+const MAX_REINTENTOS = 5;
+const ESPERA_REINTENTO_MS = 1000;
+
+function debeReintentar(err) {
+  const config = err.config;
+  if (!config || (config.__reintentos || 0) >= MAX_REINTENTOS) return false;
+  const res = err.response;
+  if (res?.status === 503 && res.headers?.['x-backend-no-disponible'] === 'sin-conexion') return true;
+  if ((config.method || 'get').toLowerCase() !== 'get') return false;
+  // Sin respuesta: solo un corte de red, no un timeout ni una cancelación.
+  if (!res) return err.code === 'ERR_NETWORK';
+  return [502, 503, 504].includes(res.status);
+}
+
 apiClient.interceptors.response.use(
   (r) => r,
-  (err) => {
+  async (err) => {
+    if (debeReintentar(err)) {
+      err.config.__reintentos = (err.config.__reintentos || 0) + 1;
+      await new Promise(resolve => setTimeout(resolve, ESPERA_REINTENTO_MS));
+      return apiClient(err.config);
+    }
     if (err.response?.status === 401) {
       localStorage.removeItem('ajy_token');
       localStorage.removeItem('ajy_user');

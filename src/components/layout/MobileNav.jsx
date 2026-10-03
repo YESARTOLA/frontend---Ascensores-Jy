@@ -34,7 +34,7 @@ export default function MobileNav({ onMas }) {
   } else if (rol === 'coordinador') {
     items = [
       { to: '/', label: 'Inicio', icon: 'home' },
-      { to: '/asignaciones', label: 'Asignaciones', icon: 'briefcase' },
+      // Asignaciones: módulo oculto para todos los roles (ver App.jsx).
       { to: '/calendario', label: 'Agenda', icon: 'calendar' },
       { to: '/recordatorios', label: 'Recordatorios', icon: 'doc' }
     ];
