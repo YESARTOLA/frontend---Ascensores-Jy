@@ -169,6 +169,8 @@ export const cobrosService = {
   get: (id) => api.get(`/cobros/${id}`).then(r => r.data?.data ?? r.data),
   setPlanCuotas: (id, payload) => api.put(`/cobros/${id}/plan-cuotas`, payload).then(r => r.data),
   registrarPago: (id, payload) => api.post(`/cobros/${id}/pagos`, payload).then(r => r.data),
+  editarFechaPago: (id, idPago, fecha_pago) =>
+    api.patch(`/cobros/${id}/pagos/${idPago}/fecha`, { fecha_pago }).then(r => r.data),
   recordatorio: (id) => api.post(`/cobros/${id}/recordatorio`).then(r => r.data?.data ?? r.data),
   cerrar: (id) => api.patch(`/cobros/${id}/cerrar`).then(r => r.data),
   cuotasCalendario: (params) => api.get('/cobros/cuotas-calendario', { params }).then(r => r.data?.data ?? r.data),

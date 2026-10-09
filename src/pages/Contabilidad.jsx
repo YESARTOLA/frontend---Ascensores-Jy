@@ -112,7 +112,10 @@ function motivoNoFacturable(r) {
   if (s.estado_servicio === 'Cancelado') return 'Servicio cancelado';
   if (s.sin_cobro === 1) return 'Servicio sin cobro (gratuito)';
   if (facturaPorCuotaDelPlan(r)) return 'Pertenece a un plan: se factura una sola vez al mes, contra la cuota del plan';
-  if (s.requiere_factura === 0) return 'Marcado como "Sin factura"';
+  // Un servicio de plan que llega aquí es legacy con cobro propio: su marca
+  // "Sin factura" es la de todo servicio de plan y no lo bloquea (espejo del
+  // backend, facturasController.crear).
+  if (s.requiere_factura === 0 && !s.id_mantenimiento_plan) return 'Marcado como "Sin factura"';
   if (!s.id_cotizacion && ESTADOS_ADMIN_NO_HABILITA.includes(r.estado_administrativo)) {
     return 'Aún no aprobado por la revisión administrativa';
   }

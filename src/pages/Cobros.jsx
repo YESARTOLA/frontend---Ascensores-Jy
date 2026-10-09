@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { cobrosService, clientesService, tiposServicioService, cuentasBancariasService } from '../services';
+import { cobrosService, clientesService, cuentasBancariasService } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
@@ -147,12 +147,11 @@ function estadoCuotaCalc(cu, hoyKey) {
 export default function Cobros() {
   const [vistaModo, setVistaModo] = useState('tabla'); // 'tabla' | 'calendario'
   const [clientes, setClientes] = useState([]);
-  const [tipos, setTipos] = useState([]);
   const [proyectos, setProyectos] = useState([]);
   const [cuentas, setCuentas] = useState([]); // cuentas bancarias (banco + N° cuenta)
   const [filtros, setFiltros] = useState({
     q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
-    id_tipo_servicio: '', id_proyecto: '',
+    numero_cuotas: '',
     moneda: '', monto_min: '', monto_max: '',
     aprobacion_desde: '', aprobacion_hasta: '',
     orden: '', direccion: ''
@@ -179,13 +178,13 @@ export default function Cobros() {
   const porCobrarActivo = filtros.por_cobrar === '1';
 
   useEffect(() => {
+    // Los proyectos ya no filtran la tabla, pero los usa la vista "Por facturar".
     Promise.all([
       clientesService.list().catch(() => []),
-      tiposServicioService.list().catch(() => []),
       cobrosService.proyectos().catch(() => []),
       cuentasBancariasService.list().catch(() => [])
-    ]).then(([c, ts, p, cb]) => {
-      setClientes(c); setTipos(ts); setProyectos(p);
+    ]).then(([c, p, cb]) => {
+      setClientes(c); setProyectos(p);
       setCuentas(Array.isArray(cb) ? cb : []);
     });
   }, []);
@@ -240,8 +239,7 @@ export default function Cobros() {
       const cu = cuentas.find(x => String(x.id) === String(filtros.id_cuenta_bancaria));
       p.push(`Cuenta: ${cu ? `${cu.banco} · ${cu.numero_cuenta}` : filtros.id_cuenta_bancaria}`);
     }
-    if (filtros.id_proyecto) p.push(`Proyecto: ${proyectos.find(pr => String(pr.id) === String(filtros.id_proyecto))?.titulo || filtros.id_proyecto}`);
-    if (filtros.id_tipo_servicio) p.push(`Tipo: ${tipos.find(t => String(t.id) === String(filtros.id_tipo_servicio))?.nombre || filtros.id_tipo_servicio}`);
+    if (filtros.numero_cuotas) p.push(`N° de cobros (cuotas): ${filtros.numero_cuotas}`);
     if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.monto_min) p.push(`Monto desde: ${filtros.monto_min}`);
     if (filtros.monto_max) p.push(`Monto hasta: ${filtros.monto_max}`);
@@ -278,7 +276,7 @@ export default function Cobros() {
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }));
   const limpiar = () => setFiltros({
     q: '', situacion_cobro: '', por_cobrar: '', tipo_categoria: '', id_cuenta_bancaria: '',
-    id_tipo_servicio: '', id_proyecto: '',
+    numero_cuotas: '',
     moneda: '', monto_min: '', monto_max: '',
     aprobacion_desde: '', aprobacion_hasta: '',
     orden: '', direccion: ''
@@ -305,13 +303,6 @@ export default function Cobros() {
     label: `${cu.banco} · ${cu.numero_cuenta}`,
     sublabel: [cu.nombre, cu.tipo_cuenta, cu.moneda].filter(Boolean).join(' · ')
   })), [cuentas]);
-
-  const opcionesProyectos = useMemo(() => proyectos.map(p => ({
-    value: p.id,
-    label: p.titulo || `Proyecto #${p.id}`,
-    sublabel: [p.codigo, p.cliente_nombre, p.cantidad_ascensores > 1 ? `${p.cantidad_ascensores} ascensores` : null]
-      .filter(Boolean).join(' · ')
-  })), [proyectos]);
 
   // Helpers calendario
   const dias = useMemo(() => diasDelCalendario(cursor), [cursor]);
@@ -447,18 +438,10 @@ export default function Cobros() {
               <option value="">Estado de cobro (todos)</option>
               {SITUACIONES_COBRO.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
-            <Combobox
-              className="col-span-2 sm:col-span-2 lg:col-span-2"
-              options={opcionesProyectos}
-              value={filtros.id_proyecto || null}
-              onChange={v => setF('id_proyecto', v ?? '')}
-              placeholder="Todos los proyectos"
-              emptyLabel="Sin proyectos que coincidan"
-            />
-            <select className="select" value={filtros.id_tipo_servicio} onChange={e => setF('id_tipo_servicio', e.target.value)}>
-              <option value="">Todos los tipos</option>
-              {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-            </select>
+            {/* En cuántas cuotas se cobra: el total de la columna "Cuotas (P/T)". */}
+            <input type="number" min="1" step="1" className="input" placeholder="N° de cobros (cuotas)"
+              title="Cobros pactados en exactamente esta cantidad de cuotas"
+              value={filtros.numero_cuotas} onChange={e => setF('numero_cuotas', e.target.value)} />
             <select className="select" value={filtros.tipo_categoria} onChange={e => setF('tipo_categoria', e.target.value)}>
               <option value="">Tipo de servicio (todos)</option>
               {TIPOS_CATEGORIA.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}

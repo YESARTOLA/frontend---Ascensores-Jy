@@ -64,6 +64,11 @@ export default function CobroDetalle() {
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [anulando, setAnulando] = useState(false);
   const puedeAnularFacturas = esSuperAdmin || esAdmin || esContabilidad;
+  // Fecha real de cobro de un abono ya registrado: la corrigen Super Admin y
+  // Contabilidad. Las cuotas que ese abono cubrió toman la nueva fecha de pago.
+  const puedeEditarFechaCobro = esSuperAdmin || esContabilidad;
+  const [fechaAbono, setFechaAbono] = useState(null); // { id, numero_abono, monto, fecha }
+  const [guardandoFechaAbono, setGuardandoFechaAbono] = useState(false);
 
   const cargar = async () => { setLoading(true); try { setData(await cobrosService.get(id)); } finally { setLoading(false); } };
   useEffect(() => { cargar(); }, [id]);
@@ -325,6 +330,22 @@ export default function CobroDetalle() {
 
   const abrirAnular = (f) => { setMotivoAnulacion(''); setFacturaAAnular(f); };
 
+  const guardarFechaAbono = async () => {
+    if (!fechaAbono) return;
+    if (!fechaAbono.fecha) return toast.error('Indica la fecha real de cobro');
+    setGuardandoFechaAbono(true);
+    try {
+      await cobrosService.editarFechaPago(id, fechaAbono.id, fechaAbono.fecha);
+      toast.success(`Fecha del abono #${fechaAbono.numero_abono} actualizada`);
+      setFechaAbono(null);
+      cargar();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al actualizar la fecha');
+    } finally {
+      setGuardandoFechaAbono(false);
+    }
+  };
+
   const anularFactura = async () => {
     if (!facturaAAnular) return;
     if (!motivoAnulacion.trim()) return toast.error('Indica el motivo de la anulación');
@@ -452,9 +473,10 @@ export default function CobroDetalle() {
                 <th className="table-th">Método</th><th className="table-th">Cuenta</th>
                 <th className="table-th text-right">Monto</th>
                 <th className="table-th">Comprobante</th><th className="table-th">Notas</th>
+                {puedeEditarFechaCobro && <th className="table-th text-right">Acción</th>}
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {data.pagos?.length === 0 && <tr><td colSpan="7" className="table-td text-center text-slate-400 py-6">Sin abonos</td></tr>}
+                {data.pagos?.length === 0 && <tr><td colSpan={puedeEditarFechaCobro ? 8 : 7} className="table-td text-center text-slate-400 py-6">Sin abonos</td></tr>}
                 {data.pagos?.map(p => (
                   <tr key={p.id}>
                     <td className="table-td font-mono text-xs">{p.numero_abono}</td>
@@ -473,6 +495,16 @@ export default function CobroDetalle() {
                     <td className="table-td text-right font-mono text-emerald-700">{formatMonto(p.monto, data.moneda)}</td>
                     <td className="table-td">{p.archivo ? <FileLink archivo={p.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
                     <td className="table-td text-xs">{p.observaciones || '—'}</td>
+                    {puedeEditarFechaCobro && (
+                      <td className="table-td text-right">
+                        <button
+                          type="button"
+                          onClick={() => setFechaAbono({ id: p.id, numero_abono: p.numero_abono, monto: p.monto, fecha: String(p.fecha_pago).slice(0, 10) })}
+                          className="text-brand-700 text-xs hover:underline whitespace-nowrap"
+                          title="Corregir la fecha real en que se cobró este abono"
+                        >Editar fecha</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -725,7 +757,11 @@ export default function CobroDetalle() {
         footer={<><button className="btn-secondary" onClick={() => setOpenAbono(false)}>Cancelar</button><button className="btn-primary" onClick={registrar} disabled={cargaComprobante.subiendo}>Registrar</button></>}>
         <div className="space-y-4">
           <div><label className="label">Monto *</label><input type="number" step="0.01" className="input" value={abono.monto} onChange={e => setAbono(a => ({ ...a, monto: e.target.value }))} placeholder={`Saldo: ${data.saldo_pendiente}`} /></div>
-          <div><label className="label">Fecha *</label><input type="date" className="input" value={abono.fecha_pago} onChange={e => setAbono(a => ({ ...a, fecha_pago: e.target.value }))} /></div>
+          <div>
+            <label className="label">Fecha real de cobro *</label>
+            <input type="date" className="input" value={abono.fecha_pago} onChange={e => setAbono(a => ({ ...a, fecha_pago: e.target.value }))} />
+            <p className="text-[11px] text-slate-500 mt-1">Día en que el cliente pagó. Es la fecha de pago que mostrarán las cuotas que este abono cubra.</p>
+          </div>
           <div><label className="label">Método</label><select className="select" value={abono.metodo_pago} onChange={e => setAbono(a => ({ ...a, metodo_pago: e.target.value, id_cuenta_bancaria: '' }))}>{metodosPago.map(m => <option key={m.codigo} value={m.codigo}>{m.etiqueta}</option>)}</select></div>
           {requiereCuenta && (
             <div>
@@ -984,6 +1020,38 @@ export default function CobroDetalle() {
           }
         }}
       />
+
+      {/* Fecha real de cobro de un abono ya registrado */}
+      <Modal
+        open={!!fechaAbono}
+        onClose={() => !guardandoFechaAbono && setFechaAbono(null)}
+        title={`Fecha real de cobro · abono #${fechaAbono?.numero_abono ?? ''}`}
+        footer={<>
+          <button type="button" className="btn-secondary" onClick={() => setFechaAbono(null)} disabled={guardandoFechaAbono}>Cancelar</button>
+          <button type="button" className="btn-primary" onClick={guardarFechaAbono} disabled={guardandoFechaAbono}>
+            {guardandoFechaAbono ? 'Guardando…' : 'Guardar'}
+          </button>
+        </>}>
+        <div className="space-y-3 text-sm">
+          <p>
+            Abono <span className="font-mono">#{fechaAbono?.numero_abono}</span> por{' '}
+            <span className="font-mono">{formatMonto(fechaAbono?.monto, data.moneda)}</span>.
+          </p>
+          <div>
+            <label className="label">Fecha real de cobro *</label>
+            <input
+              type="date"
+              className="input"
+              value={fechaAbono?.fecha || ''}
+              onChange={e => setFechaAbono(f => ({ ...f, fecha: e.target.value }))}
+            />
+            <p className="text-[11px] text-slate-500 mt-1">
+              Solo cambia la fecha: el monto y la cuenta se conservan. Las cuotas que este abono terminó de cubrir
+              toman esta fecha de pago. El cambio queda registrado en la auditoría.
+            </p>
+          </div>
+        </div>
+      </Modal>
 
       {/* Anular factura: no la borra (queda como constancia con estado 'Anulada')
           y deja libre el servicio o la cuota para emitir una nueva. */}

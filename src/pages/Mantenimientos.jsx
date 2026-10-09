@@ -14,6 +14,7 @@ import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
+import { useMonedas } from '../hooks/useMonedas.js';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import AscensoresFrecuenciaChecklist from '../components/common/AscensoresFrecuenciaChecklist.jsx';
 import CronogramaPlan from '../components/mantenimientos/CronogramaPlan.jsx';
@@ -34,7 +35,8 @@ const FORM_ID = 'form-nuevo-plan-mantenimiento';
 const inicial = {
   id_cliente: '', ascensores_seleccion: {}, id_tipo_servicio: '', tipo_plan: 'continuo',
   duracion_meses: '12',
-  monto_mensual: '', cantidad_mantenimientos_gratuitos: '0',
+  // Moneda vacía = la primera del catálogo (ver `monedaForm`).
+  monto_mensual: '', moneda: '', cantidad_mantenimientos_gratuitos: '0',
   fecha_inicio: hoyISO(), hora_programada: '09:00',
   // Técnico del plan: se asigna a todos sus servicios (cada uno se puede
   // cambiar a mano desde el servicio).
@@ -73,12 +75,12 @@ export default function Mantenimientos() {
   // mensual pactado. `periodos` = { id_cobro, monto_mensual, meses: [...] } | null.
   const [periodos, setPeriodos] = useState(null);
   const [cargandoPeriodos, setCargandoPeriodos] = useState(false);
-  const [forzando, setForzando] = useState(null);   // mes en el modal de forzar
   const [aprobandoPeriodo, setAprobandoPeriodo] = useState(false);
   const [mesExpandido, setMesExpandido] = useState(null); // numero_mes con detalle abierto
-  // Registro de la factura del MES aprobado sin salir del plan: mismo contrato
-  // que Gestión de cobros → "Por facturar" (una factura por cuota del mes).
-  const [facturandoMes, setFacturandoMes] = useState(null); // fila de `periodos.meses` con cuota | null
+  // Registro de la factura del MES sin salir del plan: mismo contrato que
+  // Gestión de cobros → "Por facturar" (una factura por cuota del mes). Si el
+  // mes aún no tiene cuota, se aprueba al registrar la factura.
+  const [facturandoMes, setFacturandoMes] = useState(null); // fila de `periodos.meses` (cuota o null) | null
   const [facturaMes, setFacturaMes] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), id_archivo: null });
   const [guardandoFacturaMes, setGuardandoFacturaMes] = useState(false);
   const [editandoGratuitos, setEditandoGratuitos] = useState(false);
@@ -102,6 +104,8 @@ export default function Mantenimientos() {
   const toast = useToast();
   const cargaFacturaMes = useCargaArchivos();
   const { esSuperAdmin, esAdmin, esCoordinador, esContabilidad, puedeVerPrecio } = useAuth();
+  const monedas = useMonedas();
+  const monedaForm = form.moneda || monedas[0]?.codigo || '';
   const puedeCrear = esSuperAdmin || esAdmin || esCoordinador;
   const puedeExportar = esSuperAdmin || esAdmin || esCoordinador || esContabilidad;
   const puedeEditarPlan = esSuperAdmin || esAdmin;
@@ -265,6 +269,7 @@ export default function Mantenimientos() {
       tipo_plan: plan.tipo_plan || 'continuo',
       duracion_meses: plan.duracion_meses != null ? String(plan.duracion_meses) : '12',
       monto_mensual: plan.monto_mensual != null ? String(Number(plan.monto_mensual)) : '',
+      moneda: plan.moneda || '',
       cantidad_mantenimientos_gratuitos: plan.cantidad_mantenimientos_gratuitos != null ? String(plan.cantidad_mantenimientos_gratuitos) : '0',
       fecha_inicio: toYMDLima(plan.fecha_inicio) || hoyISO(),
       hora_programada: plan.hora_programada || '09:00',
@@ -308,6 +313,9 @@ export default function Mantenimientos() {
           ? Number(form.cantidad_mantenimientos_gratuitos || 0)
           : 0
       };
+      // Solo quien ve precios elige la moneda; sin ese permiso el backend
+      // conserva la del plan (o usa la por defecto al crear).
+      if (puedeVerPrecio && monedaForm) payload.moneda = monedaForm;
       // Ascensores del plan con la frecuencia de cada uno. Viaja igual al crear
       // y al editar: es el conjunto FINAL, así que el backend deduce qué entra y
       // qué sale (y rechaza quitar uno con mantenimientos ya ejecutados).
@@ -427,21 +435,25 @@ export default function Mantenimientos() {
 
   // Aprueba un MES del plan: crea su cuota por el monto mensual pactado en el
   // cobro único del plan, lista para emitir UNA factura y recibir UN pago.
-  // Un mes con mantenimientos pendientes requiere aprobación forzada, pero el
-  // importe es el mismo: el monto mensual no varía con lo ejecutado.
-  const aprobarPeriodoUI = async (p, { forzar = false } = {}) => {
+  // No espera a que se realicen los mantenimientos del mes: el mes se factura
+  // cuando el cliente lo paga, y el importe es fijo (no varía con lo
+  // ejecutado). Por eso va siempre `forzar`; el backend deja constancia en la
+  // auditoría de cuántos mantenimientos faltaban. Devuelve la cuota creada.
+  const aprobarMes = async (p) => {
+    const r = await mantenimientosService.aprobarPeriodo(planDetalle.id, { numero_mes: p.numero_mes, forzar: true });
+    return r?.cuota ? { ...r.cuota, monto: Number(r.cuota.monto) } : null;
+  };
+
+  // Mes gratuito ("Registrar mes") o "Solo aprobar el mes" desde el modal de
+  // factura: deja la cuota creada para recibir el pago y facturar después.
+  const aprobarPeriodoUI = async (p) => {
     if (aprobandoPeriodo || !planDetalle) return;
     setAprobandoPeriodo(true);
     try {
-      const r = await mantenimientosService.aprobarPeriodo(planDetalle.id, { numero_mes: p.numero_mes, forzar });
-      toast.success(p.es_gratuito ? `${p.etiqueta} registrado` : `${p.etiqueta} aprobado y listo para facturar`);
-      setForzando(null);
+      await aprobarMes(p);
+      toast.success(p.es_gratuito ? `${p.etiqueta} registrado` : `${p.etiqueta} aprobado; queda por facturar`);
+      setFacturandoMes(null);
       recargarPeriodos();
-      // El mes aprobado continúa con SU factura: se abre el registro de una vez
-      // con la cuota recién creada (un mes gratuito no factura).
-      if (!p.es_gratuito && r?.cuota && puedeFacturarPlan) {
-        abrirFacturarMes({ ...p, cuota: { ...r.cuota, monto: Number(r.cuota.monto) } });
-      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error al aprobar el mes');
     } finally {
@@ -449,8 +461,9 @@ export default function Mantenimientos() {
     }
   };
 
-  // Abre el registro de la factura del mes aprobado (una factura por cuota,
-  // mismo contrato que Gestión de cobros → "Por facturar").
+  // Abre el registro de la factura del mes (una factura por cuota, mismo
+  // contrato que Gestión de cobros → "Por facturar"). Sin cuota todavía, el
+  // mes se aprueba al registrar la factura: cancelar no deja nada creado.
   const abrirFacturarMes = (p) => {
     setFacturaMes({
       numero_factura: '',
@@ -476,28 +489,39 @@ export default function Mantenimientos() {
   };
 
   // Emite la factura del MES: contra la cuota del cobro único del plan. El
-  // monto lo fija la cuota (el backend lo valida igual).
+  // monto lo fija la cuota (el backend lo valida igual). Si el mes no estaba
+  // aprobado, primero se crea su cuota.
   const guardarFacturaMes = async () => {
     if (guardandoFacturaMes || !facturandoMes || !planDetalle) return;
     if (!facturaMes.numero_factura.trim()) return toast.error('Número de comprobante obligatorio');
     setGuardandoFacturaMes(true);
+    let cuota = facturandoMes.cuota;
     try {
+      if (!cuota) {
+        cuota = await aprobarMes(facturandoMes);
+        if (!cuota) throw new Error('Sin cuota');
+        // Si la factura falla después (p. ej. número repetido), reintentar no
+        // debe volver a aprobar el mes: el modal sigue con la cuota creada.
+        setFacturandoMes(m => (m ? { ...m, cuota } : m));
+      }
       await facturasService.create({
         numero_factura: facturaMes.numero_factura.trim(),
         tipo_comprobante: facturaMes.tipo_comprobante,
         fecha_emision: facturaMes.fecha_emision,
-        monto: Number(facturandoMes.cuota?.monto ?? facturandoMes.monto),
-        id_cuota: facturandoMes.cuota?.id,
+        monto: Number(cuota.monto),
+        id_cuota: cuota.id,
         id_mantenimiento_plan: planDetalle.id,
         id_archivo: facturaMes.id_archivo
       });
       toast.success(`${facturandoMes.etiqueta} facturado`);
       setFacturandoMes(null);
-      recargarPeriodos();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al registrar la factura del mes');
+      toast.error(err.response?.data?.error || (cuota
+        ? 'Error al registrar la factura del mes'
+        : 'Error al aprobar el mes'));
     } finally {
       setGuardandoFacturaMes(false);
+      recargarPeriodos();
     }
   };
 
@@ -557,7 +581,6 @@ export default function Mantenimientos() {
     setEditandoMonto(false);
     setPeriodos(null);
     setProgramacion(null);
-    setForzando(null);
     setFacturandoMes(null);
     setOmitiendo(null);
     setVisitasSel({});
@@ -1406,21 +1429,22 @@ export default function Mantenimientos() {
                                 <td className="table-td text-right whitespace-nowrap">
                                   {/* Un mes gratuito se registra pero no se factura: su cuota
                                       nace en 0 y saldada, y no entra a Gestión de cobros.
+                                      Un mes cobrable se factura cuando se paga, sin esperar
+                                      a que se realicen sus mantenimientos: el modal de
+                                      factura lo aprueba al registrar (o "Solo aprobar").
                                       Un plan no activo no aprueba meses nuevos (espejo del
                                       guard del backend); lo ya aprobado sigue su curso. */}
-                                  {puedeEditarPlan && planDetalle.estado_plan === 'activo' && !p.cuota && p.completo && p.con_mantenimiento !== false && (
-                                    <button type="button" onClick={() => aprobarPeriodoUI(p)} disabled={aprobandoPeriodo}
+                                  {puedeEditarPlan && planDetalle.estado_plan === 'activo' && !p.cuota && p.con_mantenimiento !== false && (
+                                    <button type="button" disabled={aprobandoPeriodo}
+                                      onClick={() => (p.es_gratuito ? aprobarPeriodoUI(p) : abrirFacturarMes(p))}
                                       className="btn-primary text-xs !py-1 !px-2">
                                       {p.es_gratuito ? 'Registrar mes' : 'Aprobar y facturar'}
                                     </button>
                                   )}
-                                  {puedeEditarPlan && planDetalle.estado_plan === 'activo' && !p.cuota && !p.completo && p.con_mantenimiento !== false && (
-                                    <button type="button" onClick={() => setForzando(p)}
-                                      className="btn-secondary text-xs !py-1 !px-2">Aprobar igual</button>
-                                  )}
-                                  {/* Mes aprobado sin factura: el registro del comprobante se
+                                  {/* Mes aprobado sin factura —también si ya se pagó: el abono
+                                      pudo registrarse antes que el comprobante—. El registro se
                                       hace aquí mismo (equivale a Cobros → "Por facturar"). */}
-                                  {puedeFacturarPlan && p.cuota && !p.es_gratuito && p.estado_periodo === 'aprobado' && (
+                                  {puedeFacturarPlan && p.cuota && !p.es_gratuito && !p.cuota.facturada && (
                                     <button type="button" onClick={() => abrirFacturarMes(p)}
                                       className="btn-primary text-xs !py-1 !px-2">Registrar factura</button>
                                   )}
@@ -1656,54 +1680,31 @@ export default function Mantenimientos() {
         )}
       </Modal>
 
-      <Modal open={!!forzando} onClose={() => setForzando(null)} title="Aprobar el mes con mantenimientos pendientes" size="md">
-        {forzando && (
-          <div className="space-y-4 text-sm">
-            <p className="text-slate-700">
-              <strong>{forzando.etiqueta}</strong> tiene{' '}
-              <strong>{forzando.realizadas} de {forzando.total_visitas}</strong> mantenimientos realizados.
-            </p>
-            <div className="rounded-lg ring-1 ring-slate-200 bg-slate-50 p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-600">Importe del mes</span>
-                <strong className="font-mono text-slate-900">
-                  {forzando.es_gratuito ? 'Gratuito' : formatMonto(forzando.monto, forzando.moneda)}
-                </strong>
-              </div>
-              <p className="text-[11px] text-slate-500 mt-1">
-                {forzando.es_gratuito
-                  ? 'Es un mes gratuito del plan: queda registrado en 0 y no pasa a cobro.'
-                  : 'El monto mensual es fijo: no se prorratea por los mantenimientos pendientes.'}
-              </p>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              {forzando.es_gratuito
-                ? 'No se emite factura ni se abre gestión de cobros para este mes.'
-                : 'Se genera una sola cuota por este mes; una factura y un pago continúan el flujo.'}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button type="button" className="btn-secondary" onClick={() => setForzando(null)}>Cancelar</button>
-              <button type="button" className="btn-primary" disabled={aprobandoPeriodo}
-                onClick={() => aprobarPeriodoUI(forzando, { forzar: true })}>
-                {aprobandoPeriodo ? 'Aprobando…' : 'Aprobar el mes'}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* Factura del MES aprobado: una factura por la cuota del cobro único del
-          plan — el mismo contrato que Gestión de cobros → "Por facturar". */}
+      {/* Factura del MES: una factura por la cuota del cobro único del plan —
+          el mismo contrato que Gestión de cobros → "Por facturar". Si el mes
+          aún no está aprobado, se aprueba al registrar (no hace falta esperar a
+          que se realicen sus mantenimientos). */}
       <Modal
         open={!!facturandoMes}
-        onClose={() => !guardandoFacturaMes && setFacturandoMes(null)}
+        onClose={() => !guardandoFacturaMes && !aprobandoPeriodo && setFacturandoMes(null)}
         title={facturandoMes ? `Registrar factura · ${facturandoMes.etiqueta}` : 'Registrar factura'}
         size="sm"
         footer={
           <>
-            <button type="button" className="btn-secondary" onClick={() => setFacturandoMes(null)} disabled={guardandoFacturaMes}>Ahora no</button>
-            <button type="button" className="btn-primary" onClick={guardarFacturaMes} disabled={guardandoFacturaMes || cargaFacturaMes.subiendo}>
-              {guardandoFacturaMes ? 'Registrando…' : 'Registrar factura'}
+            <button type="button" className="btn-secondary" onClick={() => setFacturandoMes(null)} disabled={guardandoFacturaMes || aprobandoPeriodo}>
+              {facturandoMes?.cuota ? 'Ahora no' : 'Cancelar'}
+            </button>
+            {/* Aprobar sin facturar: deja la cuota lista para recibir el pago
+                del mes y emitir el comprobante después. */}
+            {facturandoMes && !facturandoMes.cuota && (
+              <button type="button" className="btn-secondary" onClick={() => aprobarPeriodoUI(facturandoMes)}
+                disabled={guardandoFacturaMes || aprobandoPeriodo}>
+                {aprobandoPeriodo ? 'Aprobando…' : 'Solo aprobar el mes'}
+              </button>
+            )}
+            <button type="button" className="btn-primary" onClick={guardarFacturaMes}
+              disabled={guardandoFacturaMes || aprobandoPeriodo || cargaFacturaMes.subiendo}>
+              {guardandoFacturaMes ? 'Registrando…' : facturandoMes?.cuota ? 'Registrar factura' : 'Aprobar y registrar factura'}
             </button>
           </>
         }
@@ -1722,6 +1723,17 @@ export default function Mantenimientos() {
               </div>
               <p className="text-[10px] text-slate-500 mt-1">El importe del mes es fijo (monto mensual pactado) y no varía con los mantenimientos.</p>
             </div>
+            {!facturandoMes.cuota && (() => {
+              const pendientes = facturandoMes.total_visitas - facturandoMes.realizadas;
+              return (
+                <p className={`text-xs rounded-md px-3 py-2 ring-1 ${pendientes > 0
+                  ? 'bg-amber-50 text-amber-800 ring-amber-200'
+                  : 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
+                  {pendientes > 0 && `Faltan ${pendientes} mantenimiento(s) de este mes; puede facturarse igual. `}
+                  Al registrar la factura, el mes queda aprobado y su cuota se suma al cobro del plan.
+                </p>
+              );
+            })()}
             <div>
               <label className="label">Tipo de comprobante *</label>
               <select className="select" value={facturaMes.tipo_comprobante}
@@ -1811,10 +1823,10 @@ export default function Mantenimientos() {
                 {puedeVerPrecio && Number(form.monto_mensual) > 0 && esContinuo && (
                   <span className="ml-auto text-right">
                     <strong className="font-mono text-slate-900 block">
-                      {formatMonto(totalesForm.monto_mensual, 'PEN')}/mes · total {formatMonto(totalesForm.total, 'PEN')}
+                      {formatMonto(totalesForm.monto_mensual, monedaForm || undefined)}/mes · total {formatMonto(totalesForm.total, monedaForm || undefined)}
                     </strong>
                     <span className="text-[11px] text-slate-500">
-                      {totalesForm.meses_facturables} mes(es) con cobro × {formatMonto(totalesForm.monto_mensual, 'PEN')}
+                      {totalesForm.meses_facturables} mes(es) con cobro × {formatMonto(totalesForm.monto_mensual, monedaForm || undefined)}
                       {totalesForm.meses_gratuitos > 0 && (
                         <span className="text-emerald-700"> · {totalesForm.meses_gratuitos} gratuito(s)</span>
                       )}
@@ -1854,12 +1866,19 @@ export default function Mantenimientos() {
           {puedeVerPrecio && (
             <div>
               <label className="label">Monto mensual *</label>
-              <input type="number" min="0" step="0.01" className="input text-right font-mono"
-                value={form.monto_mensual}
-                onChange={e => setForm(f => ({ ...f, monto_mensual: e.target.value }))} />
+              <div className="flex gap-2">
+                <select className="select w-28" aria-label="Moneda" value={monedaForm}
+                  onChange={e => setForm(f => ({ ...f, moneda: e.target.value }))}>
+                  {monedas.map(m => <option key={m.codigo} value={m.codigo}>{m.etiqueta_corta || m.codigo}</option>)}
+                </select>
+                <input type="number" min="0" step="0.01" className="input flex-1 text-right font-mono"
+                  value={form.monto_mensual}
+                  onChange={e => setForm(f => ({ ...f, monto_mensual: e.target.value }))} />
+              </div>
               <p className="text-xs text-slate-500 mt-1">
                 Importe de <strong>un mes con mantenimiento</strong> (referencia: frecuencia mensual). Solo se cobran los
                 meses con mantenimiento: un plan trimestral de 12 meses se cobra 4 veces.
+                {!!editando && ' La moneda solo se puede cambiar mientras el plan no tenga meses facturados ni pagos.'}
               </p>
             </div>
           )}
