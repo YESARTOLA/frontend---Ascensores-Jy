@@ -4,6 +4,7 @@ import {
   cotizacionesService,
   configuracionService,
   cuentasBancariasService,
+  empresasEmisorasService,
   assetUrl
 } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
@@ -25,6 +26,7 @@ import CotizacionSinFinanzas from '../components/cotizaciones/CotizacionSinFinan
 import ItemsCotizacionEditor, { itemDesdeServidor, itemsParaPayload, calcImporte } from '../components/cotizaciones/ItemsCotizacionEditor.jsx';
 import { MODO_IGV_MAS, modoIgvDeVersion, camposModoIgv, calcularTotalesCotizacion } from '../utils/igvCotizacion.js';
 import { SelectorModoIgv, ResumenTotales } from '../components/cotizaciones/IgvCotizacion.jsx';
+import SelectorEmpresaEmisora, { empresaPredeterminada } from '../components/cotizaciones/SelectorEmpresaEmisora.jsx';
 
 // Etiqueta legible de cada acción auditada que puede aparecer en la línea de
 // tiempo de una cotización. Si llega una acción no mapeada se muestra tal cual.
@@ -113,6 +115,11 @@ export default function CotizacionDetalle() {
   const [cuentasForm, setCuentasForm] = useState([]);
   const [cuentasAprob, setCuentasAprob] = useState([]);
 
+  // Empresas emisoras activas + la elegida en el form de edición (razón social
+  // / RUC con que sale el PDF de la versión).
+  const [empresas, setEmpresas] = useState([]);
+  const [empresaForm, setEmpresaForm] = useState('');
+
   // Modales
   const [openNuevaVersion, setOpenNuevaVersion] = useState(false);
   const [motivoCambio, setMotivoCambio] = useState('');
@@ -195,6 +202,9 @@ export default function CotizacionDetalle() {
     cuentasBancariasService.list()
       .then(cs => setCuentas(Array.isArray(cs) ? cs : []))
       .catch(() => setCuentas([]));
+    empresasEmisorasService.list()
+      .then(es => setEmpresas(Array.isArray(es) ? es : []))
+      .catch(() => setEmpresas([]));
   }, []);
 
   const versionActiva = useMemo(() => {
@@ -253,6 +263,11 @@ export default function CotizacionDetalle() {
     const aprob = versionActiva.fecha_aprobacion ? new Date(versionActiva.fecha_aprobacion).getTime() : 0;
     return historial.some(ev => ev.accion === 'REOPEN' && new Date(ev.fecha_evento).getTime() >= aprob);
   })();
+  // La empresa emisora se cambió DESPUÉS de generar el PDF vigente: el PDF
+  // sigue saliendo con la razón social / RUC anteriores y hay que regenerarlo.
+  const pdfDesactualizado = !!versionActiva.archivo_pdf
+    && versionActiva.id_empresa_pdf != null
+    && versionActiva.id_empresa_pdf !== versionActiva.id_empresa_emisora;
   const servicioGen = cot.servicios?.[0];
   // Al aprobar, cada ítem debe llevar foto (el técnico la ve en el servicio).
   // Excepción: cobro sobre servicio existente (nace de una emergencia ya
@@ -267,6 +282,7 @@ export default function CotizacionDetalle() {
     setGarantiaForm(versionActiva.garantia || '');
     setCuotasForm(planCuotasDesdeServidor(versionActiva));
     setCuentasForm(cuentasPreseleccionadas(versionActiva, cuentas));
+    setEmpresaForm(String(versionActiva.id_empresa_emisora || empresaPredeterminada(empresas)?.id || ''));
     setEditandoItems(true);
     setTab('items');
   };
@@ -289,9 +305,13 @@ export default function CotizacionDetalle() {
         tiene_cuotas: payloadCuotas.tiene_cuotas,
         plan_cuotas: payloadCuotas.plan_cuotas,
         saldo_variable: payloadCuotas.saldo_variable,
-        cuentas_pdf: cuentasForm
+        cuentas_pdf: cuentasForm,
+        ...(empresaForm ? { id_empresa_emisora: Number(empresaForm) } : {})
       });
       toast.success('Versión actualizada');
+      if (versionActiva.archivo_pdf && empresaForm && Number(empresaForm) !== versionActiva.id_empresa_pdf) {
+        toast.info('Cambiaste la empresa emisora: regenera el PDF para que salga con los nuevos datos.');
+      }
       setEditandoItems(false);
       cargar();
     } catch (err) {
@@ -506,7 +526,7 @@ export default function CotizacionDetalle() {
               <button onClick={() => navigate(`/cotizaciones?duplicar=${cot.id}`)} className="btn-ghost text-xs !py-1.5 !px-3" title="Crea una cotización nueva precargada con estos datos">Duplicar</button>
             )}
             {puedeEditar && cotizacionDecidible && versionEditable && !editandoItems && (
-              <button onClick={iniciarEdicion} className="btn-ghost text-xs !py-1.5 !px-3" title="Ítems, orden, IGV, cuotas, garantía y observaciones (hasta aprobar)">Editar items / IGV</button>
+              <button onClick={iniciarEdicion} className="btn-ghost text-xs !py-1.5 !px-3" title="Ítems, orden, IGV, cuotas, garantía, observaciones y empresa emisora (hasta aprobar)">Editar items / IGV</button>
             )}
             {puedeEditar && cotizacionDecidible && versionEditable && (
               <>
@@ -530,7 +550,11 @@ export default function CotizacionDetalle() {
             {versionActiva.archivo_pdf
               ? <button onClick={verPdfExistente} className="btn-ghost text-xs !py-1.5 !px-3">Ver PDF</button>
               : null}
-            <button onClick={generarPdf} disabled={generandoPdf} className="btn-ghost text-xs !py-1.5 !px-3">
+            <button onClick={generarPdf} disabled={generandoPdf}
+              className={pdfDesactualizado
+                ? 'btn-primary text-xs !py-1.5 !px-3 motion-safe:animate-latido'
+                : 'btn-ghost text-xs !py-1.5 !px-3'}
+              title={pdfDesactualizado ? 'El PDF se generó con otra empresa emisora: regenéralo' : undefined}>
               {generandoPdf ? 'Generando…' : (versionActiva.archivo_pdf ? 'Regenerar PDF' : 'Generar PDF')}
             </button>
             {/* "Reabrir" es el paso 1: solo sobre una aprobada con servicio vivo y
@@ -588,6 +612,19 @@ export default function CotizacionDetalle() {
               <div className="text-xs text-carbon-500">Total</div>
               <div className="font-bold text-brand-700">{formatMonto(versionActiva.monto_total, versionActiva.moneda)}</div>
             </div>
+            {(() => {
+              // Sin empresa guardada el PDF usa la predeterminada.
+              const emp = versionActiva.empresa_emisora || empresaPredeterminada(empresas);
+              if (!emp) return null;
+              return (
+                <div className="col-span-2 sm:col-span-3">
+                  <div className="text-xs text-carbon-500">Empresa emisora</div>
+                  <div className="font-medium">
+                    {emp.razon_social} <span className="text-xs text-carbon-500 font-normal">· RUC {emp.ruc}</span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           {servicioGen && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm flex items-center justify-between">
@@ -622,6 +659,25 @@ export default function CotizacionDetalle() {
           </div>
         </div>
       </div>
+
+      {pdfDesactualizado && (
+        <div role="status" className="mt-4 rounded-xl bg-sky-50 ring-1 ring-sky-200 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex-1 text-sm text-sky-900">
+            <div className="font-semibold">El PDF está desactualizado: cambió la empresa emisora</div>
+            <div className="text-xs text-sky-800 mt-0.5">
+              El PDF actual se generó con{' '}
+              <span className="font-medium">{versionActiva.empresa_pdf?.razon_social || 'otra empresa'}</span>
+              {versionActiva.empresa_pdf?.ruc ? ` (RUC ${versionActiva.empresa_pdf.ruc})` : ''}.
+              Regenéralo para que salga con{' '}
+              <span className="font-medium">{versionActiva.empresa_emisora?.razon_social || 'la empresa elegida'}</span>
+              {versionActiva.empresa_emisora?.ruc ? ` (RUC ${versionActiva.empresa_emisora.ruc})` : ''}.
+            </div>
+          </div>
+          <button onClick={generarPdf} disabled={generandoPdf} className="btn-primary text-xs !py-1.5 !px-3 shrink-0 self-start sm:self-auto">
+            {generandoPdf ? 'Generando…' : 'Regenerar PDF'}
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mt-4 card">
@@ -658,6 +714,11 @@ export default function CotizacionDetalle() {
                 cuentas={cuentas}
                 cuentasSel={cuentasForm}
                 setCuentasSel={setCuentasForm}
+                empresas={empresas}
+                empresaSel={empresaForm}
+                setEmpresaSel={setEmpresaForm}
+                empresaActual={versionActiva.empresa_emisora}
+                idEmpresaPdf={versionActiva.archivo_pdf ? versionActiva.id_empresa_pdf : null}
                 igvTasa={igvTasa}
                 totales={totalesEdit}
                 moneda={versionActiva.moneda}
@@ -1249,7 +1310,7 @@ function ItemsView({ version, igvTasa }) {
   );
 }
 
-function ItemsEditor({ items, setItems, modoIgv, setModoIgv, observ, setObserv, garantia, setGarantia, cuotas, setCuotas, cuentas, cuentasSel, setCuentasSel, igvTasa, totales, moneda, onCancel, onSave, saving }) {
+function ItemsEditor({ items, setItems, modoIgv, setModoIgv, observ, setObserv, garantia, setGarantia, cuotas, setCuotas, cuentas, cuentasSel, setCuentasSel, empresas, empresaSel, setEmpresaSel, empresaActual, idEmpresaPdf, igvTasa, totales, moneda, onCancel, onSave, saving }) {
   const cargaFoto = useCargaArchivos();
 
   return (
@@ -1292,6 +1353,20 @@ function ItemsEditor({ items, setItems, modoIgv, setModoIgv, observ, setObserv, 
       <div>
         <label className="label">Observaciones</label>
         <textarea className="textarea" rows="2" value={observ} onChange={e => setObserv(e.target.value)} />
+      </div>
+
+      <div>
+        <SelectorEmpresaEmisora
+          empresas={empresas}
+          value={empresaSel}
+          onChange={setEmpresaSel}
+          actual={empresaActual}
+        />
+        {idEmpresaPdf != null && empresaSel && Number(empresaSel) !== idEmpresaPdf && (
+          <p className="text-[11px] text-sky-700 mt-1">
+            El PDF ya generado tiene otra empresa emisora: después de guardar, regenera el PDF.
+          </p>
+        )}
       </div>
 
       <SelectorCuentas

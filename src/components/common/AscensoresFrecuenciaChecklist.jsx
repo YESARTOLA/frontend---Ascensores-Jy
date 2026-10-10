@@ -7,9 +7,11 @@ import { etiquetaVisitas } from '../../utils/frecuenciaPlan.js';
  * trimestral y otro quincenal; el número de visitas de cada uno sale de cruzar
  * su frecuencia con la duración del plan en meses.
  *
- * A diferencia de `AscensoresChecklist` (servicios y proyectos), aquí NO hay
- * precio por ascensor: el plan se cobra por un monto global mensual. Por eso un
- * ascensor sin tarifa configurada sí es seleccionable.
+ * A diferencia de `AscensoresChecklist` (servicios y proyectos), el precio no
+ * sale del catálogo: por defecto el plan se cobra por un monto global mensual,
+ * así que un ascensor sin tarifa configurada sí es seleccionable. En un plan
+ * con precio POR ASCENSOR (`conPrecio`) cada fila marcada pide su precio: lo
+ * que se cobra por ese ascensor en cada mes en que se le atiende.
  *
  * Componente presentacional controlado: el estado vive en el formulario padre.
  *
@@ -24,6 +26,9 @@ import { etiquetaVisitas } from '../../utils/frecuenciaPlan.js';
  *   - soloFrecuencia: el conjunto de ascensores es inmutable (edición de un plan
  *                 ya creado) pero SÍ se puede corregir la frecuencia de cada uno
  *   - hayCliente:  si ya se eligió cliente (para el hint correcto)
+ *   - conPrecio:   muestra el precio de cada ascensor marcado (`seleccion[id].monto`)
+ *   - onCambiarPrecio(id, valor): actualiza el precio del ascensor
+ *   - simboloMoneda: prefijo del campo de precio ("S/", "$")
  */
 export default function AscensoresFrecuenciaChecklist({
   ascensores,
@@ -35,6 +40,9 @@ export default function AscensoresFrecuenciaChecklist({
   disabled = false,
   soloFrecuencia = false,
   hayCliente = true,
+  conPrecio = false,
+  onCambiarPrecio,
+  simboloMoneda = '',
   sinClienteHint = 'Seleccione primero un cliente.',
   sinAscensoresHint = 'Este cliente no tiene ascensores registrados.'
 }) {
@@ -103,6 +111,31 @@ export default function AscensoresFrecuenciaChecklist({
                 </div>
               )}
             </div>
+            {/* Precio del ascensor: en su propia línea para que la fila no se
+                desborde en móvil con frecuencia + días + visitas + precio. */}
+            {marcado && conPrecio && (
+              <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 -mt-1">
+                <label htmlFor={`precio-asc-${a.id}`} className="text-[11px] text-slate-500">
+                  Precio por mes atendido
+                </label>
+                <div className="flex items-center rounded-md border border-slate-300 bg-white overflow-hidden">
+                  {simboloMoneda && <span className="px-2 text-xs text-slate-500 bg-slate-50 border-r border-slate-200">{simboloMoneda}</span>}
+                  <input
+                    id={`precio-asc-${a.id}`}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    className="w-28 text-xs px-2 py-1 text-right font-mono outline-none"
+                    value={sel.monto ?? ''}
+                    disabled={disabled}
+                    placeholder="0.00"
+                    onChange={e => onCambiarPrecio?.(a.id, e.target.value)}
+                    aria-label={`Precio de ${a.codigo}`}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         );
       })}

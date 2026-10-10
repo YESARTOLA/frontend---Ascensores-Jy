@@ -169,8 +169,7 @@ export const cobrosService = {
   get: (id) => api.get(`/cobros/${id}`).then(r => r.data?.data ?? r.data),
   setPlanCuotas: (id, payload) => api.put(`/cobros/${id}/plan-cuotas`, payload).then(r => r.data),
   registrarPago: (id, payload) => api.post(`/cobros/${id}/pagos`, payload).then(r => r.data),
-  editarFechaPago: (id, idPago, fecha_pago) =>
-    api.patch(`/cobros/${id}/pagos/${idPago}/fecha`, { fecha_pago }).then(r => r.data),
+  editarPago: (id, idPago, payload) => api.put(`/cobros/${id}/pagos/${idPago}`, payload).then(r => r.data),
   recordatorio: (id) => api.post(`/cobros/${id}/recordatorio`).then(r => r.data?.data ?? r.data),
   cerrar: (id) => api.patch(`/cobros/${id}/cerrar`).then(r => r.data),
   cuotasCalendario: (params) => api.get('/cobros/cuotas-calendario', { params }).then(r => r.data?.data ?? r.data),
@@ -184,6 +183,10 @@ export const facturasService = {
   paginate: (params) => api.get('/facturas', { params }).then(r => r.data),
   get: (id) => api.get(`/facturas/${id}`).then(r => r.data?.data ?? r.data),
   create: (d) => api.post('/facturas', d).then(r => r.data?.data ?? r.data),
+  // Edición de los datos (tipo, número, emisión, monto, cobertura, estado) y lo
+  // que necesita su formulario: { factura, moneda, cuotas, otras_facturas }.
+  contextoEdicion: (id) => api.get(`/facturas/${id}/edicion`).then(r => r.data?.data ?? r.data),
+  update: (id, d) => api.put(`/facturas/${id}`, d).then(r => r.data?.data ?? r.data),
   cambiarEstado: (id, estado_factura) =>
     api.patch(`/facturas/${id}/estado`, { estado_factura }).then(r => r.data?.data ?? r.data),
   // Anular deja la factura como constancia y libera el servicio/cuota para
@@ -197,8 +200,12 @@ export const facturasService = {
   // { data: { comprobante, documentos }, meta: { max } }.
   listarDocumentos: (id) => api.get(`/facturas/${id}/documentos`).then(r => r.data),
   agregarDocumentos: (id, documentos) => api.post(`/facturas/${id}/documentos`, { documentos }).then(r => r.data),
+  // d: { tipo_documento?, descripcion?, id_archivo? } (id_archivo = reemplazar el archivo)
+  editarDocumento: (id, idDocumento, d) => api.patch(`/facturas/${id}/documentos/${idDocumento}`, d).then(r => r.data),
   eliminarDocumento: (id, idDocumento) => api.delete(`/facturas/${id}/documentos/${idDocumento}`).then(r => r.data),
-  adjuntarComprobante: (id, id_archivo) => api.patch(`/facturas/${id}/comprobante`, { id_archivo }).then(r => r.data)
+  // Adjunta el comprobante o reemplaza el que ya tiene.
+  adjuntarComprobante: (id, id_archivo) => api.patch(`/facturas/${id}/comprobante`, { id_archivo }).then(r => r.data),
+  quitarComprobante: (id) => api.delete(`/facturas/${id}/comprobante`).then(r => r.data)
 };
 
 export const emergenciasService = {
@@ -266,7 +273,9 @@ export const mantenimientosService = {
   // Facturación por MES del plan: una factura y un pago por mes, por el monto
   // mensual pactado, con el detalle de todas las visitas de ese mes.
   periodos: (id) => api.get(`/mantenimientos/${id}/periodos`).then(r => r.data?.data ?? r.data),
-  aprobarPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/aprobar`, body || {}).then(r => r.data?.data ?? r.data)
+  aprobarPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/aprobar`, body || {}).then(r => r.data?.data ?? r.data),
+  // Deshace la aprobación de un mes (sin factura vigente ni abonos).
+  revertirPeriodo: (id, body) => api.post(`/mantenimientos/${id}/periodos/revertir`, body || {}).then(r => r.data?.data ?? r.data)
 };
 
 export const leadsService = {
@@ -451,4 +460,11 @@ export const cuentasBancariasService = {
   create: (d) => api.post('/cuentas-bancarias', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/cuentas-bancarias/${id}`, d).then(r => r.data?.data ?? r.data),
   remove: (id) => api.delete(`/cuentas-bancarias/${id}`).then(r => r.data)
+};
+
+export const empresasEmisorasService = {
+  list: () => api.get('/empresas-emisoras').then(r => r.data?.data ?? r.data),
+  create: (d) => api.post('/empresas-emisoras', d).then(r => r.data?.data ?? r.data),
+  update: (id, d) => api.put(`/empresas-emisoras/${id}`, d).then(r => r.data?.data ?? r.data),
+  remove: (id) => api.delete(`/empresas-emisoras/${id}`).then(r => r.data)
 };

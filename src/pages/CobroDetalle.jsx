@@ -8,7 +8,7 @@ import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx'
 import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
-import DocumentosFacturaModal from '../components/facturas/DocumentosFacturaModal.jsx';
+import EditarFacturaModal from '../components/facturas/EditarFacturaModal.jsx';
 import { CeldaDocumentosFactura, DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
@@ -47,10 +47,11 @@ export default function CobroDetalle() {
   const [cuotas, setCuotas] = useState({ numero_cuotas: 1, fecha_proximo_abono: hoyISO(), cuotas: [] });
   const [factura, setFactura] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), monto: '', id_archivo: null, documentos: [], modo: 'general', id_cuota: '' });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
-  // Factura cuyo modal de documentos (constancias, XML/CDR…) está abierto.
-  const [facturaDocs, setFacturaDocs] = useState(null);
+  // Factura en edición: datos, comprobante y documentos (constancias, XML/CDR…).
+  const [facturaEditar, setFacturaEditar] = useState(null);
   const toast = useToast();
   const cargaComprobante = useCargaArchivos(); // comprobante del abono
+  const cargaComprobanteEdit = useCargaArchivos(); // comprobante al corregir un abono
   const cargaFactura = useCargaArchivos();     // archivo del comprobante emitido
   const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
@@ -64,11 +65,13 @@ export default function CobroDetalle() {
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [anulando, setAnulando] = useState(false);
   const puedeAnularFacturas = esSuperAdmin || esAdmin || esContabilidad;
-  // Fecha real de cobro de un abono ya registrado: la corrigen Super Admin y
-  // Contabilidad. Las cuotas que ese abono cubrió toman la nueva fecha de pago.
-  const puedeEditarFechaCobro = esSuperAdmin || esContabilidad;
-  const [fechaAbono, setFechaAbono] = useState(null); // { id, numero_abono, monto, fecha }
-  const [guardandoFechaAbono, setGuardandoFechaAbono] = useState(false);
+  // Corrección de un abono ya registrado (monto, fecha real de cobro, método,
+  // cuenta, comprobante, notas): la hacen Super Admin y Contabilidad. Un cambio
+  // de monto reajusta cuotas, saldo y estado del cobro; un cambio de fecha pasa
+  // a las cuotas que ese abono terminó de cubrir.
+  const puedeEditarPagos = esSuperAdmin || esContabilidad;
+  const [pagoEdit, setPagoEdit] = useState(null); // abono en edición (campos del formulario)
+  const [guardandoPago, setGuardandoPago] = useState(false);
 
   const cargar = async () => { setLoading(true); try { setData(await cobrosService.get(id)); } finally { setLoading(false); } };
   useEffect(() => { cargar(); }, [id]);
@@ -330,19 +333,63 @@ export default function CobroDetalle() {
 
   const abrirAnular = (f) => { setMotivoAnulacion(''); setFacturaAAnular(f); };
 
-  const guardarFechaAbono = async () => {
-    if (!fechaAbono) return;
-    if (!fechaAbono.fecha) return toast.error('Indica la fecha real de cobro');
-    setGuardandoFechaAbono(true);
+  const metodoEdit = metodosPago.find(m => m.codigo === pagoEdit?.metodo_pago) || null;
+  const requiereCuentaEdit = !!metodoEdit?.requiere_cuenta;
+  // En un cobro cerrado o incobrable el saldo es definitivo: el monto no se toca.
+  const montoBloqueado = ['Cerrado', 'Incobrable'].includes(data.estado_cobro);
+
+  const abrirEditarPago = (p) => {
+    cargaComprobanteEdit.limpiar?.();
+    setPagoEdit({
+      id: p.id,
+      numero_abono: p.numero_abono,
+      monto: String(Number(p.monto)),
+      fecha_pago: String(p.fecha_pago || '').slice(0, 10),
+      metodo_pago: p.metodo_pago || metodosPago[0]?.codigo || '',
+      id_cuenta_bancaria: p.id_cuenta_bancaria ? String(p.id_cuenta_bancaria) : '',
+      id_archivo_comprobante: p.id_archivo_comprobante || null,
+      archivo: p.archivo || null,
+      observaciones: p.observaciones || ''
+    });
+  };
+
+  const subirComprobanteEdit = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
     try {
-      await cobrosService.editarFechaPago(id, fechaAbono.id, fechaAbono.fecha);
-      toast.success(`Fecha del abono #${fechaAbono.numero_abono} actualizada`);
-      setFechaAbono(null);
+      const r = await cargaComprobanteEdit.subirUno(file, 'comprobantes');
+      setPagoEdit(p => ({ ...p, id_archivo_comprobante: r.id, archivo: r }));
+      toast.success('Comprobante cargado');
+    } catch (err) {
+      if (!err?.cancelado) toast.error('Error al subir');
+    }
+  };
+
+  const guardarPago = async () => {
+    if (!pagoEdit) return;
+    if (!pagoEdit.monto || Number(pagoEdit.monto) <= 0) return toast.error('Monto inválido');
+    if (!pagoEdit.fecha_pago) return toast.error('Indica la fecha real de cobro');
+    if (requiereCuentaEdit && !pagoEdit.id_cuenta_bancaria) {
+      return toast.error(`El método "${pagoEdit.metodo_pago}" requiere seleccionar una cuenta bancaria`);
+    }
+    setGuardandoPago(true);
+    try {
+      await cobrosService.editarPago(id, pagoEdit.id, {
+        monto: Number(pagoEdit.monto),
+        fecha_pago: pagoEdit.fecha_pago,
+        metodo_pago: pagoEdit.metodo_pago,
+        id_cuenta_bancaria: pagoEdit.id_cuenta_bancaria ? Number(pagoEdit.id_cuenta_bancaria) : null,
+        id_archivo_comprobante: pagoEdit.id_archivo_comprobante || null,
+        observaciones: pagoEdit.observaciones || null
+      });
+      toast.success(`Abono #${pagoEdit.numero_abono} actualizado`);
+      setPagoEdit(null);
       cargar();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al actualizar la fecha');
+      toast.error(err.response?.data?.error || 'Error al actualizar el abono');
     } finally {
-      setGuardandoFechaAbono(false);
+      setGuardandoPago(false);
     }
   };
 
@@ -473,10 +520,10 @@ export default function CobroDetalle() {
                 <th className="table-th">Método</th><th className="table-th">Cuenta</th>
                 <th className="table-th text-right">Monto</th>
                 <th className="table-th">Comprobante</th><th className="table-th">Notas</th>
-                {puedeEditarFechaCobro && <th className="table-th text-right">Acción</th>}
+                {puedeEditarPagos && <th className="table-th text-right">Acción</th>}
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {data.pagos?.length === 0 && <tr><td colSpan={puedeEditarFechaCobro ? 8 : 7} className="table-td text-center text-slate-400 py-6">Sin abonos</td></tr>}
+                {data.pagos?.length === 0 && <tr><td colSpan={puedeEditarPagos ? 8 : 7} className="table-td text-center text-slate-400 py-6">Sin abonos</td></tr>}
                 {data.pagos?.map(p => (
                   <tr key={p.id}>
                     <td className="table-td font-mono text-xs">{p.numero_abono}</td>
@@ -495,14 +542,14 @@ export default function CobroDetalle() {
                     <td className="table-td text-right font-mono text-emerald-700">{formatMonto(p.monto, data.moneda)}</td>
                     <td className="table-td">{p.archivo ? <FileLink archivo={p.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
                     <td className="table-td text-xs">{p.observaciones || '—'}</td>
-                    {puedeEditarFechaCobro && (
+                    {puedeEditarPagos && (
                       <td className="table-td text-right">
                         <button
                           type="button"
-                          onClick={() => setFechaAbono({ id: p.id, numero_abono: p.numero_abono, monto: p.monto, fecha: String(p.fecha_pago).slice(0, 10) })}
+                          onClick={() => abrirEditarPago(p)}
                           className="text-brand-700 text-xs hover:underline whitespace-nowrap"
-                          title="Corregir la fecha real en que se cobró este abono"
-                        >Editar fecha</button>
+                          title="Corregir este abono: monto, fecha real de cobro, método, cuenta, comprobante o notas"
+                        >Editar</button>
                       </td>
                     )}
                   </tr>
@@ -694,7 +741,7 @@ export default function CobroDetalle() {
                         : <span className="badge-violet">General</span>}
                     </td>
                     <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
-                    <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaDocs(f)} /></td>
+                    <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaEditar(f)} /></td>
                     <td className="table-td text-right">
                       {!esFacturaActiva(f) ? (
                         <span className="text-slate-400 text-xs">Anulada</span>
@@ -711,6 +758,17 @@ export default function CobroDetalle() {
                         <span className="text-emerald-700 text-xs font-medium">✓ Enviada</span>
                       ) : (
                         <span className="text-slate-300">—</span>
+                      )}
+                      {puedeAnularFacturas && (
+                        <>
+                          <span className="text-slate-300 mx-1.5">·</span>
+                          <button
+                            type="button"
+                            onClick={() => setFacturaEditar(f)}
+                            className="text-brand-700 text-xs hover:underline"
+                            title="Editar los datos, el comprobante y los documentos de la factura"
+                          >Editar</button>
+                        </>
                       )}
                       {puedeAnularFacturas && esFacturaActiva(f) && (
                         <>
@@ -964,10 +1022,10 @@ export default function CobroDetalle() {
         </div>
       </Modal>
 
-      <DocumentosFacturaModal
-        open={!!facturaDocs}
-        onClose={() => setFacturaDocs(null)}
-        factura={facturaDocs}
+      <EditarFacturaModal
+        open={!!facturaEditar}
+        onClose={() => setFacturaEditar(null)}
+        factura={facturaEditar}
         onCambio={refrescar}
       />
 
@@ -1021,35 +1079,100 @@ export default function CobroDetalle() {
         }}
       />
 
-      {/* Fecha real de cobro de un abono ya registrado */}
+      {/* Corrección de un abono ya registrado */}
       <Modal
-        open={!!fechaAbono}
-        onClose={() => !guardandoFechaAbono && setFechaAbono(null)}
-        title={`Fecha real de cobro · abono #${fechaAbono?.numero_abono ?? ''}`}
+        open={!!pagoEdit}
+        onClose={() => !guardandoPago && setPagoEdit(null)}
+        title={`Editar abono #${pagoEdit?.numero_abono ?? ''}`}
         footer={<>
-          <button type="button" className="btn-secondary" onClick={() => setFechaAbono(null)} disabled={guardandoFechaAbono}>Cancelar</button>
-          <button type="button" className="btn-primary" onClick={guardarFechaAbono} disabled={guardandoFechaAbono}>
-            {guardandoFechaAbono ? 'Guardando…' : 'Guardar'}
+          <button type="button" className="btn-secondary" onClick={() => setPagoEdit(null)} disabled={guardandoPago}>Cancelar</button>
+          <button type="button" className="btn-primary" onClick={guardarPago} disabled={guardandoPago || cargaComprobanteEdit.subiendo}>
+            {guardandoPago ? 'Guardando…' : 'Guardar cambios'}
           </button>
         </>}>
-        <div className="space-y-3 text-sm">
-          <p>
-            Abono <span className="font-mono">#{fechaAbono?.numero_abono}</span> por{' '}
-            <span className="font-mono">{formatMonto(fechaAbono?.monto, data.moneda)}</span>.
-          </p>
+        <div className="space-y-4">
+          <div>
+            <label className="label">Monto *</label>
+            <input
+              type="number" step="0.01" min="0.01" className="input"
+              value={pagoEdit?.monto ?? ''}
+              disabled={montoBloqueado}
+              onChange={e => setPagoEdit(p => ({ ...p, monto: e.target.value }))}
+            />
+            <p className="text-[11px] text-slate-500 mt-1">
+              {montoBloqueado
+                ? `El cobro está ${data.estado_cobro.toLowerCase()}: el monto del abono no se puede cambiar.`
+                : 'Si cambia, se reajustan las cuotas, el saldo y el estado del cobro.'}
+            </p>
+          </div>
           <div>
             <label className="label">Fecha real de cobro *</label>
             <input
-              type="date"
-              className="input"
-              value={fechaAbono?.fecha || ''}
-              onChange={e => setFechaAbono(f => ({ ...f, fecha: e.target.value }))}
+              type="date" className="input"
+              value={pagoEdit?.fecha_pago || ''}
+              onChange={e => setPagoEdit(p => ({ ...p, fecha_pago: e.target.value }))}
             />
-            <p className="text-[11px] text-slate-500 mt-1">
-              Solo cambia la fecha: el monto y la cuenta se conservan. Las cuotas que este abono terminó de cubrir
-              toman esta fecha de pago. El cambio queda registrado en la auditoría.
-            </p>
+            <p className="text-[11px] text-slate-500 mt-1">La «Fecha pago» de las cuotas y el «Último abono» del resumen se recalculan a partir de las fechas de los abonos.</p>
           </div>
+          <div>
+            <label className="label">Método</label>
+            <select
+              className="select"
+              value={pagoEdit?.metodo_pago || ''}
+              onChange={e => setPagoEdit(p => ({ ...p, metodo_pago: e.target.value, id_cuenta_bancaria: '' }))}
+            >
+              {metodosPago.map(m => <option key={m.codigo} value={m.codigo}>{m.etiqueta}</option>)}
+            </select>
+          </div>
+          {requiereCuentaEdit && (
+            <div>
+              <label className="label">Cuenta de destino *</label>
+              <select
+                className="select"
+                required
+                value={pagoEdit?.id_cuenta_bancaria || ''}
+                onChange={e => setPagoEdit(p => ({ ...p, id_cuenta_bancaria: e.target.value }))}
+                disabled={cuentasBancarias.length === 0}
+              >
+                <option value="">— Seleccione cuenta —</option>
+                {cuentasBancarias.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre} · {c.banco} · {c.numero_cuenta} ({c.moneda})
+                  </option>
+                ))}
+              </select>
+              {cuentasBancarias.length === 0 && (
+                <p className="mt-1 text-[11px] text-rose-600">No hay cuentas bancarias registradas. Configúrelas en Configuración.</p>
+              )}
+            </div>
+          )}
+          <div>
+            <label className="label">Comprobante</label>
+            {pagoEdit?.archivo
+              ? (
+                <div className="flex items-center gap-3 text-xs mb-2">
+                  <FileLink archivo={pagoEdit.archivo} className="text-brand-700 hover:underline">Ver comprobante actual</FileLink>
+                  <button
+                    type="button"
+                    className="text-rose-600 hover:underline"
+                    onClick={() => setPagoEdit(p => ({ ...p, id_archivo_comprobante: null, archivo: null }))}
+                  >Quitar</button>
+                </div>
+              )
+              : <p className="text-xs text-slate-500 mb-2">Sin comprobante.</p>}
+            <input type="file" className="input" onChange={subirComprobanteEdit} disabled={cargaComprobanteEdit.subiendo} />
+            <BarraProgresoCarga carga={cargaComprobanteEdit} className="mt-2" />
+            <p className="text-[11px] text-slate-500 mt-1">Al subir uno nuevo se reemplaza el anterior.</p>
+          </div>
+          <div>
+            <label className="label">Observaciones</label>
+            <textarea
+              className="textarea" rows="2"
+              value={pagoEdit?.observaciones || ''}
+              onChange={e => setPagoEdit(p => ({ ...p, observaciones: e.target.value }))}
+            />
+          </div>
+          <p className="text-[11px] text-slate-500">El cambio queda registrado en la auditoría con los valores anteriores.</p>
         </div>
       </Modal>
 

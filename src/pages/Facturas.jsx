@@ -9,7 +9,7 @@ import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoneda.jsx';
 import { FileLink, descargarArchivo } from '../components/common/FilePreview.jsx';
 import Modal from '../components/common/Modal.jsx';
-import DocumentosFacturaModal from '../components/facturas/DocumentosFacturaModal.jsx';
+import EditarFacturaModal from '../components/facturas/EditarFacturaModal.jsx';
 import { CeldaDocumentosFactura, ListaDocumentosFactura } from '../components/facturas/DocumentosFactura.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { useToast } from '../components/common/Toast.jsx';
@@ -150,8 +150,8 @@ export default function Facturas() {
   const [anulando, setAnulando] = useState(false);
   // Detalle de la factura (se abre desde su número) con descarga del comprobante.
   const [facturaDetalle, setFacturaDetalle] = useState(null);
-  // Factura cuyo modal de documentos (constancias, XML/CDR…) está abierto.
-  const [facturaDocs, setFacturaDocs] = useState(null);
+  // Factura en edición: datos, comprobante y documentos (constancias, XML/CDR…).
+  const [facturaEditar, setFacturaEditar] = useState(null);
 
   // El listado no incluye el desglose mensual de las facturas de plan (lo
   // arma el endpoint de detalle desde el cronograma). Se abre el modal al
@@ -415,8 +415,19 @@ export default function Facturas() {
                           : <span className="badge-violet">General</span>}
                       </td>
                       <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
-                      <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaDocs(f)} /></td>
+                      <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaEditar(f)} /></td>
                       <td className="table-td text-right whitespace-nowrap">
+                        {puedeAnular && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setFacturaEditar(f)}
+                              className="text-brand-700 text-xs hover:underline"
+                              title="Editar los datos, el comprobante y los documentos de la factura"
+                            >Editar</button>
+                            <span className="text-slate-300 mx-1.5">·</span>
+                          </>
+                        )}
                         {esFacturaActiva(f)
                           ? (puedeAnular
                               ? <button
@@ -506,8 +517,8 @@ export default function Facturas() {
                 <button
                   type="button"
                   className="text-brand-700 text-xs hover:underline"
-                  onClick={() => { setFacturaDocs(facturaDetalle); setFacturaDetalle(null); }}
-                >Gestionar documentos</button>
+                  onClick={() => { setFacturaEditar(facturaDetalle); setFacturaDetalle(null); }}
+                >Editar factura</button>
               </div>
               {facturaDetalle.documentos?.length
                 ? <ListaDocumentosFactura documentos={facturaDetalle.documentos} />
@@ -549,10 +560,10 @@ export default function Facturas() {
         )}
       </Modal>
 
-      <DocumentosFacturaModal
-        open={!!facturaDocs}
-        onClose={() => setFacturaDocs(null)}
-        factura={facturaDocs}
+      <EditarFacturaModal
+        open={!!facturaEditar}
+        onClose={() => setFacturaEditar(null)}
+        factura={facturaEditar}
         onCambio={recargar}
       />
 

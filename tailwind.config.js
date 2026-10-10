@@ -162,6 +162,17 @@ export default {
         'shine-sweep': {
           '0%, 100%': { transform: 'translateX(-160%) skewX(-20deg)' },
           '35%':      { transform: 'translateX(160%)  skewX(-20deg)' }
+        },
+        // Latido doble + anillo ámbar que se expande: llama la atención sobre
+        // una acción pendiente (p. ej. regenerar un PDF desactualizado).
+        'latido': {
+          '0%':   { transform: 'scale(1)',    boxShadow: '0 0 0 0 rgba(232,133,58,0.55)' },
+          '12%':  { transform: 'scale(1.06)' },
+          '24%':  { transform: 'scale(1)' },
+          '36%':  { transform: 'scale(1.06)' },
+          '50%':  { transform: 'scale(1)' },
+          '70%':  { boxShadow: '0 0 0 12px rgba(232,133,58,0)' },
+          '100%': { transform: 'scale(1)',    boxShadow: '0 0 0 0 rgba(232,133,58,0)' }
         }
       },
       animation: {
@@ -178,7 +189,8 @@ export default {
         'float':      'float 6s ease-in-out infinite',
         'pulse-ring': 'pulse-ring 1.6s cubic-bezier(.5,0,.5,1) infinite',
         'progress':   'progress 3.5s linear forwards',
-        'shine':      'shine-sweep 6s ease-in-out 1.5s infinite'
+        'shine':      'shine-sweep 6s ease-in-out 1.5s infinite',
+        'latido':     'latido 1.8s ease-in-out infinite'
       }
     }
   },

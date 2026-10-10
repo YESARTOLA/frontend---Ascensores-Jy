@@ -1,5 +1,6 @@
 import PageHeader from '../components/common/PageHeader.jsx';
 import CuentasBancariasPanel from '../components/configuracion/CuentasBancariasPanel.jsx';
+import EmpresasEmisorasPanel from '../components/configuracion/EmpresasEmisorasPanel.jsx';
 import ChecklistPlantillasPanel from '../components/configuracion/ChecklistPlantillasPanel.jsx';
 import ParametrosOperativosPanel from '../components/configuracion/ParametrosOperativosPanel.jsx';
 import ClasificacionesPanel from '../components/clientes/ClasificacionesPanel.jsx';
@@ -18,6 +19,14 @@ export default function Configuracion() {
         </div>
         <div className="card-body">
           <ParametrosOperativosPanel />
+        </div>
+      </div>
+      <div className="card mb-5">
+        <div className="card-header">
+          <h3 className="card-title">Empresas emisoras (razón social y RUC)</h3>
+        </div>
+        <div className="card-body">
+          <EmpresasEmisorasPanel />
         </div>
       </div>
       <div className="card">

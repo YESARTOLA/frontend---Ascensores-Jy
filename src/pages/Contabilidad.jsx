@@ -77,8 +77,6 @@ const TIPOS_CATEGORIA = [
 // Estados de cobro que se consideran "Cancelado" (pagado). El resto es "Pendiente".
 const COBRO_CANCELADO = ['Pagado', 'Cerrado'];
 
-const EN_EJECUCION = 'En ejecución';
-
 // Estados administrativos PREVIOS a la aprobación: mientras el servicio operativo
 // esté en cualquiera de ellos no es elegible para Contabilidad. Espejo de
 // backend/utils/elegibilidadContable.js (ESTADOS_ADMIN_NO_HABILITA).
@@ -111,7 +109,14 @@ function motivoNoFacturable(r) {
   if (!s) return 'Sin servicio asociado';
   if (s.estado_servicio === 'Cancelado') return 'Servicio cancelado';
   if (s.sin_cobro === 1) return 'Servicio sin cobro (gratuito)';
-  if (facturaPorCuotaDelPlan(r)) return 'Pertenece a un plan: se factura una sola vez al mes, contra la cuota del plan';
+  if (facturaPorCuotaDelPlan(r)) {
+    // `facturacion_plan` lo arma el backend (utils/facturacionServiciosPlan.js):
+    // el mes del plan en que cae el servicio, su cuota y la factura que lo cubre.
+    const fp = r.facturacion_plan;
+    if (fp?.factura) return `Facturado con la factura mensual del plan: ${fp.factura.numero_factura}`;
+    if (fp && !fp.id_cuota) return 'El mes de este mantenimiento aún no está aprobado: se aprueba desde el detalle del plan (Mantenimientos)';
+    return 'Pertenece a un plan: se factura una sola vez al mes, contra la cuota del plan';
+  }
   // Un servicio de plan que llega aquí es legacy con cobro propio: su marca
   // "Sin factura" es la de todo servicio de plan y no lo bloquea (espejo del
   // backend, facturasController.crear).
@@ -131,9 +136,15 @@ function motivoNoFacturable(r) {
 // esta misma página, así que la fila ofrece el salto en vez de un texto muerto.
 // Se consulta DESPUÉS de motivoNoFacturable para respetar sus precedencias: un
 // servicio cancelado o gratuito sigue sin ofrecer acción.
-const facturaEnBandejaDeCuotas = (r) =>
-  facturaPorCuotaDelPlan(r) ||
-  (r.servicio?.cobro?.facturas || []).filter(esFacturaActiva).some(f => f.id_cuota != null);
+// En un plan, solo si el mes ya está aprobado (tiene cuota) y aún no se facturó:
+// si no, la bandeja no tendría nada que emitir para este mantenimiento.
+const facturaEnBandejaDeCuotas = (r) => {
+  if (facturaPorCuotaDelPlan(r)) {
+    const fp = r.facturacion_plan;
+    return !fp || (!!fp.id_cuota && !fp.factura);
+  }
+  return (r.servicio?.cobro?.facturas || []).filter(esFacturaActiva).some(f => f.id_cuota != null);
+};
 
 // Qué acción ofrece la columna "Acciones": emitir la factura general aquí mismo,
 // saltar a la bandeja de cuotas, o nada (con el motivo como tooltip).
@@ -171,30 +182,35 @@ const docCliente = (r) => {
 };
 
 // Fecha de emisión del comprobante: la factura activa más reciente del cobro.
+// Mantenimiento de plan: la de la factura de su mes del plan.
 const fechaComprobante = (r) => {
+  if (r.facturacion_plan) return r.facturacion_plan.factura?.fecha_emision || null;
   const facturas = (r.servicio?.cobro?.facturas || []).filter(f => f.estado !== 0 && f.fecha_emision);
   if (!facturas.length) return null;
   return facturas.reduce((max, f) => (f.fecha_emision > max ? f.fecha_emision : max), facturas[0].fecha_emision);
 };
 
-// Mantenimiento (de un plan o del módulo de mantenimiento) con fecha programada.
-// Espejo de WHERE_MANTENIMIENTO_PROGRAMADO en el backend (serviciosController).
-const esMantenimientoProgramado = (r) => {
-  const s = r.servicio;
-  return !!s?.fecha_programada
-    && (!!s.id_mantenimiento_plan || s.tipo_servicio?.modulo_asociado === 'mantenimiento');
-};
+// "Fecha servicio": la calcula el backend (utils/fechaServicioContable.js).
+// Mantenimientos: fecha de ejecución. Correctivos y demás: fecha de aprobación
+// de la cotización (sin cotización aprobada, la de ejecución). null = servicio
+// aún sin ejecutar.
+const fechaServicio = (r) => r.fecha_servicio || null;
 
-// "Fecha servicio": para los mantenimientos es la fecha PROGRAMADA (la visita
-// de agosto es de agosto aunque se haya ejecutado en septiembre); para el resto,
-// la de realización. null = servicio aún sin ejecutar.
-const fechaServicio = (r) => {
-  if (esMantenimientoProgramado(r)) return r.servicio.fecha_programada;
-  return r.estado_administrativo === EN_EJECUCION ? null : r.fecha_realizacion;
+// Qué fecha es, para el tooltip de la celda.
+const TITULO_FECHA_SERVICIO = {
+  ejecucion: 'Fecha de ejecución',
+  aprobacion: 'Fecha de aprobación de la cotización',
+  sin_cotizacion: 'Fecha de ejecución (sin cotización aprobada)'
+};
+const tituloFechaServicio = (r) => {
+  if (!r.fecha_servicio) return undefined;
+  const titulo = TITULO_FECHA_SERVICIO[r.fecha_servicio_origen];
+  const programada = r.fecha_servicio_origen === 'ejecucion' && r.servicio?.fecha_programada;
+  return programada ? `${titulo} · programado para el ${formatFecha(programada)}` : titulo;
 };
 
 // Listado de Contabilidad: el rango de fechas se aplica sobre "Fecha servicio"
-// (programada en mantenimientos), no sobre la fecha de realización. Y solo trae
+// (rango_fecha=servicio), no sobre la fecha de realización. Y solo trae
 // servicios con importe (con_monto): los gratuitos y los de S/ 0.00 no tienen
 // nada que cobrar ni facturar (backend/utils/montoACobrar.js).
 const listarRealizados = (params) => serviciosService.realizadosPaginate({ ...params, rango_fecha: 'servicio', con_monto: 1 });
@@ -567,13 +583,9 @@ export default function Contabilidad() {
                     // La OT vive en el servicio (antes se copiaba al registro de realizado).
                     const ot = { numero: r.servicio?.numero_ot, archivo: r.servicio?.archivo_ot };
                     const tieneOt = !!(ot.numero || ot.archivo);
-                    const enEjecucion = r.estado_administrativo === EN_EJECUCION;
                     return (
                       <tr key={r.id ?? `row-${idx}`} className="table-row-hover">
-                        <td className="table-td text-xs"
-                            title={esMantenimientoProgramado(r) && !enEjecucion
-                              ? `Fecha programada · realizado el ${formatFecha(r.fecha_realizacion)}`
-                              : undefined}>
+                        <td className="table-td text-xs" title={tituloFechaServicio(r)}>
                           {(() => {
                             const f = fechaServicio(r);
                             return f ? formatFecha(f) : <span className="text-slate-400 italic">— (sin ejecutar)</span>;
@@ -648,7 +660,11 @@ export default function Contabilidad() {
                             }
                             return <span className="text-slate-300 text-xs cursor-help" title={acc.motivo}>Facturar</span>;
                           })()}
-                          {r.servicio?.cobro && <Link to={`/cobros/${r.servicio.cobro.id}`} className="text-brand-700 text-xs">Ir a cobro</Link>}
+                          {/* Mantenimiento de plan: su cobro es el del plan. */}
+                          {(() => {
+                            const idCobro = r.servicio?.cobro?.id ?? r.facturacion_plan?.id_cobro;
+                            return idCobro ? <Link to={`/cobros/${idCobro}`} className="text-brand-700 text-xs">Ir a cobro</Link> : null;
+                          })()}
                           <Link to={`/servicios/${r.id_servicio}`} className="text-slate-600 text-xs">Detalle</Link>
                         </td>
                       </tr>

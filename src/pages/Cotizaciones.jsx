@@ -8,6 +8,7 @@ import {
   tiposServicioService,
   configuracionService,
   cuentasBancariasService,
+  empresasEmisorasService,
   assetUrl
 } from '../services';
 import PageHeader from '../components/common/PageHeader.jsx';
@@ -31,6 +32,7 @@ import ItemsCotizacionEditor, { itemVacio, itemDesdeServidor, itemsParaPayload, 
 import { ESTADO_GLOBAL_ANULADO, rangoEsPorFechaAceptacion } from '../utils/estadoCotizacion.js';
 import { MODO_IGV_MAS, modoIgvDeVersion, camposModoIgv, calcularTotalesCotizacion } from '../utils/igvCotizacion.js';
 import { SelectorModoIgv, ResumenTotales } from '../components/cotizaciones/IgvCotizacion.jsx';
+import SelectorEmpresaEmisora, { empresaPredeterminada } from '../components/cotizaciones/SelectorEmpresaEmisora.jsx';
 
 // La LISTA de estados del filtro no se declara aquí: se pide al backend
 // (/cotizaciones/catalogos), que es quien los escribe. Duplicarla en un literal
@@ -74,6 +76,9 @@ const formInicial = (preset = {}) => ({
   id_tipo_servicio: '',
   id_subtipo_servicio: preset.id_subtipo_servicio || preset.id_tipo_servicio || '',
   descripcion: '',
+  // Razón social / RUC con que se emite el PDF. Vacío = se completa con la
+  // empresa predeterminada al abrir el modal (ver efecto en Cotizaciones).
+  id_empresa_emisora: '',
   moneda: 'PEN',
   observaciones: '',
   // Texto libre de la garantía ofrecida. Sale en el PDF como "Garantía: …".
@@ -117,6 +122,7 @@ export default function Cotizaciones() {
   const [edificiosCliente, setEdificiosCliente] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [cuentas, setCuentas] = useState([]);
+  const [empresas, setEmpresas] = useState([]);
   const [igvTasa, setIgvTasa] = useState(0.18);
   // Filtros persistidos: siguen activos al abrir una cotización y volver.
   const [filtros, setFiltros] = usePersistentState('cotizaciones:filtros', { q: '', estado_global: '', id_cliente: '', id_ascensor: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
@@ -284,14 +290,16 @@ export default function Cotizaciones() {
       tiposServicioService.list(),
       configuracionService.get('IGV_RATE').catch(() => ({ valor: 0.18 })),
       cuentasBancariasService.list().catch(() => []),
-      cotizacionesService.catalogos().catch(() => ({ estados_globales: [], filtros_globales: [], etiquetas_globales: {} }))
-    ]).then(([cs, as, eds, ts, igv, ctas, cat]) => {
+      cotizacionesService.catalogos().catch(() => ({ estados_globales: [], filtros_globales: [], etiquetas_globales: {} })),
+      empresasEmisorasService.list().catch(() => [])
+    ]).then(([cs, as, eds, ts, igv, ctas, cat, emps]) => {
       setClientes(cs);
       setAscensores(as);
       setEdificios(Array.isArray(eds) ? eds : []);
       setTipos(ts);
       setIgvTasa(Number(igv.valor) || 0.18);
       setCuentas(Array.isArray(ctas) ? ctas : []);
+      setEmpresas(Array.isArray(emps) ? emps : []);
       setEstadosGlobales(cat?.estados_globales || []);
       setFiltrosGlobales(cat?.filtros_globales || []);
       setEtiquetasGlobales(cat?.etiquetas_globales || {});
@@ -304,6 +312,15 @@ export default function Cotizaciones() {
       }
     });
   }, []);
+
+  // Empresa emisora del modal: si el form no trae una válida (cotización nueva,
+  // prellenada, o duplicada de una cuya empresa se eliminó) se propone la
+  // predeterminada. Cubre también que el modal abra antes de cargar el catálogo.
+  useEffect(() => {
+    if (!open || empresas.length === 0) return;
+    if (empresas.some(e => String(e.id) === String(form.id_empresa_emisora))) return;
+    setForm(f => ({ ...f, id_empresa_emisora: String(empresaPredeterminada(empresas).id) }));
+  }, [open, form.id_empresa_emisora, empresas]);
 
   // Excel del listado con los MISMOS filtros activos (pestaña de tipo, búsqueda,
   // estado, cliente, ascensor, rango y "Mostrar anuladas"). Lo genera el backend
@@ -358,6 +375,7 @@ export default function Cotizaciones() {
       id_tipo_servicio: cot.tipo_servicio?.id ? String(cot.tipo_servicio.id) : '',
       id_subtipo_servicio: cot.subtipo_servicio?.id ? String(cot.subtipo_servicio.id) : '',
       descripcion: cot.descripcion || '',
+      id_empresa_emisora: v.id_empresa_emisora ? String(v.id_empresa_emisora) : '',
       moneda: v.moneda || 'PEN',
       observaciones: v.observaciones || '',
       garantia: v.garantia || '',
@@ -586,6 +604,7 @@ export default function Cotizaciones() {
         id_tipo_servicio: Number(form.id_tipo_servicio),
         id_subtipo_servicio: Number(form.id_subtipo_servicio),
         descripcion: form.descripcion || null,
+        id_empresa_emisora: form.id_empresa_emisora ? Number(form.id_empresa_emisora) : null,
         moneda: form.moneda,
         observaciones: form.observaciones || null,
         garantia: form.garantia || null,
@@ -838,6 +857,11 @@ export default function Cotizaciones() {
               sobre el servicio existente{form._codigo_servicio_cobro ? ` ${form._codigo_servicio_cobro}` : ''} y quedará facturable.
             </div>
           )}
+          <SelectorEmpresaEmisora
+            empresas={empresas}
+            value={form.id_empresa_emisora}
+            onChange={id => setForm(f => ({ ...f, id_empresa_emisora: id }))}
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="label">Cliente *</label>

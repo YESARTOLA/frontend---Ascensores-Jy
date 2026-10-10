@@ -209,7 +209,7 @@ export function ChipsDocumentosFactura({ factura }) {
 
 /**
  * Celda "Documentos" de las tablas de facturas: los chips de vista previa y el
- * botón para agregar (o quitar) documentos.
+ * botón que abre la edición de la factura y sus documentos (EditarFacturaModal).
  */
 export function CeldaDocumentosFactura({ factura, onAbrir }) {
   const sinNada = !factura.archivo && !(factura.documentos?.length);
@@ -220,7 +220,7 @@ export function CeldaDocumentosFactura({ factura, onAbrir }) {
       <button
         type="button"
         onClick={onAbrir}
-        title="Agregar o quitar documentos: constancia de detracción, de pago, XML/CDR…"
+        title="Agregar, editar o quitar documentos: comprobante, constancia de detracción, de pago, XML/CDR…"
         className={`${CHIP} ring-0 border border-dashed border-slate-300 text-slate-600 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50`}
       >
         + Documento
