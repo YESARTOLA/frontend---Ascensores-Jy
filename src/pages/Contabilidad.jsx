@@ -191,23 +191,25 @@ const fechaComprobante = (r) => {
 };
 
 // "Fecha servicio": la calcula el backend (utils/fechaServicioContable.js).
-// Mantenimientos: fecha de ejecución. Correctivos y demás: fecha de aprobación
-// de la cotización (sin cotización aprobada, la de ejecución). null = servicio
-// aún sin ejecutar.
+// Mantenimientos: fecha real de ejecución, la de la columna "Inicio" del módulo
+// de Mantenimientos. Correctivos y demás: fecha de aprobación de la cotización
+// (sin cotización aprobada, la de ejecución). null = servicio aún sin ejecutar.
 const fechaServicio = (r) => r.fecha_servicio || null;
 
 // Qué fecha es, para el tooltip de la celda.
 const TITULO_FECHA_SERVICIO = {
-  ejecucion: 'Fecha de ejecución',
+  inicio: 'Fecha de ejecución (inicio del mantenimiento)',
   aprobacion: 'Fecha de aprobación de la cotización',
   sin_cotizacion: 'Fecha de ejecución (sin cotización aprobada)'
 };
 const tituloFechaServicio = (r) => {
   if (!r.fecha_servicio) return undefined;
   const titulo = TITULO_FECHA_SERVICIO[r.fecha_servicio_origen];
-  const programada = r.fecha_servicio_origen === 'ejecucion' && r.servicio?.fecha_programada;
+  const programada = r.fecha_servicio_origen === 'inicio' && r.servicio?.fecha_programada;
   return programada ? `${titulo} · programado para el ${formatFecha(programada)}` : titulo;
 };
+// Celda vacía: un mantenimiento sin fecha es uno que aún no se inició.
+const sinFechaServicio = (r) => (r.fecha_servicio_origen === 'inicio' ? '— (sin iniciar)' : '— (sin ejecutar)');
 
 // Listado de Contabilidad: el rango de fechas se aplica sobre "Fecha servicio"
 // (rango_fecha=servicio), no sobre la fecha de realización. Y solo trae
@@ -588,7 +590,7 @@ export default function Contabilidad() {
                         <td className="table-td text-xs" title={tituloFechaServicio(r)}>
                           {(() => {
                             const f = fechaServicio(r);
-                            return f ? formatFecha(f) : <span className="text-slate-400 italic">— (sin ejecutar)</span>;
+                            return f ? formatFecha(f) : <span className="text-slate-400 italic">{sinFechaServicio(r)}</span>;
                           })()}
                         </td>
                         <td className="table-td text-xs">
