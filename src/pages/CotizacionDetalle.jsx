@@ -23,7 +23,9 @@ import {
 } from '../utils/estadoCotizacion.js';
 import CuotasEditor, { planCuotasDesdeServidor, planParaPayload } from '../components/cotizaciones/CuotasEditor.jsx';
 import CotizacionSinFinanzas from '../components/cotizaciones/CotizacionSinFinanzas.jsx';
-import ItemsCotizacionEditor, { itemDesdeServidor, itemsParaPayload, calcImporte } from '../components/cotizaciones/ItemsCotizacionEditor.jsx';
+import ItemsCotizacionEditor, {
+  itemDesdeServidor, itemsParaPayload, calcImporte, descuentoParaPayload, textoDescuento
+} from '../components/cotizaciones/ItemsCotizacionEditor.jsx';
 import { MODO_IGV_MAS, modoIgvDeVersion, camposModoIgv, calcularTotalesCotizacion } from '../utils/igvCotizacion.js';
 import { SelectorModoIgv, ResumenTotales } from '../components/cotizaciones/IgvCotizacion.jsx';
 import SelectorEmpresaEmisora, { empresaPredeterminada } from '../components/cotizaciones/SelectorEmpresaEmisora.jsx';
@@ -366,7 +368,9 @@ export default function CotizacionDetalle() {
           cantidad: Number(it.cantidad) || 1,
           unidad: it.unidad || 'Unidad',
           precio_unitario: Number(it.precio_unitario) || 0,
-          descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
+          // Se reenvía tal cual (tipo y valor): sin esto un descuento de monto
+          // fijo volvería a 0% y cambiaría el importe al subir la foto.
+          ...descuentoParaPayload(it),
           id_archivo: it.id === item.id ? arch.id : (it.id_archivo || null)
         }))
       });
@@ -1224,7 +1228,7 @@ function ItemsView({ version, igvTasa }) {
               <th className="table-th text-right w-24">Cant.</th>
               <th className="table-th w-24">Unidad</th>
               <th className="table-th text-right w-28">P. Unit.</th>
-              <th className="table-th text-right w-20">% dscto</th>
+              <th className="table-th text-right w-24">Dscto</th>
               <th className="table-th text-right w-28">Importe</th>
             </tr>
           </thead>
@@ -1243,7 +1247,7 @@ function ItemsView({ version, igvTasa }) {
                 <td className="table-td text-right">{Number(it.cantidad).toFixed(2)}</td>
                 <td className="table-td">{it.unidad}</td>
                 <td className="table-td text-right">{formatMonto(it.precio_unitario, version.moneda)}</td>
-                <td className="table-td text-right">{Number(it.descuento_porcentaje).toFixed(2)}%</td>
+                <td className="table-td text-right">{textoDescuento(it, version.moneda)}</td>
                 <td className="table-td text-right font-medium">{formatMonto(it.importe, version.moneda)}</td>
               </tr>
             ))}

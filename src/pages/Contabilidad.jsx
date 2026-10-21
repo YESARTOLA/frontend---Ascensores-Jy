@@ -12,50 +12,60 @@ import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoned
 import OtModal from '../components/common/OtModal.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import ArchivoAdjunto from '../components/common/ArchivoAdjunto.jsx';
 import { DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { useMonedas } from '../hooks/useMonedas.js';
 import { badgeEstado, formatFecha, formatMonto, codigosAscensores, resumenAscensores, nombreEdificioDeAscensores, hoyISO } from '../utils/formatters.js';
 import { ESTADOS_COBRO } from '../utils/estadoCobro.js';
-import { ESTADOS_FACTURACION, esFacturaActiva } from '../utils/estadoFactura.js';
+import { esFacturaActiva } from '../utils/estadoFactura.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante, tipoComprobanteSugerido } from '../utils/catalogosComprobante.js';
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 import { etiquetaMoneda } from '../utils/excelNumeros.js';
 import { precioMensualDelPlan } from '../utils/planMantenimiento.js';
 
+// `desde`/`hasta` = rango de "Fecha servicio"; `registro_*` = "Fecha registro"
+// (de la OT); `comprobante_*` = "Fecha comprobante"; `monto_min`/`monto_max` =
+// rango de la columna "Total".
 const FILTROS_INICIALES = {
-  q: '', tipo_categoria: '', situacion: '', estado_cobro: '', estado_facturacion: '',
+  q: '', tipo_categoria: '', situacion: '', estado_cobro: '',
   grupo_facturacion: '', moneda: '', desde: '', hasta: '',
-  aprobacion_desde: '', aprobacion_hasta: ''
+  registro_desde: '', registro_hasta: '', comprobante_desde: '', comprobante_hasta: '',
+  aprobacion_desde: '', aprobacion_hasta: '', monto_min: '', monto_max: ''
 };
 
 // Los dos grupos que resume Contabilidad. Esta lista es a la vez las TARJETAS
 // del encabezado y los BOTONES de filtro: una sola definición (título, criterio
 // y tono) para que lo que se cuenta y lo que se filtra se describan igual.
 //
-// `value` viaja al backend como `grupo_facturacion` y allí se traduce con
-// whereGrupoFacturacion(), el MISMO predicado con el que se calculan los
-// contadores del resumen (backend/utils/estadoFactura.js). Por eso pulsar un
-// botón deja en la tabla exactamente los servicios que su tarjeta cuenta.
-// `value` coincide además con la clave del resumen que envía el backend.
+// `value` viaja al backend como `grupo_facturacion`. Allí la situación de cada
+// servicio (backend/utils/situacionFacturacion.js) decide a la vez qué cuenta y
+// suma cada tarjeta, qué deja en la tabla cada botón y los importes de las
+// columnas "Facturado" / "Por facturar": pulsar un botón deja exactamente los
+// servicios que su tarjeta cuenta. Un servicio facturado en parte está en los
+// dos grupos, cada uno con su importe. `value` coincide además con la clave del
+// resumen y con el campo de importe de `r.facturacion`.
 const GRUPOS_FACTURACION = [
   {
     value: 'por_facturar',
     titulo: 'Por facturar',
-    ayuda: 'Servicios que requieren comprobante y aún no lo tienen emitido por completo (incluye los parcialmente facturados). No cuenta los marcados «Sin factura» ni los gratuitos.',
+    ayuda: 'Importe que falta facturar: el total de los servicios sin comprobante; en los facturados por cuotas, las cuotas que aún no tienen factura (lo mismo que lista «Cuotas por facturar»); y en los facturados en general por una parte, la diferencia hasta el total. Un servicio facturado en parte cuenta aquí solo por su saldo. No cuenta los marcados «Sin factura» ni los gratuitos.',
+    nota: (parciales) => `Incluye ${parciales} facturado(s) en parte: aquí solo su saldo por facturar.`,
     tono: 'amber',
     btnOn: 'bg-amber-100 text-amber-900 ring-amber-300',
-    btnOff: 'bg-white text-amber-700 ring-amber-200 hover:bg-amber-50'
+    btnOff: 'bg-white text-amber-700 ring-amber-200 hover:bg-amber-50',
+    columna: 'bg-amber-50/70'
   },
   {
     value: 'facturado',
     titulo: 'Facturado',
-    ayuda: 'Servicios con la emisión completa (Facturado o Enviada).',
+    ayuda: 'Importe ya facturado: la suma de los comprobantes vigentes (no anulados). Incluye los servicios facturados en parte, por lo ya emitido.',
+    nota: (parciales) => `Incluye ${parciales} facturado(s) en parte: aquí solo lo ya emitido.`,
     tono: 'green',
     btnOn: 'bg-emerald-100 text-emerald-900 ring-emerald-300',
-    btnOff: 'bg-white text-emerald-700 ring-emerald-200 hover:bg-emerald-50'
+    btnOff: 'bg-white text-emerald-700 ring-emerald-200 hover:bg-emerald-50',
+    columna: 'bg-emerald-50/70'
   }
 ];
 
@@ -84,7 +94,7 @@ const ESTADOS_ADMIN_NO_HABILITA = ['En ejecución', 'Pendiente revisión', 'Obse
 
 // Servicio de plan del modelo mensual (sin cobro propio): el comprobante no es
 // del servicio sino del PLAN — uno por mes, contra la cuota del cobro del plan.
-// No es un "no facturable": se emite en la pestaña "Por facturar" de esta misma
+// No es un "no facturable": se emite en la pestaña "Cuotas por facturar" de esta misma
 // página (misma bandeja y mismo POST /facturas que Gestión de cobros y que el
 // detalle del plan en Mantenimientos).
 //
@@ -97,13 +107,16 @@ const facturaPorCuotaDelPlan = (r) => !!(r.servicio?.id_mantenimiento_plan && !r
 // ofrecer un botón que el backend va a rechazar. El backend sigue siendo la
 // autoridad: aquí solo se decide si mostrar la acción.
 //
-// Queda fuera (se factura en la pestaña "Por facturar" o no se factura):
+// Queda fuera (se factura en la pestaña "Cuotas por facturar" o no se factura):
 //   · mantenimientos de un PLAN → una sola factura por MES contra la cuota del
 //     plan, por el monto mensual pactado (facturaPorCuotaDelPlan);
 //   · servicios marcados "Sin factura" (requiere_factura = 0) y los gratuitos;
 //   · servicios aún no aprobados por la revisión administrativa;
-//   · cobros que ya facturan POR CUOTA (la emisión va en "Por facturar");
-//   · servicios que ya tienen su factura general emitida.
+//   · cobros que ya facturan POR CUOTA (la emisión va en "Cuotas por facturar");
+//   · servicios ya facturados por su total.
+// Una facturación general PARCIAL (p. ej. una primera factura por una parte del
+// total) no bloquea: la fila sigue ofreciendo «Facturar» por lo que falta, y así
+// hasta completar el total con una segunda, tercera… factura.
 function motivoNoFacturable(r) {
   const s = r.servicio;
   if (!s) return 'Sin servicio asociado';
@@ -124,15 +137,17 @@ function motivoNoFacturable(r) {
   if (!s.id_cotizacion && ESTADOS_ADMIN_NO_HABILITA.includes(r.estado_administrativo)) {
     return 'Aún no aprobado por la revisión administrativa';
   }
-  const facturas = (s.cobro?.facturas || []).filter(esFacturaActiva);
+  const { facturas, restante } = situacionGeneral(r);
   if (facturas.some(f => f.id_cuota != null)) return 'Este cobro factura por cuota';
-  if (facturas.some(f => f.id_cuota == null)) return 'Ya tiene factura emitida';
+  if (facturas.length > 0 && restante <= 0) {
+    return `Facturado por el total: ${facturas.map(f => f.numero_factura).join(', ')}`;
+  }
   return null;
 }
 
 // ¿El comprobante que le falta a esta fila se emite contra una CUOTA? Dos casos:
 // el mantenimiento de un plan (factura mensual del plan) y el cobro que ya viene
-// facturando por cuota. En ambos la emisión vive en la pestaña "Por facturar" de
+// facturando por cuota. En ambos la emisión vive en la pestaña "Cuotas por facturar" de
 // esta misma página, así que la fila ofrece el salto en vez de un texto muerto.
 // Se consulta DESPUÉS de motivoNoFacturable para respetar sus precedencias: un
 // servicio cancelado o gratuito sigue sin ofrecer acción.
@@ -157,8 +172,8 @@ function accionFacturar(r) {
       tipo: 'bandeja',
       etiqueta: esPlan ? 'Facturar mes' : 'Facturar cuota',
       ayuda: esPlan
-        ? 'Los mantenimientos de un plan se facturan una sola vez al mes, contra la cuota del plan. Abre «Por facturar» con las cuotas de este cliente.'
-        : 'Este cobro factura por cuota. Abre «Por facturar» con las cuotas de este cliente.'
+        ? 'Los mantenimientos de un plan se facturan una sola vez al mes, contra la cuota del plan. Abre «Cuotas por facturar» con las cuotas de este cliente.'
+        : 'Este cobro factura por cuota. Abre «Cuotas por facturar» con las cuotas de este cliente.'
     };
   }
   return { tipo: 'bloqueado', motivo };
@@ -167,6 +182,23 @@ function accionFacturar(r) {
 // Total cobrable del servicio: manda el monto del cobro; sin cobro creado, el
 // precio del servicio (mismo criterio que usa el backend para validar).
 const totalCobrable = (r) => Number(r.servicio?.cobro?.monto_total ?? r.servicio?.precio_interno ?? 0);
+
+const aCentimos = (n) => Math.round(Number(n || 0) * 100) / 100;
+
+// Facturación GENERAL del servicio (comprobantes sin cuota): se puede hacer en
+// varias emisiones, así que el botón «Facturar» y el modal necesitan saber qué
+// comprobantes vigentes hay, cuánto suman y cuánto FALTA. Manda `r.facturacion`,
+// que arma el backend con la regla única (utils/situacionFacturacion.js): son
+// los mismos importes de las columnas "Facturado" / "Por facturar" y los que
+// valida POST /facturas. Si no viene, se calcula igual a partir de las facturas
+// del cobro.
+const situacionGeneral = (r) => {
+  const fx = r.facturacion;
+  if (fx) return { facturas: fx.facturas || [], facturado: fx.facturado, restante: fx.por_facturar };
+  const facturas = (r.servicio?.cobro?.facturas || []).filter(esFacturaActiva);
+  const facturado = aCentimos(facturas.reduce((acc, f) => acc + Number(f.monto || 0), 0));
+  return { facturas, facturado, restante: aCentimos(Math.max(0, totalCobrable(r) - facturado)) };
+};
 
 // Visita de plan (precioMensualDelPlan): se muestra el monto del plan, marcado
 // como mensual para no confundirlo con el total de esa fila.
@@ -181,35 +213,28 @@ const docCliente = (r) => {
   return `${c.tipo_documento || ''} ${c.numero_documento}`.trim();
 };
 
-// Fecha de emisión del comprobante: la factura activa más reciente del cobro.
-// Mantenimiento de plan: la de la factura de su mes del plan.
-const fechaComprobante = (r) => {
-  if (r.facturacion_plan) return r.facturacion_plan.factura?.fecha_emision || null;
-  const facturas = (r.servicio?.cobro?.facturas || []).filter(f => f.estado !== 0 && f.fecha_emision);
-  if (!facturas.length) return null;
-  return facturas.reduce((max, f) => (f.fecha_emision > max ? f.fecha_emision : max), facturas[0].fecha_emision);
-};
+// "Fecha registro" y "Fecha comprobante": las calcula el backend
+// (utils/fechasContables.js), con el mismo criterio que sus filtros por rango.
+// Registro: cuándo se registró la OT del servicio. Comprobante: emisión de la
+// factura vigente más reciente del cobro o, en un mantenimiento de plan, la
+// de la factura de su mes. null = sin OT / sin comprobante.
+const fechaRegistro = (r) => r.fecha_registro || null;
+const fechaComprobante = (r) => r.fecha_comprobante || null;
 
-// "Fecha servicio": la calcula el backend (utils/fechaServicioContable.js).
-// Mantenimientos: fecha real de ejecución, la de la columna "Inicio" del módulo
-// de Mantenimientos. Correctivos y demás: fecha de aprobación de la cotización
-// (sin cotización aprobada, la de ejecución). null = servicio aún sin ejecutar.
+// "Fecha servicio": la calcula el backend (utils/fechaServicioContable.js). Es
+// la fecha en que se realizó el servicio, igual para todo tipo: el inicio real
+// de su ejecución (columna "Inicio" de los módulos operativos). null = aún no
+// se inició.
 const fechaServicio = (r) => r.fecha_servicio || null;
 
-// Qué fecha es, para el tooltip de la celda.
-const TITULO_FECHA_SERVICIO = {
-  inicio: 'Fecha de ejecución (inicio del mantenimiento)',
-  aprobacion: 'Fecha de aprobación de la cotización',
-  sin_cotizacion: 'Fecha de ejecución (sin cotización aprobada)'
-};
+// Tooltip de la celda.
 const tituloFechaServicio = (r) => {
   if (!r.fecha_servicio) return undefined;
-  const titulo = TITULO_FECHA_SERVICIO[r.fecha_servicio_origen];
-  const programada = r.fecha_servicio_origen === 'inicio' && r.servicio?.fecha_programada;
+  const titulo = 'Fecha de ejecución (inicio del servicio)';
+  const programada = r.servicio?.fecha_programada;
   return programada ? `${titulo} · programado para el ${formatFecha(programada)}` : titulo;
 };
-// Celda vacía: un mantenimiento sin fecha es uno que aún no se inició.
-const sinFechaServicio = (r) => (r.fecha_servicio_origen === 'inicio' ? '— (sin iniciar)' : '— (sin ejecutar)');
+const SIN_FECHA_SERVICIO = '— (sin iniciar)';
 
 // Listado de Contabilidad: el rango de fechas se aplica sobre "Fecha servicio"
 // (rango_fecha=servicio), no sobre la fecha de realización. Y solo trae
@@ -226,11 +251,41 @@ const situacionPago = (r) => (COBRO_CANCELADO.includes(r.estado_cobro) ? 'Cancel
 // Moneda del servicio (por defecto soles, como el resto del módulo).
 const monedaDe = (r) => r.servicio?.moneda || 'PEN';
 
+// "Facturado" / "Por facturar" de la fila: los calcula el backend
+// (utils/situacionFacturacion.js) con la misma regla que suman las tarjetas y
+// que aplica el filtro por grupo. Solo llega a los roles con finanzas.
+const etiquetaCuotas = (nums) => (nums.length === 1
+  ? `cuota ${nums[0]}`
+  : `cuotas ${nums.slice(0, -1).join(', ')} y ${nums[nums.length - 1]}`);
+const etiquetaComprobante = (f) => `${f.numero_factura}${f.numero_cuota ? ` · cuota ${f.numero_cuota}` : ''}`;
+// Detalle bajo el importe: qué comprobantes lo forman o qué cuotas faltan.
+const detalleFacturacion = (fx, campo) => {
+  if (campo === 'facturado') return fx.facturas.map(etiquetaComprobante);
+  if (fx.de_plan) return ['cuota del mes · plan'];
+  return fx.cuotas_por_facturar.length ? [etiquetaCuotas(fx.cuotas_por_facturar)] : [];
+};
+// Export: el importe del mes de un plan va como texto, sin número, por la misma
+// razón que la columna "Total" (se repite en cada visita del mes).
+const importeExport = (campo) => ({
+  header: campo === 'facturado' ? 'Facturado' : 'Por facturar',
+  align: 'right',
+  get: r => {
+    const fx = r.facturacion;
+    if (!fx || !(fx[campo] > 0)) return '';
+    return `${formatMonto(fx[campo], fx.moneda)}${fx.de_plan ? ' (mes del plan)' : ''}`;
+  },
+  num: r => {
+    const fx = r.facturacion;
+    return fx && !fx.de_plan ? Number(fx[campo] || 0) : null;
+  }
+});
+
 // Columnas del export (espejo de la tabla, sin la columna de acciones).
 // Los importes llevan `num`: en Excel son celdas numéricas sumables, y la
 // columna "Moneda" permite filtrar/segmentar soles y dólares por separado.
 const COLUMNAS_EXPORT = [
   { header: 'Fecha servicio', get: r => { const f = fechaServicio(r); return f ? formatFecha(f) : ''; } },
+  { header: 'Fecha registro', get: r => { const f = fechaRegistro(r); return f ? formatFecha(f) : ''; } },
   { header: 'Fecha comprobante', get: r => { const f = fechaComprobante(r); return f ? formatFecha(f) : ''; } },
   { header: 'Código', get: r => r.servicio?.codigo },
   { header: 'DNI / RUC', get: r => (docCliente(r) === '—' ? '' : docCliente(r)) },
@@ -238,7 +293,6 @@ const COLUMNAS_EXPORT = [
   { header: 'Edificio', get: r => nombreEdificioDeAscensores(r.servicio) },
   { header: 'Ascensor', get: r => resumenAscensores(r.servicio) },
   { header: 'Tipo de servicio', get: r => tipoServicioLabel(r) },
-  { header: 'Etapa', badge: true, get: r => r.estado_administrativo || '' },
   { header: 'Moneda', get: r => etiquetaMoneda(monedaDe(r)) },
   {
     header: 'Total',
@@ -251,8 +305,10 @@ const COLUMNAS_EXPORT = [
     // El monto del plan no entra como número: se repite en cada visita del mes.
     num: r => (precioMensualDelPlan(r.servicio) ? null : Number(r.servicio?.precio_interno))
   },
+  importeExport('facturado'),
+  { header: 'Comprobantes', get: r => (r.facturacion?.facturas || []).map(etiquetaComprobante).join(', ') },
+  importeExport('por_facturar'),
   { header: 'Estado cobro', badge: true, get: r => r.estado_cobro },
-  { header: 'Estado factura', badge: true, get: r => r.estado_facturacion },
   { header: 'Situación', badge: true, get: r => situacionPago(r) }
 ];
 
@@ -277,7 +333,7 @@ export default function Contabilidad() {
   const [facturando, setFacturando] = useState(null); // fila en el modal | null
   const [factura, setFactura] = useState({
     numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo,
-    fecha_emision: hoyISO(), monto: '', id_archivo: null, documentos: []
+    fecha_emision: hoyISO(), monto: '', id_archivo: null, archivo: null, documentos: []
   });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
@@ -338,13 +394,18 @@ export default function Contabilidad() {
     if (filtros.tipo_categoria) p.push(`Tipo de servicio: ${TIPOS_CATEGORIA.find(t => t.value === filtros.tipo_categoria)?.label || filtros.tipo_categoria}`);
     if (filtros.situacion) p.push(`Situación: ${SITUACIONES.find(s => s.value === filtros.situacion)?.label || filtros.situacion}`);
     if (filtros.estado_cobro) p.push(`Estado cobro: ${filtros.estado_cobro}`);
-    if (filtros.estado_facturacion) p.push(`Estado factura: ${filtros.estado_facturacion}`);
     if (filtros.grupo_facturacion) p.push(`Facturación: ${GRUPOS_FACTURACION.find(g => g.value === filtros.grupo_facturacion)?.titulo || filtros.grupo_facturacion}`);
     if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.desde) p.push(`Fecha servicio desde: ${filtros.desde}`);
     if (filtros.hasta) p.push(`Fecha servicio hasta: ${filtros.hasta}`);
+    if (filtros.registro_desde) p.push(`Fecha registro desde: ${filtros.registro_desde}`);
+    if (filtros.registro_hasta) p.push(`Fecha registro hasta: ${filtros.registro_hasta}`);
+    if (filtros.comprobante_desde) p.push(`Fecha comprobante desde: ${filtros.comprobante_desde}`);
+    if (filtros.comprobante_hasta) p.push(`Fecha comprobante hasta: ${filtros.comprobante_hasta}`);
     if (filtros.aprobacion_desde) p.push(`Cotización aprobada desde: ${filtros.aprobacion_desde}`);
     if (filtros.aprobacion_hasta) p.push(`Cotización aprobada hasta: ${filtros.aprobacion_hasta}`);
+    if (filtros.monto_min) p.push(`Monto desde: ${filtros.monto_min}`);
+    if (filtros.monto_max) p.push(`Monto hasta: ${filtros.monto_max}`);
     return p;
   };
 
@@ -382,8 +443,11 @@ export default function Contabilidad() {
       // Es solo el valor inicial: el selector queda editable.
       tipo_comprobante: tipoComprobanteSugerido(r.servicio?.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
-      monto: totalCobrable(r).toFixed(2),
+      // Lo que falta facturar: el total si aún no hay comprobante, o el saldo
+      // tras una factura parcial.
+      monto: situacionGeneral(r).restante.toFixed(2),
       id_archivo: null,
+      archivo: null,
       documentos: []
     });
     setFacturando(r);
@@ -400,7 +464,7 @@ export default function Contabilidad() {
     if (!file) return;
     try {
       const r = await cargaFactura.subirUno(file, 'facturas');
-      setFactura(f => ({ ...f, id_archivo: r.id }));
+      setFactura(f => ({ ...f, id_archivo: r.id, archivo: r }));
       toast.success('Archivo cargado');
     } catch (err) {
       if (!err?.cancelado) toast.error('Error subiendo el archivo');
@@ -413,9 +477,12 @@ export default function Contabilidad() {
     if (!factura.fecha_emision) return toast.error('Fecha de emisión obligatoria');
     const monto = Number(factura.monto);
     if (!Number.isFinite(monto) || monto < 0) return toast.error('Monto inválido');
-    const tope = totalCobrable(facturando);
-    if (tope > 0 && monto - tope > 0.01) {
-      return toast.error(`El monto no puede exceder el total del servicio (${formatMonto(tope, facturando.servicio?.moneda)})`);
+    // Tope: lo que falta facturar (el backend aplica la misma regla).
+    const sg = situacionGeneral(facturando);
+    if (sg.restante > 0 && monto - sg.restante > 0.01) {
+      return toast.error(sg.facturas.length
+        ? `El monto no puede exceder lo que falta facturar (${formatMonto(sg.restante, facturando.servicio?.moneda)}): ya se facturó ${formatMonto(sg.facturado, facturando.servicio?.moneda)} de ${formatMonto(totalCobrable(facturando), facturando.servicio?.moneda)}`
+        : `El monto no puede exceder el total del servicio (${formatMonto(sg.restante, facturando.servicio?.moneda)})`);
     }
     setGuardandoFactura(true);
     try {
@@ -447,8 +514,10 @@ export default function Contabilidad() {
         actions={
           <>
             {/* Selector de vista. "Servicios" factura el comprobante del servicio;
-                "Por facturar" es la bandeja de cuotas — la misma de Gestión de
-                cobros — donde se emite la factura mensual de los planes. */}
+                "Cuotas por facturar" es la bandeja de cuotas — la misma de
+                Gestión de cobros → Por facturar — donde se emite la factura
+                mensual de los planes. No confundir con el filtro "Por facturar"
+                de la tabla de servicios (GRUPOS_FACTURACION). */}
             <div className="flex items-center gap-2 sm:mr-2" role="group" aria-label="Vista">
               <button
                 type="button"
@@ -462,7 +531,7 @@ export default function Contabilidad() {
                 onClick={() => { setFocoCuotas(null); setVistaModo('por_facturar'); }}
                 title="Cuotas que aún no tienen comprobante: la factura mensual de los planes de mantenimiento y la de los cobros en cuotas"
                 className={vistaModo === 'por_facturar' ? 'btn-primary' : 'btn-secondary'}
-              >Por facturar</button>
+              >Cuotas por facturar</button>
             </div>
             {/* El filtro por grupo y los exports son de la tabla de servicios;
                 la bandeja de cuotas trae los suyos propios. */}
@@ -507,6 +576,7 @@ export default function Contabilidad() {
               montos={resumen[g.value]?.montos}
               unidad="servicio(s)"
               tono={g.tono}
+              nota={resumen.parciales > 0 && resumen[g.value]?.cantidad > 0 ? g.nota(resumen.parciales) : undefined}
             />
           ))}
         </div>
@@ -531,10 +601,6 @@ export default function Contabilidad() {
             <option value="">Estado cobro (todos)</option>
             {ESTADOS_COBRO.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select className="select" value={filtros.estado_facturacion} onChange={e => setF('estado_facturacion', e.target.value)}>
-            <option value="">Estado factura (todos)</option>
-            {ESTADOS_FACTURACION.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
           {/* Deja tabla, indicadores y export en una sola divisa: los importes
               de PEN y USD nunca se suman entre sí. */}
           <FiltroMoneda monedas={monedas} value={filtros.moneda} onChange={v => setF('moneda', v)} />
@@ -542,7 +608,19 @@ export default function Contabilidad() {
             desde={filtros.desde}
             hasta={filtros.hasta}
             onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, desde, hasta }))}
-            placeholder="Rango de fecha de servicio"
+            placeholder="Fecha de servicio (rango)"
+          />
+          <DateRangePicker
+            desde={filtros.registro_desde}
+            hasta={filtros.registro_hasta}
+            onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, registro_desde: desde, registro_hasta: hasta }))}
+            placeholder="Fecha de registro (rango)"
+          />
+          <DateRangePicker
+            desde={filtros.comprobante_desde}
+            hasta={filtros.comprobante_hasta}
+            onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, comprobante_desde: desde, comprobante_hasta: hasta }))}
+            placeholder="Fecha de comprobante (rango)"
           />
           {/* Rango por FECHA DE APROBACIÓN de la cotización del servicio (la que
               registra el módulo de Cotizaciones); se combina con el de fecha de
@@ -554,6 +632,15 @@ export default function Contabilidad() {
             onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, aprobacion_desde: desde, aprobacion_hasta: hasta }))}
             placeholder="Aprobación de cotización (rango)"
           />
+          {/* Rango de la columna "Total" (en las visitas de un plan, el monto
+              mensual del plan). Sin moneda propia: para no comparar soles con
+              dólares, se combina con el filtro de moneda. */}
+          <div className="flex gap-2 col-span-2" title="Filtra por la columna «Total». En los mantenimientos de un plan, por el monto mensual del plan.">
+            <input type="number" min="0" step="0.01" inputMode="decimal" className="input" placeholder="Monto desde"
+              value={filtros.monto_min} onChange={e => setF('monto_min', e.target.value)} />
+            <input type="number" min="0" step="0.01" inputMode="decimal" className="input" placeholder="Monto hasta"
+              value={filtros.monto_max} onChange={e => setF('monto_max', e.target.value)} />
+          </div>
           <button onClick={() => setFiltros(FILTROS_INICIALES)} className="btn-secondary lg:col-span-6">Limpiar filtros</button>
         </div>
       </div>
@@ -567,16 +654,20 @@ export default function Contabilidad() {
               <table className="table-base">
                 <thead><tr>
                   <th className="table-th">Fecha servicio</th>
+                  <th className="table-th" title="Fecha en que se registró la OT del servicio">Fecha registro</th>
                   <th className="table-th">Fecha comprobante</th>
                   <th className="table-th">Código</th>
                   <th className="table-th">DNI / RUC</th>
                   <th className="table-th">Razón social</th>
                   <th className="table-th">Edificio</th>
                   <th className="table-th">Tipo de servicio</th>
-                  <th className="table-th">Etapa</th>
                   <th className="table-th">OT</th>
                   <th className="table-th text-right">Total</th>
-                  <th className="table-th">Estado cobro</th><th className="table-th">Estado factura</th>
+                  {GRUPOS_FACTURACION.slice().reverse().map(g => (
+                    <th key={g.value} title={g.ayuda}
+                      className={`table-th text-right ${filtros.grupo_facturacion === g.value ? g.columna : ''}`}>{g.titulo}</th>
+                  ))}
+                  <th className="table-th">Estado cobro</th>
                   <th className="table-th">Situación</th>
                   <th className="table-th text-right">Acciones</th>
                 </tr></thead>
@@ -590,8 +681,11 @@ export default function Contabilidad() {
                         <td className="table-td text-xs" title={tituloFechaServicio(r)}>
                           {(() => {
                             const f = fechaServicio(r);
-                            return f ? formatFecha(f) : <span className="text-slate-400 italic">{sinFechaServicio(r)}</span>;
+                            return f ? formatFecha(f) : <span className="text-slate-400 italic">{SIN_FECHA_SERVICIO}</span>;
                           })()}
+                        </td>
+                        <td className="table-td text-xs">
+                          {(() => { const f = fechaRegistro(r); return f ? formatFecha(f) : <span className="text-slate-400 italic">— (sin OT)</span>; })()}
                         </td>
                         <td className="table-td text-xs">
                           {(() => { const f = fechaComprobante(r); return f ? formatFecha(f) : <span className="text-slate-400">—</span>; })()}
@@ -606,9 +700,6 @@ export default function Contabilidad() {
                           <div className="font-mono text-slate-500" title={codigosAscensores(r.servicio).join(', ')}>{resumenAscensores(r.servicio)}</div>
                         </td>
                         <td className="table-td text-xs">{tipoServicioLabel(r)}</td>
-                        <td className="table-td">
-                          <span className={badgeEstado(r.estado_administrativo)}>{r.estado_administrativo || '—'}</span>
-                        </td>
                         <td className="table-td">
                           {tieneOt ? (
                             <button
@@ -637,10 +728,31 @@ export default function Contabilidad() {
                             );
                           })()}
                         </td>
+                        {/* Facturado y Por facturar: un servicio facturado en parte
+                            muestra las dos cifras; el botón activo resalta la suya. */}
+                        {GRUPOS_FACTURACION.slice().reverse().map(g => {
+                          const fx = r.facturacion;
+                          const importe = fx?.[g.value] || 0;
+                          const detalle = fx && importe > 0 ? detalleFacturacion(fx, g.value) : [];
+                          return (
+                            <td key={g.value}
+                              className={`table-td text-right font-mono whitespace-nowrap ${filtros.grupo_facturacion === g.value ? g.columna : ''}`}>
+                              {importe > 0 ? (
+                                <>
+                                  <span className={g.value === 'facturado' ? 'text-emerald-800' : 'text-amber-800'}>
+                                    {formatMonto(importe, fx.moneda)}
+                                  </span>
+                                  {detalle.map((d, i) => (
+                                    <span key={`${i}-${d}`} className="block text-[10px] text-slate-400 font-sans">{d}</span>
+                                  ))}
+                                </>
+                              ) : <span className="text-slate-300">—</span>}
+                            </td>
+                          );
+                        })}
                         <td className="table-td">
                           <span className={badgeEstado(r.estado_cobro)}>{r.estado_cobro}</span>
                         </td>
-                        <td className="table-td"><span className={badgeEstado(r.estado_facturacion)}>{r.estado_facturacion}</span></td>
                         <td className="table-td">
                           {(() => { const sit = situacionPago(r); return <span className={badgeEstado(sit === 'Cancelado' ? 'Pagado' : 'Pendiente de iniciar')}>{sit}</span>; })()}
                         </td>
@@ -650,11 +762,17 @@ export default function Contabilidad() {
                             // Factura general del servicio: se emite en el modal de
                             // esta misma página.
                             if (acc.tipo === 'emitir') {
-                              return <button type="button" onClick={() => abrirFacturar(r)}
+                              // Tras una factura parcial el botón sigue activo: emite
+                              // el siguiente comprobante por lo que falta.
+                              const sg = situacionGeneral(r);
+                              const ayuda = sg.facturas.length
+                                ? `Ya facturado ${formatMonto(sg.facturado, monedaDe(r))} · falta facturar ${formatMonto(sg.restante, monedaDe(r))}`
+                                : undefined;
+                              return <button type="button" onClick={() => abrirFacturar(r)} title={ayuda}
                                 className="text-emerald-700 text-xs font-medium hover:underline">Facturar</button>;
                             }
                             // El comprobante que falta es de una CUOTA (mes del plan
-                            // o cobro en cuotas): se salta a la bandeja "Por facturar"
+                            // o cobro en cuotas): se salta a la bandeja "Cuotas por facturar"
                             // de esta página, ya filtrada por el cliente.
                             if (acc.tipo === 'bandeja') {
                               return <button type="button" onClick={() => irACuotasDelPlan(r)} title={acc.ayuda}
@@ -718,6 +836,25 @@ export default function Contabilidad() {
                 <span className="text-slate-400">Total del servicio:</span>{' '}
                 <span className="font-mono">{formatMonto(totalCobrable(facturando), facturando.servicio?.moneda)}</span>
               </div>
+              {/* Facturación en partes: lo ya emitido y lo que falta, con los
+                  mismos importes de las columnas "Facturado" / "Por facturar". */}
+              {(() => {
+                const sg = situacionGeneral(facturando);
+                if (!sg.facturas.length) return null;
+                return (
+                  <>
+                    <div>
+                      <span className="text-slate-400">Ya facturado:</span>{' '}
+                      <span className="font-mono text-emerald-800">{formatMonto(sg.facturado, facturando.servicio?.moneda)}</span>
+                      <span className="text-slate-500"> · {sg.facturas.map(f => f.numero_factura).join(', ')}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Falta facturar:</span>{' '}
+                      <span className="font-mono text-amber-800">{formatMonto(sg.restante, facturando.servicio?.moneda)}</span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             <div>
               <label className="label">Tipo de comprobante *</label>
@@ -745,14 +882,18 @@ export default function Contabilidad() {
               <input type="number" min="0" step="0.01" className="input text-right font-mono" value={factura.monto}
                 onChange={e => setFactura(f => ({ ...f, monto: e.target.value }))} />
               <p className="text-xs text-slate-500 mt-1">
-                Precargado con el total del servicio. Puede reducirse (factura parcial), nunca excederlo.
+                Precargado con lo que falta facturar. Puede reducirse (factura parcial) y completarse
+                después con otro comprobante; nunca excederlo.
               </p>
             </div>
             <div>
               <label className="label">Archivo del comprobante</label>
-              <input type="file" className="input" onChange={subirArchivoFactura} disabled={cargaFactura.subiendo} />
-              <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
-              {factura.id_archivo && !cargaFactura.progreso && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
+              <ArchivoAdjunto
+                archivo={factura.archivo}
+                onChange={subirArchivoFactura}
+                onQuitar={() => setFactura(f => ({ ...f, id_archivo: null, archivo: null }))}
+                carga={cargaFactura}
+              />
             </div>
             <DocumentosAdicionalesBorrador
               value={factura.documentos}

@@ -29,6 +29,9 @@ import { coordsDe, linkGoogleMaps } from '../utils/mapa.js';
 import ProgramacionDias from '../components/common/ProgramacionDias.jsx';
 import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
+import CampoDocumentosEntrega, {
+  ArchivosEntrega, documentosDeEntrega, payloadDocumentosEntrega
+} from '../components/entregas/DocumentosEntrega.jsx';
 import {
   tramoDeUnDia, tramosDeServicio, payloadDias, errorDeTramos, resumenProgramacion
 } from '../utils/programacion.js';
@@ -51,18 +54,40 @@ const ICONO_USUARIO = (
 );
 const TIPOS_ENTREGA = ['Entrega parcial', 'Entrega final', 'Entrega documental', 'Entrega técnica'];
 const ESTADOS_ENTREGA = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
+const entregaFormInicial = () => ({ tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', documentos: [], estado_entrega: 'Entregada' });
+
+// Copia de `obj` sin la clave dada (para quitar un borrador o una marca de guardado).
+const sinClave = (obj, clave) => { const copia = { ...obj }; delete copia[clave]; return copia; };
+
+// Ids de las evidencias cuyo comentario escrito difiere del guardado. Lo usan
+// las tarjetas ("Sin guardar"), el «Guardar todos» de cada sección y el aviso
+// al recargar la pestaña: una sola definición de "pendiente".
+function idsConComentarioPendiente(evidencias, borradores) {
+  return (evidencias || [])
+    .filter(ev => borradores[ev.id] !== undefined
+      && borradores[ev.id].trim() !== (ev.descripcion || '').trim())
+    .map(ev => ev.id);
+}
 
 // Tarjeta de una foto de evidencia. El comentario se edita en línea y se registra
 // DESPUÉS de subir la imagen; se puede eliminar mientras el servicio no esté
 // finalizado (`puedeGestionar`).
 //
+// El texto a medio escribir NO vive en la tarjeta sino en la página
+// (`borradoresComentario`): se suelen comentar varias fotos seguidas y, si cada
+// tarjeta guardara el suyo, cualquier recarga del servicio —subir otra foto,
+// eliminar una— los borraría todos. Por eso la tarjeta es controlada: recibe el
+// texto (`comentario`), si difiere de lo guardado (`cambiado`) y si se está
+// enviando (`guardando`).
+//
 // `autor` sustituye al nombre del técnico en las secciones que no son suyas: la
 // fila guarda el id_tecnico del técnico del servicio, así que en la sección de
 // Coordinación mostrarlo atribuiría la foto a quien no la tomó. Si la evidencia
 // se cargó sin técnico asignado, el autor es el usuario que la subió.
-function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, onGuardarComentario, autor }) {
-  const [comentario, setComentario] = useState(ev.descripcion || '');
-  const [guardando, setGuardando] = useState(false);
+function EvidenciaFotoCard({
+  ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, autor,
+  comentario, cambiado, guardando, onCambiarComentario, onDescartarComentario, onGuardarComentario
+}) {
   // Si el archivo no se puede descargar, el navegador pinta el texto alternativo
   // —que aquí es la descripción entera— derramado por toda la miniatura, con el
   // botón de eliminar encima. Se detecta el fallo y se muestra un marcador, que
@@ -73,14 +98,7 @@ function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, 
   const esImagen = mime.startsWith('image/');
   const esVideo = mime.startsWith('video/');
   const url = ruta ? assetUrl(ruta) : null;
-  const cambiado = (comentario || '').trim() !== (ev.descripcion || '').trim();
   const diaEv = esMultidia && ev.id_dia ? dias.find(x => x.id === ev.id_dia) : null;
-
-  const guardar = async () => {
-    setGuardando(true);
-    try { await onGuardarComentario(ev.id, comentario); }
-    finally { setGuardando(false); }
-  };
 
   return (
     <div className="rounded-lg ring-1 ring-slate-100 overflow-hidden bg-white text-sm">
@@ -129,19 +147,20 @@ function EvidenciaFotoCard({ ev, puedeGestionar, esMultidia, dias, filePreview, 
         {puedeGestionar ? (
           <div className="pt-0.5">
             <textarea
-              className="input text-xs min-h-[52px] resize-y"
+              className={`input text-xs min-h-[52px] resize-y ${cambiado ? 'border-ember-300' : ''}`}
               placeholder="Escribe un comentario…"
               value={comentario}
-              onChange={e => setComentario(e.target.value)}
+              onChange={e => onCambiarComentario(ev, e.target.value)}
             />
             {cambiado && (
-              <div className="flex justify-end gap-2 mt-1">
+              <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 mt-1">
+                <span className="mr-auto text-[10px] text-ember-700">Sin guardar</span>
                 <button type="button" className="text-xs text-slate-500 hover:underline"
-                        onClick={() => setComentario(ev.descripcion || '')} disabled={guardando}>
+                        onClick={() => onDescartarComentario(ev.id)} disabled={guardando}>
                   Cancelar
                 </button>
                 <button type="button" className="btn-primary text-xs py-1 px-2"
-                        onClick={guardar} disabled={guardando}>
+                        onClick={() => onGuardarComentario(ev.id)} disabled={guardando}>
                   {guardando ? 'Guardando…' : 'Guardar comentario'}
                 </button>
               </div>
@@ -265,9 +284,15 @@ export default function ServicioDetalle() {
   // error se queda a la vista en la seccion donde ocurrio hasta que se descarta.
   const [momentoCarga, setMomentoCarga] = useState(null);
   const [subiendoMomento, setSubiendoMomento] = useState(null); // 'Antes' | 'Despues' | null (sección que está subiendo fotos)
+  // Comentarios de evidencias escritos y aún no guardados: { [idEvidencia]: texto }.
+  // Viven en la página y no en cada tarjeta: guardar un comentario, subir otra
+  // foto o eliminar una recargan el servicio, y con el texto dentro de la
+  // tarjeta se perdían los comentarios que se estaban escribiendo en las demás.
+  const [borradoresComentario, setBorradoresComentario] = useState({});
+  const [guardandoComentario, setGuardandoComentario] = useState({}); // { [idEvidencia]: true }
   const [guardandoFinalizar, setGuardandoFinalizar] = useState(false);
   const filePreview = useFilePreview();
-  const [entregaForm, setEntregaForm] = useState({ tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', id_archivo: null, estado_entrega: 'Entregada' });
+  const [entregaForm, setEntregaForm] = useState(() => entregaFormInicial());
   const [evidenciaForm, setEvidenciaForm] = useState({ tipo_evidencia: 'Foto', descripcion: '', id_archivo: null, id_dia: '' });
   const [subiendoEvidenciaArchivo, setSubiendoEvidenciaArchivo] = useState(false);
   // Modal único de programación: días de trabajo (rangos y/o fechas sueltas) + hora.
@@ -300,7 +325,7 @@ export default function ServicioDetalle() {
   const cargaEvidencia = useCargaArchivos(); // modal "Nueva evidencia"
   const cargaGuia = useCargaArchivos();      // guia de salida (modal y cierre)
   const cargaOt = useCargaArchivos();        // orden de trabajo
-  const cargaEntrega = useCargaArchivos();   // acta de entrega
+  const cargaEntrega = useCargaArchivos();   // documentos de la entrega
 
   // Devuelve el servicio recién traído para que quien la llame pueda decidir con
   // el estado REAL (el `s` del closure todavía es el anterior).
@@ -315,7 +340,19 @@ export default function ServicioDetalle() {
   useEffect(() => {
     cargar();
     tecnicosService.list().then(setTecnicos);
+    // Los comentarios a medio escribir son de las fotos de ESTE servicio.
+    setBorradoresComentario({});
   }, [id]);
+
+  // Recargar o cerrar la pestaña con comentarios sin guardar los perdería: el
+  // navegador pide confirmación antes.
+  const hayComentariosSinGuardar = idsConComentarioPendiente(s?.evidencias, borradoresComentario).length > 0;
+  useEffect(() => {
+    if (!hayComentariosSinGuardar) return undefined;
+    const avisar = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', avisar);
+    return () => window.removeEventListener('beforeunload', avisar);
+  }, [hayComentariosSinGuardar]);
 
   // Habilita / revoca el cierre de un servicio cuyo plazo venció (solo super admin).
   const cambiarHabilitacionCierre = async (habilitar) => {
@@ -399,12 +436,11 @@ export default function ServicioDetalle() {
   const evidenciasDespues = evidenciasGenerales.filter(
     ev => ev.momento !== 'Antes' && ev.momento !== MOMENTO_COORDINACION
   );
-  // Escritura en la sección de Coordinación: solo el Coordinador y el Super
-  // Admin (que destraba cualquier caso). Ni Admin ni Contabilidad, aunque
-  // gestionen el resto del expediente. Espejo del backend
-  // (evidenciasGuiasController.puedeEscribirCoordinacion); el permiso real lo
-  // impone el servidor, aquí solo se decide si mostrar los botones.
-  const gestionaEvidenciaCoordinacion = (esCoordinador || esSuperAdmin)
+  // Escritura en la sección de Coordinación: el Coordinador, el Administrador
+  // y el Super Admin (que destraba cualquier caso). Contabilidad no. Espejo del
+  // backend (evidenciasGuiasController.puedeEscribirCoordinacion); el permiso
+  // real lo impone el servidor, aquí solo se decide si mostrar los botones.
+  const gestionaEvidenciaCoordinacion = (esCoordinador || esAdmin || esSuperAdmin)
     && !esServicioPostRevision(s.estado_servicio);
   const evidenciasPorDia = evidenciasGenerales.reduce((acc, ev) => {
     if (ev.id_dia) acc[ev.id_dia] = (acc[ev.id_dia] || 0) + 1;
@@ -727,12 +763,61 @@ export default function ServicioDetalle() {
     }
   };
 
-  const guardarComentarioEvidencia = async (idEvidencia, comentario) => {
+  // Comentarios de las fotos (ver `borradoresComentario`). Un borrador igual a
+  // lo guardado se descarta, para que la tarjeta deje de marcarse "Sin guardar".
+  const cambiarComentarioEvidencia = (ev, texto) => {
+    setBorradoresComentario(prev => (texto === (ev.descripcion || '')
+      ? sinClave(prev, ev.id)
+      : { ...prev, [ev.id]: texto }));
+  };
+  const descartarComentarioEvidencia = (idEvidencia) => {
+    setBorradoresComentario(prev => sinClave(prev, idEvidencia));
+  };
+
+  // Envía el comentario escrito de una evidencia. NO recarga el servicio: se
+  // actualiza solo esa foto, así los comentarios que se están escribiendo en
+  // las demás siguen en pantalla y la página no salta al principio. Lanza el
+  // error para que quien la llame decida cómo avisarlo.
+  const enviarComentarioEvidencia = async (idEvidencia) => {
+    const texto = borradoresComentario[idEvidencia];
+    if (texto === undefined) return;
+    setGuardandoComentario(g => ({ ...g, [idEvidencia]: true }));
     try {
-      await evidenciasGuiasService.actualizarEvidencia(idEvidencia, { descripcion: comentario });
+      const actualizada = await evidenciasGuiasService.actualizarEvidencia(idEvidencia, { descripcion: texto });
+      const descripcion = actualizada?.descripcion !== undefined ? actualizada.descripcion : (texto.trim() || null);
+      setS(prev => ({
+        ...prev,
+        evidencias: (prev.evidencias || []).map(ev => (ev.id === idEvidencia ? { ...ev, descripcion } : ev))
+      }));
+      // Si se siguió escribiendo mientras se guardaba, se conserva lo nuevo.
+      setBorradoresComentario(prev => (prev[idEvidencia] === texto ? sinClave(prev, idEvidencia) : prev));
+    } finally {
+      setGuardandoComentario(g => sinClave(g, idEvidencia));
+    }
+  };
+
+  const guardarComentarioEvidencia = async (idEvidencia) => {
+    try {
+      await enviarComentarioEvidencia(idEvidencia);
       toast.success('Comentario guardado');
-      cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error al guardar comentario'); }
+  };
+
+  // «Guardar todos» de una sección. Cada comentario se guarda por separado: si
+  // alguno falla, los demás quedan guardados y el que falló conserva su texto
+  // para reintentarlo.
+  const guardarComentariosEvidencia = async (ids) => {
+    const resultados = await Promise.allSettled(ids.map(enviarComentarioEvidencia));
+    const fallidos = resultados.filter(r => r.status === 'rejected');
+    const guardados = ids.length - fallidos.length;
+    if (!fallidos.length) {
+      toast.success(guardados === 1 ? 'Comentario guardado' : `${guardados} comentarios guardados`);
+      return;
+    }
+    const motivo = fallidos[0].reason?.response?.data?.error || 'Error al guardar comentario';
+    toast.error(guardados
+      ? `${guardados} guardado${guardados === 1 ? '' : 's'}; ${fallidos.length} sin guardar: ${motivo}`
+      : `${fallidos.length === 1 ? 'No se guardó el comentario' : `No se guardaron los ${fallidos.length} comentarios`}: ${motivo}`);
   };
 
   const eliminarEvidencia = async (idEvidencia) => {
@@ -743,6 +828,7 @@ export default function ServicioDetalle() {
     try {
       await evidenciasGuiasService.eliminarEvidencia(idEvidencia);
       toast.success('Evidencia eliminada');
+      descartarComentarioEvidencia(idEvidencia);
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
@@ -917,26 +1003,20 @@ export default function ServicioDetalle() {
     }
   };
 
-  const subirArchivoEntrega = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const r = await cargaEntrega.subirUno(file, 'entregas');
-      setEntregaForm(f => ({ ...f, id_archivo: r.id }));
-      toast.success('Archivo cargado');
-    } catch (err) {
-      if (!err?.cancelado) toast.error('Error al subir');
-    }
-  };
+  // Los documentos se suben en lote al elegirlos (CampoDocumentosEntrega) y
+  // aquí solo viajan sus ids.
+  const setDocumentosEntrega = (actualizar) =>
+    setEntregaForm(f => ({ ...f, documentos: actualizar(f.documentos) }));
 
   const guardarEntrega = async () => {
     if (!entregaForm.tipo_entrega || !entregaForm.fecha_entrega) return toast.error('Tipo y fecha son obligatorios');
+    if (cargaEntrega.subiendo) return toast.error('Espere a que terminen de subir los documentos');
+    const { documentos, ...datos } = entregaForm;
     try {
-      await entregasService.create({ id_servicio: id, ...entregaForm });
+      await entregasService.create({ id_servicio: id, ...datos, ...payloadDocumentosEntrega(documentos) });
       toast.success('Entrega registrada');
       setOpenEntrega(false);
-      setEntregaForm({ tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', id_archivo: null, estado_entrega: 'Entregada' });
+      setEntregaForm(entregaFormInicial());
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
@@ -1590,14 +1670,14 @@ export default function ServicioDetalle() {
           { key: 'Antes', titulo: 'Antes', lista: evidenciasAntes },
           { key: 'Despues', titulo: 'Después', lista: evidenciasDespues },
           // Sección de la Oficina Técnica: la ve todo el que accede al servicio
-          // (incluido el técnico), pero solo el Coordinador y el Super Admin
-          // suben, comentan o eliminan en ella.
+          // (incluido el técnico), pero solo el Coordinador, el Administrador y
+          // el Super Admin suben, comentan o eliminan en ella.
           {
             key: MOMENTO_COORDINACION,
             titulo: 'Coordinación',
             lista: evidenciasCoordinacion,
             soloCoordinacion: true,
-            ayuda: 'Registro propio de la Oficina Técnica. Solo el Coordinador carga fotos en esta sección.'
+            ayuda: 'Registro propio de la Oficina Técnica. Solo el Coordinador y el Administrador cargan fotos y videos en esta sección.'
           },
         ].map(sec => {
           // El técnico sube mientras ejecuta; coordinación y administración
@@ -1607,6 +1687,9 @@ export default function ServicioDetalle() {
             ? gestionaEvidenciaCoordinacion
             : (gestionaRegistrosTecnico || (esTecnico && !estaServicioFinalizado(s.estado_servicio)));
           const subiendoEsta = subiendoMomento === sec.key;
+          // Comentarios escritos en esta sección y aún no guardados.
+          const pendientesSec = puedeGestionar ? idsConComentarioPendiente(sec.lista, borradoresComentario) : [];
+          const guardandoSec = pendientesSec.some(idEv => guardandoComentario[idEv]);
           return (
             // Las evidencias son el trabajo del técnico en obra: abiertas en
             // móvil, con el número de fotos visible aunque se plieguen.
@@ -1615,7 +1698,16 @@ export default function ServicioDetalle() {
               titulo={`Evidencias · ${sec.titulo}`}
               className="lg:col-span-3"
               inicialMovil="abierta"
-              resumen={<span className={sec.lista.length ? 'badge-blue' : 'badge-gray'}>{sec.lista.length}</span>}
+              resumen={(
+                <>
+                  <span className={sec.lista.length ? 'badge-blue' : 'badge-gray'}>{sec.lista.length}</span>
+                  {/* Visible también con la sección plegada: hay texto escrito
+                      que todavía no está guardado. */}
+                  {pendientesSec.length > 0 && (
+                    <span className="badge-amber">{pendientesSec.length} sin guardar</span>
+                  )}
+                </>
+              )}
               acciones={puedeGestionar && (
                 <>
                   <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -1645,6 +1737,7 @@ export default function ServicioDetalle() {
                     {sec.ayuda && <span className="block mt-1 text-xs text-slate-400">{sec.ayuda}</span>}
                   </p>
                 ) : (
+                  <>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {sec.lista.map(ev => (
                       <EvidenciaFotoCard
@@ -1655,11 +1748,32 @@ export default function ServicioDetalle() {
                         dias={dias}
                         filePreview={filePreview}
                         onEliminar={eliminarEvidencia}
-                        onGuardarComentario={guardarComentarioEvidencia}
                         autor={sec.soloCoordinacion ? 'Coordinación' : null}
+                        comentario={borradoresComentario[ev.id] ?? ev.descripcion ?? ''}
+                        cambiado={pendientesSec.includes(ev.id)}
+                        guardando={!!guardandoComentario[ev.id]}
+                        onCambiarComentario={cambiarComentarioEvidencia}
+                        onDescartarComentario={descartarComentarioEvidencia}
+                        onGuardarComentario={guardarComentarioEvidencia}
                       />
                     ))}
                   </div>
+                  {/* «Guardar todos»: con varias fotos comentadas, un solo clic
+                      en vez de uno por tarjeta. Al final de la galería, que es
+                      donde se termina de escribir; en escritorio queda fijo
+                      abajo mientras la sección está a la vista. */}
+                  {pendientesSec.length > 1 && (
+                    <div className="mt-3 lg:sticky lg:bottom-4 z-10 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-ember-50 ring-1 ring-ember-200 px-3 py-2 shadow-sm">
+                      <span className="text-xs text-ember-800">
+                        {pendientesSec.length} comentarios sin guardar en esta sección
+                      </span>
+                      <button type="button" className="btn-primary text-xs py-1 px-3"
+                              onClick={() => guardarComentariosEvidencia(pendientesSec)} disabled={guardandoSec}>
+                        {guardandoSec ? 'Guardando…' : `Guardar los ${pendientesSec.length} comentarios`}
+                      </button>
+                    </div>
+                  )}
+                  </>
                 )}
             </SeccionColapsable>
           );
@@ -1678,7 +1792,7 @@ export default function ServicioDetalle() {
                     <thead><tr>
                       <th className="table-th">Fecha</th><th className="table-th">Tipo</th>
                       <th className="table-th">Descripción</th><th className="table-th">Estado</th>
-                      <th className="table-th">Archivo</th>
+                      <th className="table-th">Documentos</th>
                     </tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {s.entregas.map(en => (
@@ -1687,7 +1801,7 @@ export default function ServicioDetalle() {
                           <td className="table-td"><span className="badge-blue">{en.tipo_entrega}</span></td>
                           <td className="table-td text-xs">{en.descripcion || '—'}</td>
                           <td className="table-td"><span className={badgeEstado(en.estado_entrega)}>{en.estado_entrega}</span></td>
-                          <td className="table-td">{en.archivo ? <FileLink archivo={en.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                          <td className="table-td"><ArchivosEntrega entrega={en} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1705,10 +1819,8 @@ export default function ServicioDetalle() {
                       </div>
                       <div className="text-xs text-slate-500 mt-1.5">{formatFecha(en.fecha_entrega)}</div>
                       {en.descripcion && <p className="text-sm text-slate-800 mt-1 break-words">{en.descripcion}</p>}
-                      {en.archivo && (
-                        <FileLink archivo={en.archivo} className="text-brand-700 text-xs hover:underline mt-1.5 inline-block">
-                          📎 Ver archivo
-                        </FileLink>
+                      {documentosDeEntrega(en).length > 0 && (
+                        <div className="mt-1.5"><ArchivosEntrega entrega={en} /></div>
                       )}
                     </li>
                   ))}
@@ -1969,8 +2081,8 @@ export default function ServicioDetalle() {
         onSaved={() => setOpenRecordatorio(false)}
       />
 
-      <Modal open={openEntrega} onClose={() => setOpenEntrega(false)} title="Nueva entrega" size="lg"
-        footer={<><button className="btn-secondary" onClick={() => setOpenEntrega(false)}>Cancelar</button><button className="btn-primary" onClick={guardarEntrega}>Guardar</button></>}>
+      <Modal open={openEntrega} onClose={() => !cargaEntrega.subiendo && setOpenEntrega(false)} title="Nueva entrega" size="lg"
+        footer={<><button className="btn-secondary" onClick={() => setOpenEntrega(false)} disabled={cargaEntrega.subiendo}>Cancelar</button><button className="btn-primary" onClick={guardarEntrega} disabled={cargaEntrega.subiendo}>Guardar</button></>}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">Tipo *</label>
@@ -1993,10 +2105,8 @@ export default function ServicioDetalle() {
             <textarea className="textarea" rows="3" value={entregaForm.descripcion} onChange={e => setEntregaForm(f => ({ ...f, descripcion: e.target.value }))} />
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Archivo</label>
-            <input type="file" className="input" onChange={subirArchivoEntrega} />
-            <BarraProgresoCarga carga={cargaEntrega} className="mt-2" />
-            {entregaForm.id_archivo && !cargaEntrega.progreso && <p className="text-xs text-emerald-600 mt-1">Archivo cargado</p>}
+            <label className="label">Documentos</label>
+            <CampoDocumentosEntrega documentos={entregaForm.documentos} setDocumentos={setDocumentosEntrega} carga={cargaEntrega} />
           </div>
         </div>
       </Modal>

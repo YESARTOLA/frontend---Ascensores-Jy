@@ -20,7 +20,9 @@ import {
  *  - ListaDocumentosFactura: lista los documentos con su tipo y permite quitarlos.
  *  - DocumentosAdicionalesBorrador: las dos anteriores para el formulario de
  *    emisión, cuando la factura todavía no existe (los ids viajan en el payload).
- *  - ChipsDocumentosFactura: comprobante + documentos como chips con vista previa.
+ *    También la usan los abonos (CobroDetalle), con el mismo catálogo de tipos.
+ *  - ChipsDocumentos / ChipsDocumentosFactura: comprobante + documentos como
+ *    chips con vista previa.
  *  - CeldaDocumentosFactura: los chips y el botón "+ Documento" de las tablas.
  */
 
@@ -31,9 +33,10 @@ import {
  *   carga             — instancia de useCargaArchivos (el padre la usa para
  *                       bloquear su botón de guardar mientras se sube)
  *   onArchivosSubidos — async (archivos, { tipo_documento, descripcion }) => void
+ *   carpeta           — carpeta de almacenamiento de los archivos
  *   disabled
  */
-export function AgregarDocumentoFactura({ carga, onArchivosSubidos, disabled = false }) {
+export function AgregarDocumentoFactura({ carga, onArchivosSubidos, carpeta = 'facturas', disabled = false }) {
   const toast = useToast();
   const inputRef = useRef(null);
   const [tipo, setTipo] = useState(TIPO_DOCUMENTO_FACTURA_INICIAL);
@@ -50,7 +53,7 @@ export function AgregarDocumentoFactura({ carga, onArchivosSubidos, disabled = f
       return;
     }
     try {
-      const subidos = await carga.subirVarios(files, 'facturas');
+      const subidos = await carga.subirVarios(files, carpeta);
       await onArchivosSubidos(subidos, { tipo_documento: tipo, descripcion: descripcion.trim() || null });
       setDescripcion('');
     } catch (err) {
@@ -132,23 +135,25 @@ export function ListaDocumentosFactura({ documentos, onQuitar, quitandoId = null
   );
 }
 
+const AYUDA_BORRADOR_FACTURA = 'Opcional. Constancia de detracción, de retención, de pago, XML/CDR… También pueden agregarse después, desde la factura.';
+
 /**
- * Documentos adicionales en el formulario de EMISIÓN: la factura aún no existe,
- * así que los archivos se suben al storage y sus ids viajan en el payload de
- * creación como `documentos: [{ id_archivo, tipo_documento, descripcion }]`
- * (ver `aPayloadDocumentos`).
+ * Documentos adicionales de un formulario que se guarda de una vez: la emisión
+ * de la factura (aún no existe) o el registro / corrección de un abono. Los
+ * archivos se suben al storage y sus ids viajan en el payload como
+ * `documentos: [{ id_archivo, tipo_documento, descripcion }]`; los ya guardados
+ * (corrección) llevan su `id` (ver `aPayloadDocumentos`).
  *
- * Props: value, onChange, carga (useCargaArchivos del padre)
+ * Props: value, onChange, carga (useCargaArchivos del padre), ayuda, carpeta
  */
-export function DocumentosAdicionalesBorrador({ value = [], onChange, carga }) {
+export function DocumentosAdicionalesBorrador({ value = [], onChange, carga, ayuda = AYUDA_BORRADOR_FACTURA, carpeta }) {
   return (
     <div>
       <label className="label">Documentos adicionales</label>
-      <p className="text-xs text-slate-500 mb-2">
-        Opcional. Constancia de detracción, de retención, de pago, XML/CDR… También pueden agregarse después, desde la factura.
-      </p>
+      <p className="text-xs text-slate-500 mb-2">{ayuda}</p>
       <AgregarDocumentoFactura
         carga={carga}
+        carpeta={carpeta}
         onArchivosSubidos={async (archivos, datos) => {
           onChange([...value, ...archivos.map(a => ({ id_archivo: a.id, archivo: a, ...datos }))]);
         }}
@@ -162,13 +167,16 @@ export function DocumentosAdicionalesBorrador({ value = [], onChange, carga }) {
   );
 }
 
-/** Borrador → payload de `facturasService.create`. */
+/**
+ * Borrador → payload de `facturasService.create` y de los abonos. Un documento
+ * ya guardado (corrección del abono) viaja solo con su `id`: se conserva.
+ */
 export function aPayloadDocumentos(borrador) {
-  return (borrador || []).map(d => ({
+  return (borrador || []).map(d => d.id ? { id: d.id } : {
     id_archivo: d.id_archivo,
     tipo_documento: d.tipo_documento,
     descripcion: d.descripcion
-  }));
+  });
 }
 
 const CHIP = 'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 transition whitespace-nowrap';
@@ -180,20 +188,35 @@ const CHIP = 'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-m
  * las fichas (Cliente 360, historial del ascensor).
  */
 export function ChipsDocumentosFactura({ factura }) {
-  const documentos = factura.documentos || [];
-  if (!factura.archivo && documentos.length === 0) return null;
+  return (
+    <ChipsDocumentos
+      comprobante={factura.archivo}
+      rotuloComprobante={factura.tipo_comprobante || 'Factura'}
+      documentos={factura.documentos}
+    />
+  );
+}
+
+/**
+ * Comprobante (rotulado con `rotuloComprobante`) + documentos adicionales como
+ * chips de vista previa. Base de ChipsDocumentosFactura; también la usan los
+ * abonos, cuyo comprobante es el voucher del pago.
+ */
+export function ChipsDocumentos({ comprobante, rotuloComprobante, documentos }) {
+  const adicionales = documentos || [];
+  if (!comprobante && adicionales.length === 0) return null;
   return (
     <>
-      {factura.archivo && (
+      {comprobante && (
         <FileLink
-          archivo={factura.archivo}
-          title={`Comprobante · ${factura.archivo.nombre_original || ''}`}
+          archivo={comprobante}
+          title={`Comprobante · ${comprobante.nombre_original || ''}`}
           className={`${CHIP} bg-brand-50 text-brand-700 ring-brand-200 hover:bg-brand-100`}
         >
-          {factura.tipo_comprobante || 'Factura'}
+          {rotuloComprobante}
         </FileLink>
       )}
-      {documentos.map(d => d.archivo && (
+      {adicionales.map(d => d.archivo && (
         <FileLink
           key={d.id}
           archivo={d.archivo}

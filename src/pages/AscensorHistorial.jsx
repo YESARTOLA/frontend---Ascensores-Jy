@@ -5,6 +5,7 @@ import PageHeader from '../components/common/PageHeader.jsx';
 import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
+import { ArchivosEntrega, documentosDeEntrega } from '../components/entregas/DocumentosEntrega.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { formatFecha, formatFechaHora, badgeEstado, formatMonto, hoyISO, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import { generarFichaAscensorPDF } from '../utils/pdfReport.js';
@@ -168,7 +169,7 @@ export default function AscensorHistorial() {
                 </div>
                 <div className="text-slate-700">{en.tipo_entrega}</div>
                 <div className="text-slate-400">{formatFecha(en.fecha_entrega)}</div>
-                {en.archivo && <FileLink archivo={en.archivo}>Ver</FileLink>}
+                {documentosDeEntrega(en).length > 0 && <ArchivosEntrega entrega={en} className="text-brand-700 hover:underline" />}
               </li>
             ))}
           </ul>

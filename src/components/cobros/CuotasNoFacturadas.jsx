@@ -8,7 +8,7 @@ import FiltroMoneda, { etiquetaDeMoneda } from '../common/FiltroMoneda.jsx';
 import Modal from '../common/Modal.jsx';
 import Pagination from '../common/Pagination.jsx';
 import { useToast } from '../common/Toast.jsx';
-import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import ArchivoAdjunto from '../common/ArchivoAdjunto.jsx';
 import { DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../facturas/DocumentosFactura.jsx';
 import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useMonedas } from '../../hooks/useMonedas.js';
@@ -81,7 +81,7 @@ const COLUMNAS_EXPORT = [
 ];
 
 // Bandeja de cuotas pendientes de facturar. Es el MISMO componente que montan
-// "Gestión de cobros → Por facturar" y "Contabilidad → Por facturar": una sola
+// "Gestión de cobros → Por facturar" y "Contabilidad → Cuotas por facturar": una sola
 // tabla, un solo modal y un solo endpoint de emisión (POST /facturas), para que
 // facturar desde un módulo u otro sea literalmente la misma operación.
 //
@@ -106,7 +106,7 @@ export default function CuotasNoFacturadas({
   const [version, setVersion] = useState(0);
   // Facturación directa desde la fila: cuota en curso + estado del formulario.
   const [facturarCuota, setFacturarCuota] = useState(null);
-  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null, documentos: [] });
+  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null, archivo: null, documentos: [] });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
   const cargaFactura = useCargaArchivos();
@@ -211,6 +211,7 @@ export default function CuotasNoFacturadas({
       tipo_comprobante: tipoComprobanteSugerido(f.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
       id_archivo: null,
+      archivo: null,
       documentos: []
     });
     setFacturarCuota(f);
@@ -222,7 +223,7 @@ export default function CuotasNoFacturadas({
     if (!file) return;
     try {
       const r = await cargaFactura.subirUno(file, 'facturas');
-      setFactura(f => ({ ...f, id_archivo: r.id }));
+      setFactura(f => ({ ...f, id_archivo: r.id, archivo: r }));
       toast.success('Archivo cargado');
     } catch (err) {
       if (!err?.cancelado) toast.error('Error subiendo archivo');
@@ -495,9 +496,12 @@ export default function CuotasNoFacturadas({
             </div>
             <div>
               <label className="label">Archivo de factura</label>
-              <input type="file" className="input" onChange={subirArchivoFactura} disabled={cargaFactura.subiendo} />
-              <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
-              {factura.id_archivo && !cargaFactura.progreso && <p className="text-xs text-emerald-600 mt-1">✓ Archivo cargado</p>}
+              <ArchivoAdjunto
+                archivo={factura.archivo}
+                onChange={subirArchivoFactura}
+                onQuitar={() => setFactura(f => ({ ...f, id_archivo: null, archivo: null }))}
+                carga={cargaFactura}
+              />
             </div>
             <DocumentosAdicionalesBorrador
               value={factura.documentos}

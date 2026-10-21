@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { assetUrl } from '../../services';
 import { formatMonto } from '../../utils/formatters.js';
+import { useMonedas } from '../../hooks/useMonedas.js';
 import { useToast } from '../common/Toast.jsx';
 import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
 
@@ -29,13 +30,24 @@ import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
 let secuenciaClave = 0;
 const nuevaClave = () => `item-${++secuenciaClave}`;
 
+// Descuento del ítem: porcentaje sobre cantidad × precio, o monto fijo restado
+// UNA vez al importe de la línea. Espejo de backend/utils/cotizacionCalculos.js
+// (calcularImporteLinea / normalizarDescuentoItem), que es la autoridad.
+export const DESCUENTO_PORCENTAJE = 'porcentaje';
+export const DESCUENTO_MONTO = 'monto';
+const esDescuentoMonto = (it) => it.descuento_tipo === DESCUENTO_MONTO;
+// Campo que guarda el valor del tipo elegido.
+const campoDescuento = (it) => (esDescuentoMonto(it) ? 'descuento_monto' : 'descuento_porcentaje');
+
 export const itemVacio = () => ({
   _key: nuevaClave(),
   descripcion: '',
   cantidad: 1,
   unidad: 'Unidad',
   precio_unitario: 0,
+  descuento_tipo: DESCUENTO_PORCENTAJE,
   descuento_porcentaje: 0,
+  descuento_monto: 0,
   // Foto del ítem (opcional al cotizar; obligatoria al aprobar). `archivo` es el
   // objeto subido para previsualizar; `id_archivo` es lo que se envía al backend.
   id_archivo: null,
@@ -49,7 +61,9 @@ export const itemDesdeServidor = (it) => ({
   cantidad: Number(it.cantidad) || 1,
   unidad: it.unidad || 'Unidad',
   precio_unitario: Number(it.precio_unitario) || 0,
+  descuento_tipo: it.descuento_tipo === DESCUENTO_MONTO ? DESCUENTO_MONTO : DESCUENTO_PORCENTAJE,
   descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
+  descuento_monto: Number(it.descuento_monto) || 0,
   id_archivo: it.id_archivo || null,
   archivo: it.archivo || null
 });
@@ -64,19 +78,49 @@ export const itemsParaPayload = (items) => items
     cantidad: Number(it.cantidad) || 1,
     unidad: it.unidad || 'Unidad',
     precio_unitario: Number(it.precio_unitario) || 0,
-    descuento_porcentaje: Number(it.descuento_porcentaje) || 0,
+    ...descuentoParaPayload(it),
     id_archivo: it.id_archivo || null
   }));
+
+// Descuento de un ítem (del editor o ya guardado) tal como lo recibe el backend.
+export const descuentoParaPayload = (it) => ({
+  descuento_tipo: esDescuentoMonto(it) ? DESCUENTO_MONTO : DESCUENTO_PORCENTAJE,
+  descuento_porcentaje: esDescuentoMonto(it) ? 0 : Number(it.descuento_porcentaje) || 0,
+  descuento_monto: esDescuentoMonto(it) ? Number(it.descuento_monto) || 0 : 0
+});
 
 function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
+const importeBruto = (it) => round2((Number(it.cantidad) || 0) * (Number(it.precio_unitario) || 0));
+
 export function calcImporte(it) {
+  if (esDescuentoMonto(it)) return round2(importeBruto(it) - (Number(it.descuento_monto) || 0));
   const cant = Number(it.cantidad) || 0;
   const pu = Number(it.precio_unitario) || 0;
   const desc = Number(it.descuento_porcentaje) || 0;
   return round2(cant * pu * (1 - desc / 100));
+}
+
+// Mismo límite que valida el backend: porcentaje 0–100; monto fijo entre 0 y
+// el importe de la línea. Solo marca la fila; el mensaje final es del backend.
+export function errorDescuento(it) {
+  if (esDescuentoMonto(it)) {
+    const monto = Number(it.descuento_monto) || 0;
+    if (monto < 0) return 'El descuento no puede ser negativo';
+    if (monto > importeBruto(it)) return 'El descuento no puede superar el importe del ítem';
+    return null;
+  }
+  const pct = Number(it.descuento_porcentaje) || 0;
+  return pct < 0 || pct > 100 ? 'El descuento debe estar entre 0% y 100%' : null;
+}
+
+// Texto del descuento para tablas de solo lectura: "10.00%" o "S/ 50.00".
+export function textoDescuento(it, moneda) {
+  return esDescuentoMonto(it)
+    ? formatMonto(Number(it.descuento_monto) || 0, moneda)
+    : `${(Number(it.descuento_porcentaje) || 0).toFixed(2)}%`;
 }
 
 const BOTON_MOVER = 'text-[10px] leading-none px-1 hover:text-brand-700 disabled:opacity-25 disabled:pointer-events-none';
@@ -86,11 +130,22 @@ export default function ItemsCotizacionEditor({
   placeholder = 'Descripción del item', tituloFoto = 'Subir foto del ítem'
 }) {
   const toast = useToast();
+  const monedas = useMonedas();
+  const simboloMoneda = monedas.find(m => m.codigo === moneda)?.simbolo || moneda || 'S/';
   // Fila recién creada: su descripción toma el foco al montarse.
   const [enfocar, setEnfocar] = useState(null);
 
   const cambiar = (key, campo, val) =>
     setItems(arr => arr.map(it => it._key === key ? { ...it, [campo]: val } : it));
+  // Cambiar % ↔ monto fijo conserva la cifra escrita: solo cambia su unidad.
+  const cambiarTipoDescuento = (key, tipo) =>
+    setItems(arr => arr.map(it => {
+      if (it._key !== key || it.descuento_tipo === tipo) return it;
+      const valor = it[campoDescuento(it)];
+      return tipo === DESCUENTO_MONTO
+        ? { ...it, descuento_tipo: tipo, descuento_monto: valor, descuento_porcentaje: 0 }
+        : { ...it, descuento_tipo: tipo, descuento_porcentaje: valor, descuento_monto: 0 };
+    }));
   const agregar = () => {
     const nuevo = itemVacio();
     setItems(arr => [...arr, nuevo]);
@@ -137,18 +192,20 @@ export default function ItemsCotizacionEditor({
       <div className="hidden sm:flex gap-2 pb-1.5 mb-1 border-b border-carbon-100 text-[10px] font-semibold uppercase tracking-wider text-carbon-500">
         <div className="w-7 shrink-0 text-center">#</div>
         <div className="flex-1 grid grid-cols-12 gap-2">
-          <div className="col-span-4">Descripción</div>
+          <div className="col-span-3">Descripción</div>
           <div className="col-span-1 text-right">Cant.</div>
           <div className="col-span-1">Unidad</div>
           <div className="col-span-2 text-right">P. unitario</div>
-          <div className="col-span-1 text-right">% dscto</div>
+          <div className="col-span-2 text-right">Dscto (% o monto)</div>
           <div className="col-span-1 text-right">Importe</div>
           <div className="col-span-1 text-center">Foto</div>
           <div className="col-span-1"></div>
         </div>
       </div>
       <div className="space-y-2">
-        {items.map((it, idx) => (
+        {items.map((it, idx) => {
+          const errDescuento = errorDescuento(it);
+          return (
           <div key={it._key} className="flex gap-2 items-start">
             {/* Posición del ítem y flechas para reordenarlo. */}
             <div className="w-7 shrink-0 flex flex-col items-center text-carbon-400">
@@ -159,21 +216,43 @@ export default function ItemsCotizacionEditor({
                 className={BOTON_MOVER} title="Bajar ítem" aria-label={`Bajar ítem ${idx + 1}`}>▼</button>
             </div>
             <div className="flex-1 min-w-0 grid grid-cols-12 gap-2 items-start">
-              <textarea className="textarea col-span-12 sm:col-span-4" rows="1" placeholder={placeholder}
+              <textarea className="textarea col-span-12 sm:col-span-3" rows="1" placeholder={placeholder}
                 autoFocus={it._key === enfocar}
                 value={it.descripcion} onChange={e => cambiar(it._key, 'descripcion', e.target.value)} />
               <input type="number" step="0.01" className="input col-span-3 sm:col-span-1" placeholder="Cant."
                 value={it.cantidad} onChange={e => cambiar(it._key, 'cantidad', e.target.value)} />
               <input className="input col-span-3 sm:col-span-1" placeholder="Unidad"
                 value={it.unidad} onChange={e => cambiar(it._key, 'unidad', e.target.value)} />
-              <input type="number" step="0.01" className="input col-span-3 sm:col-span-2" placeholder="P. unitario"
+              <input type="number" step="0.01" className="input col-span-6 sm:col-span-2" placeholder="P. unitario"
                 value={it.precio_unitario} onChange={e => cambiar(it._key, 'precio_unitario', e.target.value)} />
-              <input type="number" step="0.01" className="input col-span-3 sm:col-span-1" placeholder="% dscto"
-                value={it.descuento_porcentaje} onChange={e => cambiar(it._key, 'descuento_porcentaje', e.target.value)} />
-              <div className="col-span-8 sm:col-span-1 text-right text-sm font-medium pt-2">
+              {/* Descuento: el selector elige si la cifra es un % o un monto fijo
+                  (en la moneda de la cotización) que se resta a la línea. */}
+              <div className="col-span-6 sm:col-span-2 flex gap-1">
+                <div className="inline-flex shrink-0 rounded-lg ring-1 ring-carbon-200 overflow-hidden text-xs"
+                  role="group" aria-label={`Tipo de descuento del ítem ${idx + 1}`}>
+                  {[[DESCUENTO_PORCENTAJE, '%', 'Descuento en porcentaje'],
+                    [DESCUENTO_MONTO, simboloMoneda, 'Descuento en monto fijo']].map(([tipo, etiqueta, ayuda], i) => {
+                    const activo = (it.descuento_tipo || DESCUENTO_PORCENTAJE) === tipo;
+                    return (
+                      <button key={tipo} type="button" onClick={() => cambiarTipoDescuento(it._key, tipo)}
+                        aria-pressed={activo} title={ayuda}
+                        className={`px-2 ${i > 0 ? 'border-l border-carbon-200' : ''} ${activo ? 'bg-brand-600 text-white' : 'bg-white text-carbon-600 hover:bg-carbon-50'}`}>
+                        {etiqueta}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input type="number" step="0.01" min="0" max={esDescuentoMonto(it) ? undefined : 100}
+                  className={`input min-w-0 ${errDescuento ? '!border-red-400 focus:!ring-red-200/60' : ''}`}
+                  placeholder={esDescuentoMonto(it) ? `Dscto ${simboloMoneda}` : 'Dscto %'}
+                  title={errDescuento || undefined} aria-invalid={!!errDescuento}
+                  value={it[campoDescuento(it)]} onChange={e => cambiar(it._key, campoDescuento(it), e.target.value)} />
+              </div>
+              <div className={`col-span-6 sm:col-span-1 text-right text-sm font-medium pt-2 ${errDescuento ? 'text-red-600' : ''}`}
+                title={errDescuento || undefined}>
                 {formatMonto(calcImporte(it), moneda)}
               </div>
-              <div className="col-span-2 sm:col-span-1 flex items-center justify-center pt-1">
+              <div className="col-span-6 sm:col-span-1 flex items-center justify-center pt-1">
                 {it.archivo ? (
                   <img src={assetUrl(it.archivo.ruta_almacenamiento)} alt="foto ítem"
                     onClick={() => quitarFoto(it._key)} title="Clic para quitar la foto"
@@ -195,7 +274,8 @@ export default function ItemsCotizacionEditor({
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       {items.length > 1 && (
         <p className="text-[11px] text-carbon-400 mt-2">

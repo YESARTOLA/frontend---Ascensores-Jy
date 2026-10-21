@@ -6,9 +6,10 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
-import { FileLink } from '../components/common/FilePreview.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
+import CampoDocumentosEntrega, {
+  ArchivosEntrega, documentosFormDeEntrega, payloadDocumentosEntrega
+} from '../components/entregas/DocumentosEntrega.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, hoyISO, toYMDLima } from '../utils/formatters.js';
@@ -16,7 +17,7 @@ import { estaServicioFinalizado } from '../utils/estadoServicio.js';
 
 const TIPOS = ['Entrega parcial', 'Entrega final', 'Entrega documental', 'Entrega técnica'];
 const ESTADOS = ['Pendiente', 'Entregada', 'Observada', 'Aprobada'];
-const inicial = { id_servicio: '', tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', id_archivo: null, estado_entrega: 'Entregada' };
+const inicial = () => ({ id_servicio: '', tipo_entrega: 'Entrega final', fecha_entrega: hoyISO(), descripcion: '', documentos: [], estado_entrega: 'Entregada' });
 
 export default function Entregas() {
   const [servicios, setServicios] = useState([]);
@@ -38,32 +39,23 @@ export default function Entregas() {
     serviciosService.list().then(setServicios).catch(() => setServicios([]));
   }, []);
 
-  const abrirNueva = () => { setForm(inicial); setEditId(null); setOpen(true); };
+  const abrirNueva = () => { setForm(inicial()); setEditId(null); setOpen(true); };
   const abrirEditar = (e) => {
     setForm({
       id_servicio: e.id_servicio,
       tipo_entrega: e.tipo_entrega,
       fecha_entrega: e.fecha_entrega ? toYMDLima(e.fecha_entrega) : hoyISO(),
       descripcion: e.descripcion || '',
-      id_archivo: e.id_archivo || null,
+      documentos: documentosFormDeEntrega(e),
       estado_entrega: e.estado_entrega
     });
     setEditId(e.id);
     setOpen(true);
   };
 
-  const subirArchivo = async (ev) => {
-    const file = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!file) return;
-    try {
-      const r = await carga.subirUno(file, 'entregas');
-      setForm(f => ({ ...f, id_archivo: r.id }));
-      toast.success('Archivo cargado');
-    } catch (err) {
-      if (!err?.cancelado) toast.error('Error al subir');
-    }
-  };
+  // Los documentos se suben en lote al elegirlos (CampoDocumentosEntrega) y al
+  // guardar solo viajan sus ids.
+  const setDocumentos = (actualizar) => setForm(f => ({ ...f, documentos: actualizar(f.documentos) }));
 
   const serviciosActivos = servicios.filter(s => !estaServicioFinalizado(s.estado_servicio));
 
@@ -75,9 +67,12 @@ export default function Entregas() {
         return toast.error(`El servicio está ${srv.estado_servicio}: no se puede registrar entregas`);
       }
     }
+    if (carga.subiendo) return toast.error('Espere a que terminen de subir los documentos');
+    const { documentos, ...datos } = form;
+    const payload = { ...datos, ...payloadDocumentosEntrega(documentos) };
     try {
-      if (editId) await entregasService.update(editId, form);
-      else await entregasService.create(form);
+      if (editId) await entregasService.update(editId, payload);
+      else await entregasService.create(payload);
       toast.success('Entrega guardada'); setOpen(false); cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
@@ -121,7 +116,7 @@ export default function Entregas() {
                 <th className="table-th">Fecha</th><th className="table-th">Servicio</th>
                 <th className="table-th">Cliente</th><th className="table-th">Tipo</th>
                 <th className="table-th">Descripción</th><th className="table-th">Estado</th>
-                <th className="table-th">Archivo</th><th className="table-th">Registro</th>
+                <th className="table-th">Documentos</th><th className="table-th">Registro</th>
                 <th className="table-th text-right">Acciones</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
@@ -133,7 +128,7 @@ export default function Entregas() {
                     <td className="table-td text-xs"><span className="badge-blue">{e.tipo_entrega}</span></td>
                     <td className="table-td text-xs max-w-xs truncate">{e.descripcion || '—'}</td>
                     <td className="table-td"><span className={badgeEstado(e.estado_entrega)}>{e.estado_entrega}</span></td>
-                    <td className="table-td">{e.archivo ? <FileLink archivo={e.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                    <td className="table-td"><ArchivosEntrega entrega={e} /></td>
                     <td className="table-td text-xs text-slate-500">{formatFechaHora(e.date_time_registration)}</td>
                     <td className="table-td text-right">
                       {puedeCrear && <button onClick={() => abrirEditar(e)} className="text-brand-700 text-xs hover:underline">Editar</button>}
@@ -150,8 +145,8 @@ export default function Entregas() {
         )}
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title={editId ? 'Editar entrega' : 'Nueva entrega'} size="lg"
-        footer={<><button className="btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn-primary" onClick={guardar} disabled={carga.subiendo}>Guardar</button></>}>
+      <Modal open={open} onClose={() => !carga.subiendo && setOpen(false)} title={editId ? 'Editar entrega' : 'Nueva entrega'} size="lg"
+        footer={<><button className="btn-secondary" onClick={() => setOpen(false)} disabled={carga.subiendo}>Cancelar</button><button className="btn-primary" onClick={guardar} disabled={carga.subiendo}>Guardar</button></>}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">Servicio *</label>
@@ -181,10 +176,8 @@ export default function Entregas() {
             <textarea className="textarea" rows="3" value={form.descripcion} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} />
           </div>
           <div className="sm:col-span-2">
-            <label className="label">Archivo adjunto</label>
-            <input type="file" className="input" onChange={subirArchivo} disabled={carga.subiendo} />
-            <BarraProgresoCarga carga={carga} className="mt-2" />
-            {form.id_archivo && !carga.progreso && <p className="text-xs text-emerald-600 mt-1">Archivo cargado (id #{form.id_archivo})</p>}
+            <label className="label">Documentos</label>
+            <CampoDocumentosEntrega documentos={form.documentos} setDocumentos={setDocumentos} carga={carga} />
           </div>
         </div>
       </Modal>

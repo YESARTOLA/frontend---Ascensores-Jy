@@ -78,7 +78,7 @@ export default function Mantenimientos() {
   const [aprobandoPeriodo, setAprobandoPeriodo] = useState(false);
   const [mesExpandido, setMesExpandido] = useState(null); // numero_mes con detalle abierto
   // Mes cobrable a aprobar (confirmación): fila de `periodos.meses` | null. El
-  // plan solo APRUEBA el mes; la factura la emite Contabilidad → "Por facturar".
+  // plan solo APRUEBA el mes; la factura la emite Contabilidad → "Cuotas por facturar".
   const [mesAAprobar, setMesAAprobar] = useState(null);
   // Ascensores del mes que se facturan al aprobarlo (ids). Por defecto, todos;
   // desmarcar uno baja el importe (ver utils/planMantenimiento.js#montoDelMes).
@@ -487,7 +487,7 @@ export default function Mantenimientos() {
 
   // Aprueba un MES del plan: crea su cuota por el monto mensual pactado en el
   // cobro único del plan. Aquí NO se factura: la cuota aprobada queda
-  // habilitada en Contabilidad → "Por facturar", que emite el comprobante.
+  // habilitada en Contabilidad → "Cuotas por facturar", que emite el comprobante.
   // No espera a que se realicen los mantenimientos del mes: el importe es fijo
   // (no varía con lo ejecutado). Por eso va siempre `forzar`; el backend deja
   // constancia en la auditoría de cuántos mantenimientos faltaban.
@@ -654,6 +654,18 @@ export default function Mantenimientos() {
     if (it.id_servicio) return it.tecnicos || <span className="text-slate-400">Sin asignar</span>;
     if (it.tecnico_plan) return <span className="text-slate-500" title="Técnico del plan: se asigna al crear el servicio">{it.tecnico_plan} <span className="text-slate-400">(del plan)</span></span>;
     return <span className="text-slate-400">—</span>;
+  };
+
+  // Ascensor(es) de una fila del plan: código y ubicación, como en la cabecera
+  // del detalle. Una visita es de un ascensor; un servicio puede cubrir varios.
+  const ascensoresDeInstancia = (it) => {
+    if (!it.ascensores?.length) return <span className="text-slate-400">—</span>;
+    return it.ascensores.map(a => (
+      <div key={a.id} className="whitespace-nowrap">
+        <span className="font-mono">{a.codigo}</span>
+        {a.ubicacion && <span className="text-slate-500"> · {a.ubicacion}</span>}
+      </div>
+    ));
   };
 
   // --- Monto mensual: el único precio del plan -----------------------------
@@ -1418,7 +1430,7 @@ export default function Mantenimientos() {
                 <SeccionColapsable titulo="Facturación mensual" variante="plano">
                     <div className="text-right mb-3">
                       <span className="text-[11px] text-slate-500 block">Un solo cobro y una sola factura por mes, con el detalle de todos los mantenimientos de ese mes.</span>
-                      <span className="text-[11px] text-slate-500 block">Al aprobar un mes, queda habilitado en Contabilidad → «Por facturar».</span>
+                      <span className="text-[11px] text-slate-500 block">Al aprobar un mes, queda habilitado en Contabilidad → «Cuotas por facturar».</span>
                       {periodos?.id_cobro && (
                         <Link to={`/cobros/${periodos.id_cobro}`} className="text-[11px] text-brand-700 hover:underline">
                           Ver cobro del plan (abonos y facturas) →
@@ -1478,7 +1490,7 @@ export default function Mantenimientos() {
                                 </td>
                                 <td className="table-td text-right whitespace-nowrap">
                                   {/* Aquí solo se APRUEBA el mes; la factura la emite
-                                      Contabilidad → "Por facturar" contra su cuota.
+                                      Contabilidad → "Cuotas por facturar" contra su cuota.
                                       Un mes gratuito se registra pero no se factura: su cuota
                                       nace en 0 y saldada, y no entra a "Por facturar".
                                       Un mes cobrable se aprueba sin esperar a que se realicen
@@ -1496,7 +1508,7 @@ export default function Mantenimientos() {
                                       abono pudo registrarse antes que la factura—. */}
                                   {p.cuota && !p.es_gratuito && !p.cuota.facturada && (
                                     <span className="text-[11px] text-amber-700"
-                                      title="La factura de este mes se emite en Contabilidad → «Por facturar»">
+                                      title="La factura de este mes se emite en Contabilidad → «Cuotas por facturar»">
                                       Por facturar en Contabilidad
                                     </span>
                                   )}
@@ -1602,6 +1614,7 @@ export default function Mantenimientos() {
                         </div>
                         <dl className="mt-2 space-y-1">
                           <div className="dato-movil"><dt>Programada</dt><dd>{formatFecha(it.fecha_programada)}</dd></div>
+                          <div className="dato-movil"><dt>Ascensor</dt><dd>{ascensoresDeInstancia(it)}</dd></div>
                           <div className="dato-movil"><dt>Técnico</dt><dd>{tecnicoDeInstancia(it)}</dd></div>
                           {it.fecha_inicio_real && <div className="dato-movil"><dt>Inicio</dt><dd>{formatFechaHora(it.fecha_inicio_real)}</dd></div>}
                           {it.fecha_fin_real && <div className="dato-movil"><dt>Término</dt><dd>{formatFechaHora(it.fecha_fin_real)}</dd></div>}
@@ -1628,6 +1641,7 @@ export default function Mantenimientos() {
                       <thead><tr>
                         <th className="table-th">Servicio</th>
                         <th className="table-th">Programada</th>
+                        <th className="table-th">Ascensor</th>
                         <th className="table-th">Técnico</th>
                         <th className="table-th">Inicio</th>
                         <th className="table-th">Término</th>
@@ -1645,6 +1659,7 @@ export default function Mantenimientos() {
                               {it.es_mantenimiento_gratuito && <span className="ml-1 badge-green text-[10px]">Gratis</span>}
                             </td>
                             <td className="table-td text-xs">{formatFecha(it.fecha_programada)}</td>
+                            <td className="table-td text-xs">{ascensoresDeInstancia(it)}</td>
                             <td className="table-td text-xs">{tecnicoDeInstancia(it)}</td>
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_inicio_real)}</td>
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_fin_real)}</td>
@@ -1757,7 +1772,7 @@ export default function Mantenimientos() {
       </Modal>
 
       {/* Aprobación del MES: crea su cuota en el cobro único del plan. No se
-          factura aquí: el mes queda habilitado en Contabilidad → "Por facturar"
+          factura aquí: el mes queda habilitado en Contabilidad → "Cuotas por facturar"
           (no hace falta esperar a que se realicen sus mantenimientos). */}
       {(() => {
         // Importe del mes según los ascensores marcados (mismo cálculo que el
@@ -1879,7 +1894,7 @@ export default function Mantenimientos() {
                   {pendientes > 0 && `Faltan ${pendientes} mantenimiento(s) de este mes; puede ${mesAAprobar.es_gratuito ? 'registrarse' : 'aprobarse'} igual. `}
                   {mesAAprobar.es_gratuito
                     ? 'Es un mes gratuito: se registra sin factura ni cobro.'
-                    : 'Al aprobarlo, su cuota se suma al cobro del plan y el mes queda habilitado en Contabilidad → «Por facturar» para emitir el comprobante.'}
+                    : 'Al aprobarlo, su cuota se suma al cobro del plan y el mes queda habilitado en Contabilidad → «Cuotas por facturar» para emitir el comprobante.'}
                 </p>
               );
             })()}
@@ -1891,7 +1906,7 @@ export default function Mantenimientos() {
 
       {/* Revertir la aprobación del MES (aprobado por error): la cuota se da de
           baja, su monto sale del cobro del plan y el mes deja de figurar en
-          Contabilidad → "Por facturar". Puede volver a aprobarse después. */}
+          Contabilidad → "Cuotas por facturar". Puede volver a aprobarse después. */}
       <Modal
         open={!!mesARevertir}
         onClose={() => !revirtiendoPeriodo && setMesARevertir(null)}
@@ -1926,7 +1941,7 @@ export default function Mantenimientos() {
             </div>
             <p className="text-xs rounded-md px-3 py-2 ring-1 bg-amber-50 text-amber-800 ring-amber-200">
               Se elimina la cuota de este mes y su monto se descuenta del cobro del plan.
-              El mes vuelve a quedar sin aprobar y deja de figurar en Contabilidad → «Por facturar».
+              El mes vuelve a quedar sin aprobar y deja de figurar en Contabilidad → «Cuotas por facturar».
               Podrá aprobarlo de nuevo cuando corresponda.
             </p>
             <div>

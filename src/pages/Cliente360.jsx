@@ -5,6 +5,7 @@ import Loader from '../components/common/Loader.jsx';
 import PageHeader from '../components/common/PageHeader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import { FileLink, useFilePreview } from '../components/common/FilePreview.jsx';
+import { ArchivosEntrega } from '../components/entregas/DocumentosEntrega.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { formatFecha, formatFechaHora, formatMonto, badgeEstado, codigosAscensores, resumenAscensores, formatTelefono, nombreEdificio } from '../utils/formatters.js';
@@ -368,7 +369,7 @@ export default function Cliente360() {
                   <thead><tr>
                     <th className="table-th">Fecha</th><th className="table-th">Servicio</th>
                     <th className="table-th">Tipo</th><th className="table-th">Estado</th>
-                    <th className="table-th">Archivo</th>
+                    <th className="table-th">Documentos</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.entregas.map(en => (
@@ -377,7 +378,7 @@ export default function Cliente360() {
                         <td className="table-td font-mono text-xs">{en.servicio?.codigo}</td>
                         <td className="table-td text-xs">{en.tipo_entrega}</td>
                         <td className="table-td"><span className={badgeEstado(en.estado_entrega)}>{en.estado_entrega}</span></td>
-                        <td className="table-td">{en.archivo ? <FileLink archivo={en.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                        <td className="table-td"><ArchivosEntrega entrega={en} /></td>
                       </tr>
                     ))}
                   </tbody>

@@ -6,10 +6,11 @@ import Loader from '../components/common/Loader.jsx';
 import Modal from '../components/common/Modal.jsx';
 import ConfirmarEliminacion from '../components/common/ConfirmarEliminacion.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
+import ArchivoAdjunto from '../components/common/ArchivoAdjunto.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
 import EditarFacturaModal from '../components/facturas/EditarFacturaModal.jsx';
-import { CeldaDocumentosFactura, DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
+import { CeldaDocumentosFactura, ChipsDocumentos, DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, addMonthsYMD, toYMDLima } from '../utils/formatters.js';
@@ -40,7 +41,7 @@ export default function CobroDetalle() {
   const [openCuotas, setOpenCuotas] = useState(false);
   const [openFactura, setOpenFactura] = useState(false);
   const [guardandoCuotas, setGuardandoCuotas] = useState(false);
-  const [abono, setAbono] = useState({ monto: '', fecha_pago: hoyISO(), metodo_pago: '', id_cuenta_bancaria: '', observaciones: '', id_archivo_comprobante: null });
+  const [abono, setAbono] = useState({ monto: '', fecha_pago: hoyISO(), metodo_pago: '', id_cuenta_bancaria: '', observaciones: '', id_archivo_comprobante: null, archivo_comprobante: null, documentos: [] });
   const [metodosPago, setMetodosPago] = useState([]);
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   // cuotas[i].id presente = blindada (pagada/facturada). Sin id = nueva editable.
@@ -51,7 +52,9 @@ export default function CobroDetalle() {
   const [facturaEditar, setFacturaEditar] = useState(null);
   const toast = useToast();
   const cargaComprobante = useCargaArchivos(); // comprobante del abono
+  const cargaDocsAbono = useCargaArchivos();   // documentos adicionales del abono
   const cargaComprobanteEdit = useCargaArchivos(); // comprobante al corregir un abono
+  const cargaDocsAbonoEdit = useCargaArchivos();   // documentos adicionales al corregir un abono
   const cargaFactura = useCargaArchivos();     // archivo del comprobante emitido
   const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
@@ -131,7 +134,7 @@ export default function CobroDetalle() {
     if (!file) return;
     try {
       const r = await cargaComprobante.subirUno(file, 'comprobantes');
-      setAbono(a => ({ ...a, id_archivo_comprobante: r.id }));
+      setAbono(a => ({ ...a, id_archivo_comprobante: r.id, archivo_comprobante: r }));
       toast.success('Comprobante cargado');
     } catch (err) {
       if (!err?.cancelado) toast.error('Error al subir');
@@ -144,13 +147,16 @@ export default function CobroDetalle() {
       return toast.error(`El método "${abono.metodo_pago}" requiere seleccionar una cuenta bancaria`);
     }
     try {
+      // `archivo_comprobante` solo sirve para mostrar el adjunto en el modal.
+      const { archivo_comprobante, ...datosAbono } = abono;
       const payload = {
-        ...abono,
-        id_cuenta_bancaria: abono.id_cuenta_bancaria ? Number(abono.id_cuenta_bancaria) : null
+        ...datosAbono,
+        id_cuenta_bancaria: abono.id_cuenta_bancaria ? Number(abono.id_cuenta_bancaria) : null,
+        documentos: aPayloadDocumentos(abono.documentos)
       };
       await cobrosService.registrarPago(id, payload);
       toast.success('Abono registrado'); setOpenAbono(false);
-      setAbono({ monto: '', fecha_pago: hoyISO(), metodo_pago: metodosPago[0]?.codigo || '', id_cuenta_bancaria: '', observaciones: '', id_archivo_comprobante: null });
+      setAbono({ monto: '', fecha_pago: hoyISO(), metodo_pago: metodosPago[0]?.codigo || '', id_cuenta_bancaria: '', observaciones: '', id_archivo_comprobante: null, archivo_comprobante: null, documentos: [] });
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
@@ -166,6 +172,8 @@ export default function CobroDetalle() {
       monto: saldo > 0 ? saldo.toFixed(2) : '',
       fecha_pago: hoyISO(),
       id_archivo_comprobante: null,
+      archivo_comprobante: null,
+      documentos: [],
       observaciones: ''
     }));
     setOpenAbono(true);
@@ -261,7 +269,7 @@ export default function CobroDetalle() {
     if (!file) return;
     try {
       const r = await cargaFactura.subirUno(file, 'facturas');
-      setFactura(f => ({ ...f, id_archivo: r.id }));
+      setFactura(f => ({ ...f, id_archivo: r.id, archivo: r }));
       toast.success('Archivo cargado');
     } catch (err) {
       if (!err?.cancelado) toast.error('Error subiendo archivo');
@@ -284,10 +292,19 @@ export default function CobroDetalle() {
   const hayFacturaPorCuota = facturasActivas.some(f => f.id_cuota !== null);
   const cuotasNoFacturadas = (data.cuotas || []).filter(c => !facturasActivas.some(f => f.id_cuota === c.id));
   const facturaPorCuotaIndex = new Map(facturasActivas.filter(f => f.id_cuota !== null).map(f => [f.id_cuota, f]));
+  // Facturación GENERAL en partes: una primera factura parcial se completa con
+  // una segunda, tercera… hasta el total del servicio. Lo ya emitido y lo que
+  // falta se calculan igual que en el backend (validarCoberturaFactura) y en
+  // Contabilidad (columnas "Facturado" / "Por facturar").
+  const sumaFacturasGeneralPrevia = facturasActivas
+    .filter(f => f.id_cuota === null)
+    .reduce((acc, f) => acc + Number(f.monto), 0);
+  const restanteGeneral = Math.max(0, Math.round((Number(data.monto_total) - sumaFacturasGeneralPrevia) * 100) / 100);
+  const facturadoPorTotal = hayFacturaGeneral && restanteGeneral <= 0;
 
   const abrirModalFactura = () => {
-    if (hayFacturaGeneral) {
-      toast.error('Este servicio ya tiene una factura general. Anúlela antes de emitir otra.');
+    if (facturadoPorTotal) {
+      toast.error('Este servicio ya está facturado por su total. Anule una factura para emitir otra.');
       return;
     }
     const modoInicial = hayFacturaPorCuota ? 'por_cuota' : 'general';
@@ -302,9 +319,10 @@ export default function CobroDetalle() {
       tipo_comprobante: tipoComprobanteSugerido(data.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
       monto: modoInicial === 'general'
-        ? Number(data.monto_total).toFixed(2)
+        ? restanteGeneral.toFixed(2)
         : Number(primeraCuotaLibre?.monto || 0).toFixed(2),
       id_archivo: null,
+      archivo: null,
       documentos: [],
       modo: modoInicial,
       id_cuota: modoInicial === 'por_cuota' ? String(primeraCuotaLibre.id) : ''
@@ -319,7 +337,7 @@ export default function CobroDetalle() {
       if (!primera) { toast.error('No quedan cuotas sin facturar'); return; }
       setFactura(f => ({ ...f, modo, id_cuota: String(primera.id), monto: Number(primera.monto).toFixed(2) }));
     } else {
-      setFactura(f => ({ ...f, modo, id_cuota: '', monto: Number(data.monto_total).toFixed(2) }));
+      setFactura(f => ({ ...f, modo, id_cuota: '', monto: restanteGeneral.toFixed(2) }));
     }
   };
   const cambiarCuotaFactura = (idCuota) => {
@@ -340,6 +358,7 @@ export default function CobroDetalle() {
 
   const abrirEditarPago = (p) => {
     cargaComprobanteEdit.limpiar?.();
+    cargaDocsAbonoEdit.limpiar?.();
     setPagoEdit({
       id: p.id,
       numero_abono: p.numero_abono,
@@ -349,6 +368,7 @@ export default function CobroDetalle() {
       id_cuenta_bancaria: p.id_cuenta_bancaria ? String(p.id_cuenta_bancaria) : '',
       id_archivo_comprobante: p.id_archivo_comprobante || null,
       archivo: p.archivo || null,
+      documentos: p.documentos || [],
       observaciones: p.observaciones || ''
     });
   };
@@ -381,7 +401,8 @@ export default function CobroDetalle() {
         metodo_pago: pagoEdit.metodo_pago,
         id_cuenta_bancaria: pagoEdit.id_cuenta_bancaria ? Number(pagoEdit.id_cuenta_bancaria) : null,
         id_archivo_comprobante: pagoEdit.id_archivo_comprobante || null,
-        observaciones: pagoEdit.observaciones || null
+        observaciones: pagoEdit.observaciones || null,
+        documentos: aPayloadDocumentos(pagoEdit.documentos)
       });
       toast.success(`Abono #${pagoEdit.numero_abono} actualizado`);
       setPagoEdit(null);
@@ -428,6 +449,9 @@ export default function CobroDetalle() {
     if (factura.modo === 'por_cuota' && !factura.id_cuota) return toast.error('Seleccione la cuota a facturar');
     if (factura.modo === 'por_cuota' && Number(factura.monto) > restanteServicio + 0.01) {
       return toast.error(`El monto excede el restante por facturar (S/ ${restanteServicio.toFixed(2)})`);
+    }
+    if (factura.modo === 'general' && Number(data.monto_total) > 0 && Number(factura.monto) > restanteGeneral + 0.01) {
+      return toast.error(`El monto excede lo que falta facturar (${formatMonto(restanteGeneral, data.moneda)}): ya se facturó ${formatMonto(sumaFacturasGeneralPrevia, data.moneda)} de ${formatMonto(data.monto_total, data.moneda)}`);
     }
     setGuardandoFactura(true);
     try {
@@ -519,7 +543,7 @@ export default function CobroDetalle() {
                 <th className="table-th">#</th><th className="table-th">Fecha</th>
                 <th className="table-th">Método</th><th className="table-th">Cuenta</th>
                 <th className="table-th text-right">Monto</th>
-                <th className="table-th">Comprobante</th><th className="table-th">Notas</th>
+                <th className="table-th">Documentos</th><th className="table-th">Notas</th>
                 {puedeEditarPagos && <th className="table-th text-right">Acción</th>}
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
@@ -540,7 +564,15 @@ export default function CobroDetalle() {
                         : <span className="text-slate-400">—</span>}
                     </td>
                     <td className="table-td text-right font-mono text-emerald-700">{formatMonto(p.monto, data.moneda)}</td>
-                    <td className="table-td">{p.archivo ? <FileLink archivo={p.archivo} className="text-brand-700 text-xs hover:underline">Ver</FileLink> : '—'}</td>
+                    <td className="table-td">
+                      {p.archivo || p.documentos?.length
+                        ? (
+                          <div className="flex flex-wrap items-center gap-1.5 max-w-[16rem]">
+                            <ChipsDocumentos comprobante={p.archivo} rotuloComprobante="Comprobante" documentos={p.documentos} />
+                          </div>
+                        )
+                        : '—'}
+                    </td>
                     <td className="table-td text-xs">{p.observaciones || '—'}</td>
                     {puedeEditarPagos && (
                       <td className="table-td text-right">
@@ -548,7 +580,7 @@ export default function CobroDetalle() {
                           type="button"
                           onClick={() => abrirEditarPago(p)}
                           className="text-brand-700 text-xs hover:underline whitespace-nowrap"
-                          title="Corregir este abono: monto, fecha real de cobro, método, cuenta, comprobante o notas"
+                          title="Corregir este abono: monto, fecha real de cobro, método, cuenta, comprobante, documentos o notas"
                         >Editar</button>
                       </td>
                     )}
@@ -812,7 +844,7 @@ export default function CobroDetalle() {
 
       {/* Modal abono */}
       <Modal open={openAbono} onClose={() => setOpenAbono(false)} title="Registrar abono"
-        footer={<><button className="btn-secondary" onClick={() => setOpenAbono(false)}>Cancelar</button><button className="btn-primary" onClick={registrar} disabled={cargaComprobante.subiendo}>Registrar</button></>}>
+        footer={<><button className="btn-secondary" onClick={() => setOpenAbono(false)}>Cancelar</button><button className="btn-primary" onClick={registrar} disabled={cargaComprobante.subiendo || cargaDocsAbono.subiendo}>Registrar</button></>}>
         <div className="space-y-4">
           <div><label className="label">Monto *</label><input type="number" step="0.01" className="input" value={abono.monto} onChange={e => setAbono(a => ({ ...a, monto: e.target.value }))} placeholder={`Saldo: ${data.saldo_pendiente}`} /></div>
           <div>
@@ -845,9 +877,20 @@ export default function CobroDetalle() {
           )}
           <div>
             <label className="label">Comprobante</label>
-            <input type="file" className="input" onChange={subirComprobante} disabled={cargaComprobante.subiendo} />
-            <BarraProgresoCarga carga={cargaComprobante} className="mt-2" />
+            <ArchivoAdjunto
+              archivo={abono.archivo_comprobante}
+              onChange={subirComprobante}
+              onQuitar={() => setAbono(a => ({ ...a, id_archivo_comprobante: null, archivo_comprobante: null }))}
+              carga={cargaComprobante}
+            />
           </div>
+          <DocumentosAdicionalesBorrador
+            value={abono.documentos}
+            onChange={documentos => setAbono(a => ({ ...a, documentos }))}
+            carga={cargaDocsAbono}
+            carpeta="comprobantes"
+            ayuda="Opcional. Constancia de detracción, de retención, de pago… Se guardan junto con el abono."
+          />
           <div><label className="label">Observaciones</label><textarea className="textarea" rows="2" value={abono.observaciones} onChange={e => setAbono(a => ({ ...a, observaciones: e.target.value }))} /></div>
         </div>
       </Modal>
@@ -954,7 +997,7 @@ export default function CobroDetalle() {
                 <input type="radio" className="mt-1" checked={factura.modo === 'general'} onChange={() => cambiarModoFactura('general')} disabled={hayFacturaPorCuota} />
                 <div>
                   <div className="font-medium text-slate-800">General</div>
-                  <div className="text-xs text-slate-500">Una factura por todo el servicio</div>
+                  <div className="text-xs text-slate-500">Una o varias facturas hasta completar el total del servicio</div>
                 </div>
               </label>
               <label className={`flex items-start gap-2 p-3 rounded-lg ring-1 cursor-pointer text-sm ${factura.modo === 'por_cuota' ? 'ring-brand-500 bg-brand-50' : 'ring-slate-200 bg-slate-50'} ${hayFacturaGeneral || (data.cuotas || []).length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}>
@@ -966,7 +1009,12 @@ export default function CobroDetalle() {
               </label>
             </div>
             {hayFacturaPorCuota && <p className="text-xs text-amber-700 mt-1">Ya hay facturas por cuota. No puede emitirse factura general.</p>}
-            {hayFacturaGeneral && <p className="text-xs text-amber-700 mt-1">Ya hay factura general. No puede emitirse factura por cuota.</p>}
+            {hayFacturaGeneral && <p className="text-xs text-amber-700 mt-1">Ya hay factura general: lo que falta se factura también en general, no por cuota.</p>}
+            {factura.modo === 'general' && hayFacturaGeneral && (
+              <p className="text-xs text-slate-500 mt-1">
+                Facturado previo: <span className="font-mono">{formatMonto(sumaFacturasGeneralPrevia, data.moneda)}</span> · Falta facturar: <span className="font-mono">{formatMonto(restanteGeneral, data.moneda)}</span>
+              </p>
+            )}
             {(data.cuotas || []).length === 0 && !hayFacturaPorCuota && <p className="text-xs text-slate-500 mt-1">Defina un plan de cuotas para habilitar la facturación por cuota.</p>}
           </div>
 
@@ -1008,11 +1056,20 @@ export default function CobroDetalle() {
               readOnly={factura.modo === 'por_cuota'}
             />
             {factura.modo === 'por_cuota' && <p className="text-xs text-slate-500 mt-1">Fijado por el monto de la cuota seleccionada.</p>}
+            {factura.modo === 'general' && (
+              <p className="text-xs text-slate-500 mt-1">
+                Precargado con lo que falta facturar. Puede reducirse (factura parcial) y completarse después con otro comprobante; nunca excederlo.
+              </p>
+            )}
           </div>
           <div>
             <label className="label">Archivo del comprobante</label>
-            <input type="file" className="input" onChange={subirArchivoFactura} disabled={cargaFactura.subiendo} />
-            <BarraProgresoCarga carga={cargaFactura} className="mt-2" />
+            <ArchivoAdjunto
+              archivo={factura.archivo}
+              onChange={subirArchivoFactura}
+              onQuitar={() => setFactura(f => ({ ...f, id_archivo: null, archivo: null }))}
+              carga={cargaFactura}
+            />
           </div>
           <DocumentosAdicionalesBorrador
             value={factura.documentos}
@@ -1086,7 +1143,7 @@ export default function CobroDetalle() {
         title={`Editar abono #${pagoEdit?.numero_abono ?? ''}`}
         footer={<>
           <button type="button" className="btn-secondary" onClick={() => setPagoEdit(null)} disabled={guardandoPago}>Cancelar</button>
-          <button type="button" className="btn-primary" onClick={guardarPago} disabled={guardandoPago || cargaComprobanteEdit.subiendo}>
+          <button type="button" className="btn-primary" onClick={guardarPago} disabled={guardandoPago || cargaComprobanteEdit.subiendo || cargaDocsAbonoEdit.subiendo}>
             {guardandoPago ? 'Guardando…' : 'Guardar cambios'}
           </button>
         </>}>
@@ -1164,6 +1221,13 @@ export default function CobroDetalle() {
             <BarraProgresoCarga carga={cargaComprobanteEdit} className="mt-2" />
             <p className="text-[11px] text-slate-500 mt-1">Al subir uno nuevo se reemplaza el anterior.</p>
           </div>
+          <DocumentosAdicionalesBorrador
+            value={pagoEdit?.documentos || []}
+            onChange={documentos => setPagoEdit(p => ({ ...p, documentos }))}
+            carga={cargaDocsAbonoEdit}
+            carpeta="comprobantes"
+            ayuda="Constancia de detracción, de retención, de pago… Lo que agregues o quites se aplica al guardar los cambios."
+          />
           <div>
             <label className="label">Observaciones</label>
             <textarea
