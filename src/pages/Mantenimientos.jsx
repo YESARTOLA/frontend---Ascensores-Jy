@@ -55,6 +55,11 @@ function resumenAscensoresPlan(plan) {
   return { edificio, ascensores: ascs };
 }
 
+// Filtros de la pestaña "Mantenimientos" (instancias). `numero_ot` es el N.º de
+// orden de trabajo del servicio (la sube el técnico durante la ejecución); el
+// backend busca por coincidencia parcial y deja fuera las visitas sin servicio.
+const FILTRO_INST_VACIO = { q: '', numero_ot: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '', desde: '', hasta: '' };
+
 export default function Mantenimientos() {
   const [tabActiva, setTabActiva] = useState('mantenimientos'); // 'mantenimientos' | 'planes'
   const [clientes, setClientes] = useState([]);
@@ -66,7 +71,7 @@ export default function Mantenimientos() {
   const [form, setForm] = useState(inicial);
   const [guardando, setGuardando] = useState(false);
   const guardandoRef = useRef(false);
-  const [filtroInst, setFiltroInst] = useState({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '', desde: '', hasta: '' });
+  const [filtroInst, setFiltroInst] = useState(FILTRO_INST_VACIO);
   const [filtroPlanes, setFiltroPlanes] = useState({ q: '' });
   const [planDetalle, setPlanDetalle] = useState(null);
   const [instanciasPlan, setInstanciasPlan] = useState([]);
@@ -153,6 +158,7 @@ export default function Mantenimientos() {
   const filtrosInstServidor = useMemo(() => {
     const params = {};
     if (filtroInst.q) params.q = filtroInst.q;
+    if (filtroInst.numero_ot) params.numero_ot = filtroInst.numero_ot;
     if (filtroInst.id_cliente) params.id_cliente = filtroInst.id_cliente;
     if (filtroInst.id_ascensor) params.id_ascensor = filtroInst.id_ascensor;
     if (filtroInst.estado_ejecucion) params.estado_ejecucion = filtroInst.estado_ejecucion;
@@ -875,12 +881,17 @@ export default function Mantenimientos() {
         <>
           <PanelFiltros
             activos={Object.values(filtroInst).filter(Boolean).length}
-            onLimpiar={() => setFiltroInst({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '', desde: '', hasta: '' })}>
-            <div className="p-3 sm:p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            onLimpiar={() => setFiltroInst(FILTRO_INST_VACIO)}>
+            <div className="p-3 sm:p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
               <input className="input col-span-2"
                 placeholder="Buscar por cliente, código o tipo de ascensor o código de servicio…"
                 value={filtroInst.q}
                 onChange={e => setFiltroInst(f => ({ ...f, q: e.target.value }))} />
+              <input className="input col-span-2 sm:col-span-1 lg:col-span-2"
+                placeholder="Buscar por N.º de orden de trabajo (OT)…"
+                title="Número de orden de trabajo del servicio"
+                value={filtroInst.numero_ot}
+                onChange={e => setFiltroInst(f => ({ ...f, numero_ot: e.target.value }))} />
               <select className="select" value={filtroInst.id_cliente}
                 onChange={e => setFiltroInst(f => ({ ...f, id_cliente: e.target.value, id_ascensor: '' }))}>
                 <option value="">Todos los clientes</option>
@@ -906,8 +917,8 @@ export default function Mantenimientos() {
                 placeholder="Rango de fechas (programada)"
               />
               <button
-                onClick={() => setFiltroInst({ q: '', id_cliente: '', id_ascensor: '', estado_ejecucion: '', desde: '', hasta: '' })}
-                className="btn-secondary col-span-2 sm:col-span-3 lg:col-span-6"
+                onClick={() => setFiltroInst(FILTRO_INST_VACIO)}
+                className="btn-secondary col-span-2 sm:col-span-3 lg:col-span-4"
               >Limpiar filtros</button>
             </div>
           </PanelFiltros>
@@ -942,7 +953,12 @@ export default function Mantenimientos() {
                         </td>
                         <td className="table-td text-xs">
                           {it.codigo_servicio ? (
-                            <Link to={`/servicios/${it.id_servicio}`} className="font-mono text-brand-700 hover:underline">{it.codigo_servicio}</Link>
+                            <>
+                              <Link to={`/servicios/${it.id_servicio}`} className="font-mono text-brand-700 hover:underline">{it.codigo_servicio}</Link>
+                              {it.numero_ot && (
+                                <div className="text-[10px] text-slate-500 whitespace-nowrap" title="N.º de orden de trabajo">OT {it.numero_ot}</div>
+                              )}
+                            </>
                           ) : <span className="text-slate-400">no creado</span>}
                         </td>
                         <td className="table-td text-xs">{tecnicoDeInstancia(it)}</td>
@@ -987,7 +1003,8 @@ export default function Mantenimientos() {
                       ['Técnico', it.tecnicos || (it.tecnico_plan ? `${it.tecnico_plan} (del plan)` : 'Sin asignar')],
                       ['Inicio', it.fecha_inicio_real ? formatFechaHora(it.fecha_inicio_real) : null],
                       ['Término', it.fecha_fin_real ? formatFechaHora(it.fecha_fin_real) : null],
-                      ['Días', formatDiasEjecucion(it.dias_ejecucion)]
+                      ['Días', formatDiasEjecucion(it.dias_ejecucion)],
+                      ['N.º OT', it.numero_ot || null]
                     ]}
                     acciones={it.id_servicio
                       ? <AccionFila to={`/servicios/${it.id_servicio}`}>Ver detalle</AccionFila>

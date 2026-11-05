@@ -36,7 +36,9 @@ const FORM_ID = 'form-emergencia';
 // backend la crea en 0 y marcada `sin_cobro`).
 const inicial = { id_cliente: '', id_ascensor: '', motivo: '', nivel_urgencia: 'alta', tramos: [], hora_programada: '', fecha_estimada_entrega: '', observaciones: '' };
 
-const FILTROS_VACIOS = { q: '', estado_emergencia: '', nivel_urgencia: '', ...FILTROS_EJECUCION_VACIOS };
+// `numero_ot`: N.º de orden de trabajo del servicio vinculado (la sube el
+// técnico durante la ejecución); el backend busca por coincidencia parcial.
+const FILTROS_VACIOS = { q: '', numero_ot: '', estado_emergencia: '', nivel_urgencia: '', ...FILTROS_EJECUCION_VACIOS };
 
 export default function Emergencias() {
   const [clientes, setClientes] = useState([]);
@@ -217,9 +219,12 @@ export default function Emergencias() {
         className="relative z-20"
         activos={contarFiltrosActivos(filtros)}
         onLimpiar={() => setFiltros(FILTROS_VACIOS)}>
-        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
+        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
             value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
+          <input className="input sm:col-span-2" placeholder="Buscar por N.º de orden de trabajo (OT)…"
+            title="Número de orden de trabajo del servicio vinculado"
+            value={filtros.numero_ot} onChange={e => setFiltros(f => ({ ...f, numero_ot: e.target.value }))} />
           <select className="select" value={filtros.estado_emergencia}
             onChange={e => setFiltros(f => ({ ...f, estado_emergencia: e.target.value }))}>
             <option value="">Todos los estados</option>
@@ -272,7 +277,14 @@ export default function Emergencias() {
                     <td className="table-td"><span className={badgeEstado(e.estado_emergencia)}>{e.estado_emergencia}</span></td>
                     <td className="table-td">
                       {e.servicio
-                        ? <Link to={`/servicios/${e.servicio.id}`} className="font-mono text-xs text-brand-700">{e.servicio.codigo}</Link>
+                        ? (
+                          <>
+                            <Link to={`/servicios/${e.servicio.id}`} className="font-mono text-xs text-brand-700">{e.servicio.codigo}</Link>
+                            {e.servicio.numero_ot && (
+                              <div className="text-[10px] text-slate-500 whitespace-nowrap" title="N.º de orden de trabajo">OT {e.servicio.numero_ot}</div>
+                            )}
+                          </>
+                        )
                         : '—'}
                     </td>
                     <td className="table-td text-xs">{(e.servicio?.asignaciones || []).map(a => a.tecnico?.nombre).filter(Boolean).join(', ') || '—'}</td>
@@ -352,7 +364,8 @@ export default function Emergencias() {
                     ['Reportada', formatFechaHora(e.fecha_reporte)],
                     ['Programada', etiquetaProgramacion(e.servicio).texto],
                     ['Estimada término', e.servicio?.fecha_estimada_entrega ? formatFecha(e.servicio.fecha_estimada_entrega) : null],
-                    ['Técnico', tecnicos || 'Sin asignar']
+                    ['Técnico', tecnicos || 'Sin asignar'],
+                    ['N.º OT', e.servicio?.numero_ot || null]
                   ]}
                   acciones={
                     <>

@@ -26,7 +26,9 @@ import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisp
 const ROLES_ASIG = ['Responsable principal', 'Apoyo técnico', 'Especialista', 'Supervisor técnico'];
 const NIVELES = ['alta', 'media', 'baja'];
 const FORM_ID = 'form-correctivo';
-const FILTROS_VACIOS = { q: '', estado_correctivo: '', nivel_urgencia: '', ...FILTROS_EJECUCION_VACIOS };
+// `numero_ot`: N.º de orden de trabajo del servicio vinculado (la sube el
+// técnico durante la ejecución); el backend busca por coincidencia parcial.
+const FILTROS_VACIOS = { q: '', numero_ot: '', estado_correctivo: '', nivel_urgencia: '', ...FILTROS_EJECUCION_VACIOS };
 
 const inicial = {
   id_cliente: '', id_ascensor: '', falla: '',
@@ -237,9 +239,12 @@ export default function Correctivos() {
         className="relative z-20"
         activos={contarFiltrosActivos(filtros)}
         onLimpiar={() => setFiltros(FILTROS_VACIOS)}>
-        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
+        <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           <input className="input sm:col-span-2" placeholder="Buscar por edificio, cliente, ascensor, código o motivo…"
             value={filtros.q} onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
+          <input className="input sm:col-span-2" placeholder="Buscar por N.º de orden de trabajo (OT)…"
+            title="Número de orden de trabajo del servicio vinculado"
+            value={filtros.numero_ot} onChange={e => setFiltros(f => ({ ...f, numero_ot: e.target.value }))} />
           <select className="select" value={filtros.estado_correctivo}
             onChange={e => setFiltros(f => ({ ...f, estado_correctivo: e.target.value }))}>
             <option value="">Todos los estados</option>
@@ -311,6 +316,9 @@ export default function Correctivos() {
                             c.servicio.requiere_factura === 0
                               ? <span className="badge-gray text-[10px]">Sin factura</span>
                               : <span className="badge-blue text-[10px]">Con factura</span>
+                          )}
+                          {c.servicio.numero_ot && (
+                            <div className="basis-full text-[10px] text-slate-500 whitespace-nowrap" title="N.º de orden de trabajo">OT {c.servicio.numero_ot}</div>
                           )}
                         </div>
                       ) : '—'}
@@ -389,7 +397,8 @@ export default function Correctivos() {
                     ['Reportado', formatFechaHora(c.fecha_reporte)],
                     ['Programada', etiquetaProgramacion(c.servicio).texto],
                     ['Estimada término', c.servicio?.fecha_estimada_entrega ? formatFecha(c.servicio.fecha_estimada_entrega) : null],
-                    ['Técnico', tecnicos || 'Sin asignar']
+                    ['Técnico', tecnicos || 'Sin asignar'],
+                    ['N.º OT', c.servicio?.numero_ot || null]
                   ]}
                   acciones={
                     <>
