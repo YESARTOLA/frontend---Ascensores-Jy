@@ -281,6 +281,9 @@ export const mantenimientosService = {
 export const leadsService = {
   list: (params) => api.get('/leads', { params }).then(r => r.data?.data ?? r.data),
   paginate: (params) => api.get('/leads', { params }).then(r => r.data),
+  // Excel del listado con los mismos filtros (sin paginar).
+  exportar: (params) =>
+    api.get('/leads/exportar', { params, responseType: 'blob' }),
   create: (d) => api.post('/leads', d).then(r => r.data?.data ?? r.data),
   update: (id, d) => api.put(`/leads/${id}`, d).then(r => r.data?.data ?? r.data),
   historial: (id) => api.get(`/leads/${id}/historial`).then(r => r.data?.data ?? r.data),
@@ -408,7 +411,8 @@ export const evidenciasGuiasService = {
   subirEvidencia: (idServicio, payload) => api.post(`/servicios/${idServicio}/evidencias`, payload).then(r => r.data?.data ?? r.data),
   listarEvidencias: (idServicio) => api.get(`/servicios/${idServicio}/evidencias`).then(r => r.data?.data ?? r.data),
   actualizarEvidencia: (id, payload) => api.put(`/evidencias/${id}`, payload).then(r => r.data?.data ?? r.data),
-  eliminarEvidencia: (id) => api.delete(`/evidencias/${id}`).then(r => r.data)
+  eliminarEvidencia: (id) => api.delete(`/evidencias/${id}`).then(r => r.data),
+  eliminarEvidencias: (idServicio, ids) => api.post(`/servicios/${idServicio}/evidencias/eliminar`, { ids }).then(r => r.data)
 };
 
 export const entregasService = {

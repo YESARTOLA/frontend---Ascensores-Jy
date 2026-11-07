@@ -84,9 +84,13 @@ function idsConComentarioPendiente(evidencias, borradores) {
 // fila guarda el id_tecnico del técnico del servicio, así que en la sección de
 // Coordinación mostrarlo atribuiría la foto a quien no la tomó. Si la evidencia
 // se cargó sin técnico asignado, el autor es el usuario que la subió.
+//
+// Con `seleccionando` (borrado masivo) toda la miniatura marca o desmarca la
+// foto en vez de abrirla, y se oculta la ✕ para no borrar una por error.
 function EvidenciaFotoCard({
   ev, puedeGestionar, esMultidia, dias, filePreview, onEliminar, autor,
-  comentario, cambiado, guardando, onCambiarComentario, onDescartarComentario, onGuardarComentario
+  comentario, cambiado, guardando, onCambiarComentario, onDescartarComentario, onGuardarComentario,
+  seleccionando, seleccionada, onAlternarSeleccion
 }) {
   // Si el archivo no se puede descargar, el navegador pinta el texto alternativo
   // —que aquí es la descripción entera— derramado por toda la miniatura, con el
@@ -101,7 +105,7 @@ function EvidenciaFotoCard({
   const diaEv = esMultidia && ev.id_dia ? dias.find(x => x.id === ev.id_dia) : null;
 
   return (
-    <div className="rounded-lg ring-1 ring-slate-100 overflow-hidden bg-white text-sm">
+    <div className={`rounded-lg overflow-hidden bg-white text-sm ${seleccionada ? 'ring-2 ring-rose-500' : 'ring-1 ring-slate-100'}`}>
       <div className="relative aspect-square bg-slate-50">
         {url && esImagen && !imagenRota ? (
           <button type="button" onClick={() => filePreview.open(ev.archivo)} className="block w-full h-full overflow-hidden">
@@ -132,7 +136,17 @@ function EvidenciaFotoCard({
         ) : (
           <div className="w-full h-full grid place-items-center text-xs text-slate-400">Sin archivo</div>
         )}
-        {puedeGestionar && (
+        {seleccionando && (
+          <button type="button" onClick={() => onAlternarSeleccion(ev.id)} aria-pressed={!!seleccionada}
+                  aria-label={seleccionada ? 'Quitar de la selección' : 'Seleccionar'}
+                  className={`absolute inset-0 transition ${seleccionada ? 'bg-rose-600/25' : 'hover:bg-black/10'}`}>
+            <span className={`absolute top-1.5 left-1.5 h-6 w-6 rounded-md grid place-items-center shadow ring-1
+              ${seleccionada ? 'bg-rose-600 ring-rose-600 text-white' : 'bg-white/90 ring-slate-300 text-transparent'}`}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            </span>
+          </button>
+        )}
+        {puedeGestionar && !seleccionando && (
           <button onClick={() => onEliminar(ev.id)}
                   className="absolute top-1 right-1 h-7 w-7 rounded-full bg-rose-600/90 text-white text-xs grid place-items-center hover:bg-rose-700 shadow"
                   title="Eliminar foto">
@@ -284,12 +298,19 @@ export default function ServicioDetalle() {
   // error se queda a la vista en la seccion donde ocurrio hasta que se descarta.
   const [momentoCarga, setMomentoCarga] = useState(null);
   const [subiendoMomento, setSubiendoMomento] = useState(null); // 'Antes' | 'Despues' | null (sección que está subiendo fotos)
+  // Arrastrar y soltar (escritorio): sección sobre la que se están arrastrando
+  // archivos, para resaltarla como destino.
+  const [arrastrandoSobre, setArrastrandoSobre] = useState(null);
   // Comentarios de evidencias escritos y aún no guardados: { [idEvidencia]: texto }.
   // Viven en la página y no en cada tarjeta: guardar un comentario, subir otra
   // foto o eliminar una recargan el servicio, y con el texto dentro de la
   // tarjeta se perdían los comentarios que se estaban escribiendo en las demás.
   const [borradoresComentario, setBorradoresComentario] = useState({});
   const [guardandoComentario, setGuardandoComentario] = useState({}); // { [idEvidencia]: true }
+  // Borrado masivo de evidencias: la sección que está en modo selección y las
+  // fotos marcadas en ella ({ seccion, ids }), o null. Una sección a la vez.
+  const [seleccionEvidencias, setSeleccionEvidencias] = useState(null);
+  const [eliminandoSeleccion, setEliminandoSeleccion] = useState(false);
   const [guardandoFinalizar, setGuardandoFinalizar] = useState(false);
   const filePreview = useFilePreview();
   const [entregaForm, setEntregaForm] = useState(() => entregaFormInicial());
@@ -342,6 +363,7 @@ export default function ServicioDetalle() {
     tecnicosService.list().then(setTecnicos);
     // Los comentarios a medio escribir son de las fotos de ESTE servicio.
     setBorradoresComentario({});
+    setSeleccionEvidencias(null);
   }, [id]);
 
   // Recargar o cerrar la pestaña con comentarios sin guardar los perdería: el
@@ -732,11 +754,11 @@ export default function ServicioDetalle() {
   // "Coordinacion"): sube cada archivo y crea su evidencia con ese momento. El
   // comentario se registra luego, ya en la tarjeta (guardarComentarioEvidencia).
   // El permiso de cada sección lo decide quien renderiza el botón, y lo vuelve a
-  // comprobar el backend.
-  const agregarFotosMomento = async (e, momento) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    if (files.length === 0) return;
+  // comprobar el backend. Recibe la lista de archivos: llega igual de un
+  // <input multiple> que de soltarlos sobre la galería.
+  const subirArchivosMomento = async (fileList, momento) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0 || subiendoMomento) return;
     setSubiendoMomento(momento);
     setMomentoCarga(momento);
     try {
@@ -761,6 +783,11 @@ export default function ServicioDetalle() {
     } finally {
       setSubiendoMomento(null);
     }
+  };
+  const agregarFotosMomento = (e, momento) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    subirArchivosMomento(files, momento);
   };
 
   // Comentarios de las fotos (ver `borradoresComentario`). Un borrador igual a
@@ -820,10 +847,10 @@ export default function ServicioDetalle() {
       : `${fallidos.length === 1 ? 'No se guardó el comentario' : `No se guardaron los ${fallidos.length} comentarios`}: ${motivo}`);
   };
 
+  // Quién puede y hasta cuándo lo decide el backend (misma regla que el borrado
+  // masivo): Coordinación y Administración aún corrigen un servicio
+  // «Finalizado por técnico»; al técnico ya no se le muestra la ✕.
   const eliminarEvidencia = async (idEvidencia) => {
-    if (estaServicioFinalizado(s.estado_servicio)) {
-      return toast.error(`El servicio está ${s.estado_servicio}: no se puede eliminar evidencias`);
-    }
     if (!confirm('¿Eliminar esta evidencia?')) return;
     try {
       await evidenciasGuiasService.eliminarEvidencia(idEvidencia);
@@ -831,6 +858,37 @@ export default function ServicioDetalle() {
       descartarComentarioEvidencia(idEvidencia);
       cargar();
     } catch (err) { toast.error(err.response?.data?.error || 'Error'); }
+  };
+
+  // Borrado masivo: se marcan las fotos de una sección y se eliminan con una
+  // sola confirmación, en vez de una ✕ y un aviso por foto.
+  const alternarSeleccionEvidencia = (idEvidencia) => {
+    setSeleccionEvidencias(prev => prev && ({
+      ...prev,
+      ids: prev.ids.includes(idEvidencia) ? prev.ids.filter(x => x !== idEvidencia) : [...prev.ids, idEvidencia]
+    }));
+  };
+
+  const eliminarEvidenciasSeleccionadas = async (ids) => {
+    if (!ids.length || eliminandoSeleccion) return;
+    if (!confirm(ids.length === 1
+      ? '¿Eliminar la evidencia seleccionada?'
+      : `¿Eliminar las ${ids.length} evidencias seleccionadas?`)) return;
+    setEliminandoSeleccion(true);
+    try {
+      // Todo o nada (lo garantiza el backend). No se recarga el servicio: la
+      // página no salta al principio y los comentarios a medio escribir en las
+      // demás fotos siguen en pantalla.
+      await evidenciasGuiasService.eliminarEvidencias(id, ids);
+      setS(prev => ({ ...prev, evidencias: (prev.evidencias || []).filter(ev => !ids.includes(ev.id)) }));
+      setBorradoresComentario(prev => ids.reduce((acc, idEv) => sinClave(acc, idEv), prev));
+      setSeleccionEvidencias(null);
+      toast.success(ids.length === 1 ? 'Evidencia eliminada' : `${ids.length} evidencias eliminadas`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error al eliminar las evidencias');
+    } finally {
+      setEliminandoSeleccion(false);
+    }
   };
 
   const cancelar = async () => {
@@ -1690,6 +1748,17 @@ export default function ServicioDetalle() {
           // Comentarios escritos en esta sección y aún no guardados.
           const pendientesSec = puedeGestionar ? idsConComentarioPendiente(sec.lista, borradoresComentario) : [];
           const guardandoSec = pendientesSec.some(idEv => guardandoComentario[idEv]);
+          // Borrado masivo en esta sección. Se cuentan solo las marcadas que
+          // siguen en la galería (una recarga pudo quitar alguna).
+          const seleccionandoEsta = puedeGestionar && seleccionEvidencias?.seccion === sec.key;
+          const idsSel = seleccionandoEsta
+            ? seleccionEvidencias.ids.filter(idEv => sec.lista.some(ev => ev.id === idEv))
+            : [];
+          const todasSel = sec.lista.length > 0 && idsSel.length === sec.lista.length;
+          // Soltar archivos sobre la galería los sube a esta sección.
+          const puedeSoltar = puedeGestionar && !seleccionandoEsta;
+          const soltandoAqui = puedeSoltar && arrastrandoSobre === sec.key;
+          const conArchivos = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
           return (
             // Las evidencias son el trabajo del técnico en obra: abiertas en
             // móvil, con el número de fotos visible aunque se plieguen.
@@ -1708,7 +1777,7 @@ export default function ServicioDetalle() {
                   )}
                 </>
               )}
-              acciones={puedeGestionar && (
+              acciones={puedeGestionar && !seleccionandoEsta && (
                 <>
                   <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
                     📷 Tomar foto
@@ -1718,14 +1787,50 @@ export default function ServicioDetalle() {
                     🎥 Grabar video
                     <input type="file" className="hidden" accept="video/*" capture="environment" onChange={e => agregarFotosMomento(e, sec.key)} />
                   </label>
+                  {/* Carga masiva desde la galería: sin `capture`, el teléfono
+                      abre el selector de fotos con selección múltiple (la
+                      cámara solo devuelve una). */}
+                  <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
+                    🖼️ Subir fotos y videos
+                    <input type="file" className="hidden" accept="image/*,video/*" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
+                  </label>
                   {/* Archivos de cualquier tipo, varios a la vez y sin tope de
                       peso: la evidencia de obra no siempre cabe en una foto. */}
                   <label className={`btn-secondary cursor-pointer text-xs ${subiendoEsta ? 'opacity-50 pointer-events-none' : ''}`}>
                     📎 Adjuntar archivos
                     <input type="file" className="hidden" multiple onChange={e => agregarFotosMomento(e, sec.key)} />
                   </label>
+                  {sec.lista.length > 0 && (
+                    <button type="button" className="btn-secondary text-xs" disabled={subiendoEsta}
+                            onClick={() => setSeleccionEvidencias({ seccion: sec.key, ids: [] })}>
+                      🗑️ Eliminar varias
+                    </button>
+                  )}
                 </>
               )}>
+              <div
+                onDragOver={puedeSoltar ? (e => {
+                  if (!conArchivos(e)) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  if (arrastrandoSobre !== sec.key) setArrastrandoSobre(sec.key);
+                }) : undefined}
+                onDragLeave={puedeSoltar ? (e => {
+                  if (!e.currentTarget.contains(e.relatedTarget)) setArrastrandoSobre(null);
+                }) : undefined}
+                onDrop={puedeSoltar ? (e => {
+                  if (!conArchivos(e)) return;
+                  e.preventDefault();
+                  setArrastrandoSobre(null);
+                  if (subiendoMomento) return toast.warn('Espera a que termine la carga en curso');
+                  subirArchivosMomento(e.dataTransfer.files, sec.key);
+                }) : undefined}
+                className={`relative rounded-lg transition ${soltandoAqui ? 'min-h-[8rem] ring-2 ring-brand-400 ring-offset-4 bg-brand-50/60' : ''}`}>
+                {soltandoAqui && (
+                  <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-brand-50/85 text-sm font-medium text-brand-800">
+                    Suelta los archivos para subirlos a «{sec.titulo}»
+                  </div>
+                )}
                 {momentoCarga === sec.key && cargaMomento.progreso && (
                   <BarraProgresoCarga carga={cargaMomento} className="mb-3" />
                 )}
@@ -1735,9 +1840,38 @@ export default function ServicioDetalle() {
                     {/* En la sección de Coordinación se explica de quién es, para
                         que quien no ve los botones sepa que no es un fallo. */}
                     {sec.ayuda && <span className="block mt-1 text-xs text-slate-400">{sec.ayuda}</span>}
+                    {puedeSoltar && (
+                      <span className="hidden lg:block mt-1 text-xs text-slate-400">
+                        También puedes arrastrar fotos y videos hasta aquí.
+                      </span>
+                    )}
                   </p>
                 ) : (
                   <>
+                  {/* Barra del borrado masivo: fija bajo la cabecera de la app
+                      mientras la galería está a la vista, para no perderla al
+                      bajar marcando fotos. */}
+                  {seleccionandoEsta && (
+                    <div className="sticky top-16 z-10 mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-rose-50 ring-1 ring-rose-200 px-3 py-2 shadow-sm">
+                      <span className="mr-auto text-xs text-rose-800">
+                        {idsSel.length
+                          ? `${idsSel.length} de ${sec.lista.length} seleccionada${idsSel.length === 1 ? '' : 's'}`
+                          : 'Marca las fotos que quieres eliminar'}
+                      </span>
+                      <button type="button" className="text-xs text-slate-600 hover:underline" disabled={eliminandoSeleccion}
+                              onClick={() => setSeleccionEvidencias({ seccion: sec.key, ids: todasSel ? [] : sec.lista.map(ev => ev.id) })}>
+                        {todasSel ? 'Quitar selección' : 'Seleccionar todas'}
+                      </button>
+                      <button type="button" className="btn-secondary text-xs py-1 px-2" disabled={eliminandoSeleccion}
+                              onClick={() => setSeleccionEvidencias(null)}>
+                        Cancelar
+                      </button>
+                      <button type="button" className="btn-danger text-xs py-1 px-3" disabled={!idsSel.length || eliminandoSeleccion}
+                              onClick={() => eliminarEvidenciasSeleccionadas(idsSel)}>
+                        {eliminandoSeleccion ? 'Eliminando…' : `Eliminar${idsSel.length ? ` (${idsSel.length})` : ''}`}
+                      </button>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {sec.lista.map(ev => (
                       <EvidenciaFotoCard
@@ -1755,6 +1889,9 @@ export default function ServicioDetalle() {
                         onCambiarComentario={cambiarComentarioEvidencia}
                         onDescartarComentario={descartarComentarioEvidencia}
                         onGuardarComentario={guardarComentarioEvidencia}
+                        seleccionando={seleccionandoEsta}
+                        seleccionada={idsSel.includes(ev.id)}
+                        onAlternarSeleccion={alternarSeleccionEvidencia}
                       />
                     ))}
                   </div>
@@ -1775,6 +1912,7 @@ export default function ServicioDetalle() {
                   )}
                   </>
                 )}
+              </div>
             </SeccionColapsable>
           );
         })}

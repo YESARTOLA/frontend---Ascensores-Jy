@@ -74,6 +74,7 @@ export default function Leads() {
   const [ascForm, setAscForm] = useState(ascensorFormInicial);
   // Catálogos que solo usa el wizard (se cargan al abrir la conversión).
   const [catalogosConv, setCatalogosConv] = useState(null);
+  const [exportando, setExportando] = useState(false);
   const toast = useToast();
   const cargaCot = useCargaArchivos(); // PDF de la cotización del lead
   const navigate = useNavigate();
@@ -362,6 +363,37 @@ export default function Leads() {
     } finally { setSubiendoCot(false); }
   };
 
+  // Excel del listado con los MISMOS filtros activos (pestaña, búsqueda,
+  // vendedora, ubicación y referencia de pago). Lo genera el backend con el
+  // mismo where y alcance que la tabla y trae el conjunto completo, sin paginar.
+  const exportarExcel = async () => {
+    if (exportando) return;
+    setExportando(true);
+    try {
+      const blob = await leadsService.exportar(filtros).then(r => r.data);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `leads-${hoyISO()}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('Exportación XLSX lista');
+    } catch (err) {
+      // Con responseType 'blob' el error del backend también llega como blob.
+      let msg = 'Error al exportar';
+      if (err.response?.data instanceof Blob) {
+        try { msg = JSON.parse(await err.response.data.text()).error || msg; } catch {}
+      } else if (err.response?.data?.error) {
+        msg = err.response.data.error;
+      }
+      toast.error(msg);
+    } finally {
+      setExportando(false);
+    }
+  };
+
   const descartar = async () => {
     if (!motivoDescarte.trim()) { toast.error('El motivo de descarte es obligatorio'); return; }
     try {
@@ -375,7 +407,15 @@ export default function Leads() {
       <PageHeader
         title={esVendedora ? 'Mis leads' : 'Leads'}
         subtitle={esVendedora ? `${total} lead(s) asignado(s)` : `${total} lead(s)`}
-        actions={puedeAltaLead && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo lead</button>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <button onClick={exportarExcel} disabled={exportando || total === 0} className="btn-ghost"
+              title="Descarga en Excel todos los leads que coinciden con los filtros activos">
+              {exportando ? 'Generando…' : 'Exportar Excel'}
+            </button>
+            {puedeAltaLead && <button onClick={abrirNuevo} className="btn-primary">+ Nuevo lead</button>}
+          </div>
+        }
       />
 
       <PadreTabs

@@ -125,7 +125,9 @@ export default function Cotizaciones() {
   const [empresas, setEmpresas] = useState([]);
   const [igvTasa, setIgvTasa] = useState(0.18);
   // Filtros persistidos: siguen activos al abrir una cotización y volver.
-  const [filtros, setFiltros] = usePersistentState('cotizaciones:filtros', { q: '', estado_global: '', id_cliente: '', id_ascensor: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
+  // `numero`: N.º de cotización; el backend lo compara exacto contra el
+  // correlativo ("393" → COT-AAAA-000393), ver utils/codigoCotizacion.js.
+  const [filtros, setFiltros] = usePersistentState('cotizaciones:filtros', { q: '', numero: '', estado_global: '', id_cliente: '', id_ascensor: '', id_tipo_servicio: '', desde: '', hasta: '', incluir_anuladas: '' });
   // Estados posibles según el backend (SSoT). Se cargan una vez al montar.
   const [estadosGlobales, setEstadosGlobales] = useState([]);
   // Filtros "virtuales" (p.ej. 'Aprobadas' = todas las aceptadas, incluidas las
@@ -323,7 +325,7 @@ export default function Cotizaciones() {
   }, [open, form.id_empresa_emisora, empresas]);
 
   // Excel del listado con los MISMOS filtros activos (pestaña de tipo, búsqueda,
-  // estado, cliente, ascensor, rango y "Mostrar anuladas"). Lo genera el backend
+  // N.º de cotización, estado, cliente, ascensor, rango y "Mostrar anuladas"). Lo genera el backend
   // con el mismo where que la tabla y trae el conjunto completo, sin paginar.
   const exportarExcel = async () => {
     if (exportando) return;
@@ -659,6 +661,9 @@ export default function Cotizaciones() {
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input col-span-2" placeholder="Buscar por código, edificio/obra, cliente, tipo de ascensor o servicio…" value={filtros.q}
             onChange={e => setFiltros(f => ({ ...f, q: e.target.value }))} />
+          <input className="input" placeholder="N.º de cotización…"
+            title="Número de la cotización: 393, 2026-393 o COT-2026-000393"
+            value={filtros.numero} onChange={e => setFiltros(f => ({ ...f, numero: e.target.value }))} />
           <select className="select" value={filtros.estado_global} onChange={e => setFiltros(f => ({ ...f, estado_global: e.target.value }))}>
             <option value="">Todos los estados</option>
             {estadosGlobales.flatMap(s => [
