@@ -12,8 +12,8 @@ import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoned
 import OtModal from '../components/common/OtModal.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
 import { useToast } from '../components/common/Toast.jsx';
-import ArchivoAdjunto from '../components/common/ArchivoAdjunto.jsx';
-import { DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
+import { ArchivosFacturaBorrador, DocumentosAdicionalesBorrador, aPayloadDocumentos, idsArchivosFactura } from '../components/facturas/DocumentosFactura.jsx';
+import { CampoNumerosOperacion, limpiarNumerosOperacion } from '../components/facturas/NumerosOperacion.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { useMonedas } from '../hooks/useMonedas.js';
@@ -333,11 +333,11 @@ export default function Contabilidad() {
   const [facturando, setFacturando] = useState(null); // fila en el modal | null
   const [factura, setFactura] = useState({
     numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo,
-    fecha_emision: hoyISO(), monto: '', id_archivo: null, archivo: null, documentos: []
+    fecha_emision: hoyISO(), monto: '', archivos: [], numeros_operacion: [''], documentos: []
   });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
-  const cargaFactura = useCargaArchivos();
+  const cargaFactura = useCargaArchivos();     // archivos de la factura (comprobante)
   const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
   // cabecera del export.
@@ -446,8 +446,8 @@ export default function Contabilidad() {
       // Lo que falta facturar: el total si aún no hay comprobante, o el saldo
       // tras una factura parcial.
       monto: situacionGeneral(r).restante.toFixed(2),
-      id_archivo: null,
-      archivo: null,
+      archivos: [],
+      numeros_operacion: [''],
       documentos: []
     });
     setFacturando(r);
@@ -456,19 +456,6 @@ export default function Contabilidad() {
   const cerrarFacturar = () => {
     if (guardandoFactura) return;
     setFacturando(null);
-  };
-
-  const subirArchivoFactura = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const r = await cargaFactura.subirUno(file, 'facturas');
-      setFactura(f => ({ ...f, id_archivo: r.id, archivo: r }));
-      toast.success('Archivo cargado');
-    } catch (err) {
-      if (!err?.cancelado) toast.error('Error subiendo el archivo');
-    }
   };
 
   const emitirFactura = async () => {
@@ -492,7 +479,8 @@ export default function Contabilidad() {
         tipo_comprobante: factura.tipo_comprobante,
         fecha_emision: factura.fecha_emision,
         monto,
-        id_archivo: factura.id_archivo,
+        archivos: idsArchivosFactura(factura.archivos),
+        numeros_operacion: limpiarNumerosOperacion(factura.numeros_operacion),
         documentos: aPayloadDocumentos(factura.documentos)
       });
       toast.success(`Factura ${factura.numero_factura.trim()} emitida`);
@@ -886,15 +874,15 @@ export default function Contabilidad() {
                 después con otro comprobante; nunca excederlo.
               </p>
             </div>
-            <div>
-              <label className="label">Archivo del comprobante</label>
-              <ArchivoAdjunto
-                archivo={factura.archivo}
-                onChange={subirArchivoFactura}
-                onQuitar={() => setFactura(f => ({ ...f, id_archivo: null, archivo: null }))}
-                carga={cargaFactura}
-              />
-            </div>
+            <CampoNumerosOperacion
+              value={factura.numeros_operacion}
+              onChange={numeros_operacion => setFactura(f => ({ ...f, numeros_operacion }))}
+            />
+            <ArchivosFacturaBorrador
+              value={factura.archivos}
+              setValue={fn => setFactura(f => ({ ...f, archivos: fn(f.archivos) }))}
+              carga={cargaFactura}
+            />
             <DocumentosAdicionalesBorrador
               value={factura.documentos}
               onChange={documentos => setFactura(f => ({ ...f, documentos }))}

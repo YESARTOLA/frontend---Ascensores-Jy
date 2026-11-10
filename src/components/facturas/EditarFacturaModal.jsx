@@ -9,9 +9,11 @@ import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { AgregarDocumentoFactura } from './DocumentosFactura.jsx';
 import { formatFecha, formatFechaHora, formatMonto } from '../../utils/formatters.js';
 import { TIPOS_COMPROBANTE, ejemploNumeroComprobante } from '../../utils/catalogosComprobante.js';
+import { CampoNumerosOperacion, limpiarNumerosOperacion, numerosOperacionForm } from './NumerosOperacion.jsx';
 import {
   TIPOS_DOCUMENTO_FACTURA,
   TIPO_DOCUMENTO_FACTURA_OTRO,
+  esArchivoDeComprobante,
   etiquetaTipoDocumentoFactura
 } from '../../utils/catalogosDocumentoFactura.js';
 import { ESTADO_FACTURA_ANULADA, ESTADO_FACTURA_EMITIDA, ESTADO_FACTURA_ENVIADA } from '../../utils/estadoFactura.js';
@@ -19,21 +21,31 @@ import { ESTADO_FACTURA_ANULADA, ESTADO_FACTURA_EMITIDA, ESTADO_FACTURA_ENVIADA 
 // Estados que se eligen al editar. Anular tiene su propia acción (pide motivo).
 const ESTADOS_EDITABLES = [ESTADO_FACTURA_EMITIDA, ESTADO_FACTURA_ENVIADA];
 
-// Datos de la factura → valores del formulario (todo como texto, para comparar).
+// Datos de la factura → valores del formulario (todo como texto, para comparar;
+// los N° de operación como lista de textos).
 const formDesde = (f) => ({
   tipo_comprobante: f.tipo_comprobante || TIPOS_COMPROBANTE[0].codigo,
   numero_factura: f.numero_factura || '',
   fecha_emision: f.fecha_emision ? String(f.fecha_emision).slice(0, 10) : '',
   monto: f.monto != null ? Number(f.monto).toFixed(2) : '',
+  numeros_operacion: numerosOperacionForm(f.numeros_operacion),
   id_cuota: f.id_cuota ? String(f.id_cuota) : '',
   estado_factura: f.estado_factura || ESTADO_FACTURA_EMITIDA
 });
 
+// ¿El valor del formulario cambió? Los N° de operación se comparan ya limpios:
+// una fila vacía de más no es un cambio.
+const mismoValor = (campo, a, b) => (campo === 'numeros_operacion'
+  ? JSON.stringify(limpiarNumerosOperacion(a)) === JSON.stringify(limpiarNumerosOperacion(b))
+  : a === b);
+
 /**
  * Edición TOTAL de una factura ya registrada:
- *  - Datos: tipo de comprobante, número, fecha de emisión, monto, cobertura
- *    (general o una cuota) y estado. Se guardan juntos con «Guardar cambios».
- *  - Comprobante: adjuntar, reemplazar o quitar el archivo.
+ *  - Datos: tipo de comprobante, número, fecha de emisión, monto, N° de
+ *    operación (varios), cobertura (general o una cuota) y estado. Se guardan
+ *    juntos con «Guardar cambios».
+ *  - Archivos de la factura (el comprobante, en tantos archivos como haga
+ *    falta): agregar varios a la vez, reemplazar o quitar cada uno.
  *  - Documentos adicionales (constancia de detracción, de pago, XML/CDR…):
  *    agregar, cambiar tipo y descripción, reemplazar el archivo o quitarlos.
  *    Cada acción sobre un archivo se guarda en el momento.
@@ -58,8 +70,9 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
   const [max, setMax] = useState(null);
   const [docOcupado, setDocOcupado] = useState(null); // id del documento con una acción en curso
   const carga = useCargaArchivos();             // documentos nuevos
-  const cargaComprobante = useCargaArchivos();  // comprobante
+  const cargaComprobante = useCargaArchivos();  // archivos de la factura
   const cargaReemplazo = useCargaArchivos();    // archivo nuevo de un documento
+  const cargaReemplazoComprobante = useCargaArchivos(); // archivo nuevo del comprobante
   const inputComprobanteRef = useRef(null);
 
   const aplicarDocumentos = (r) => {
@@ -94,10 +107,11 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
     if (!open) { setCtx(null); setForm(null); }
   }, [open]);
 
-  const ocupado = guardando || carga.subiendo || cargaComprobante.subiendo || cargaReemplazo.subiendo || docOcupado != null;
+  const ocupado = guardando || carga.subiendo || cargaComprobante.subiendo || cargaReemplazo.subiendo
+    || cargaReemplazoComprobante.subiendo || docOcupado != null;
   const original = ctx ? formDesde(ctx.factura) : null;
   const cambios = form && original
-    ? Object.fromEntries(Object.entries(form).filter(([k, v]) => v !== original[k]))
+    ? Object.fromEntries(Object.entries(form).filter(([k, v]) => !mismoValor(k, v, original[k])))
     : {};
   const hayCambios = Object.keys(cambios).length > 0;
   const anulada = ctx?.factura.estado_factura === ESTADO_FACTURA_ANULADA;
@@ -109,6 +123,11 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
   const facturaDeCuota = (idCuota) => otras.find(f => f.id_cuota === idCuota);
   const cuotaElegida = cuotas.find(c => String(c.id) === form?.id_cuota) || null;
   const alTope = max != null && documentos.length >= max;
+  // El comprobante en varios archivos: el principal y los demás (documentos de
+  // tipo 'Comprobante'). El resto son los documentos adicionales.
+  const extrasComprobante = documentos.filter(esArchivoDeComprobante);
+  const adicionales = documentos.filter(d => !esArchivoDeComprobante(d));
+  const totalArchivosFactura = (comprobante ? 1 : 0) + extrasComprobante.length;
 
   const setCampo = (k, v) => setForm(f => ({ ...f, [k]: v }));
   // Factura de cuota: su monto es el de la cuota (regla del backend).
@@ -132,6 +151,7 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
     if (form.monto === '' || !(Number(form.monto) >= 0)) return toast.error('Monto inválido');
     const payload = { ...cambios };
     if ('id_cuota' in payload) payload.id_cuota = payload.id_cuota ? Number(payload.id_cuota) : null;
+    if ('numeros_operacion' in payload) payload.numeros_operacion = limpiarNumerosOperacion(payload.numeros_operacion);
     setGuardando(true);
     try {
       await facturasService.update(idFactura, payload);
@@ -148,32 +168,57 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
     }
   };
 
-  // ---- Comprobante ---------------------------------------------------------
-  const subirComprobante = async (e) => {
-    const file = e.target.files?.[0];
+  // ---- Archivos de la factura (comprobante) --------------------------------
+  // Agrega varios a la vez; si la factura no tenía, el primero pasa a ser el
+  // principal (lo resuelve el backend).
+  // Cada archivo se vincula en cuanto termina de subir: si la tanda se corta a
+  // medias, lo ya subido queda guardado en la factura.
+  const agregarArchivosFactura = async (e) => {
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
-    if (comprobante && !confirm(`Se reemplazará el comprobante «${comprobante.nombre_original || 'actual'}». El archivo anterior se eliminará. ¿Continuar?`)) return;
+    if (files.length === 0) return;
+    let agregados = 0;
     try {
-      const archivo = await cargaComprobante.subirUno(file, 'facturas');
-      aplicarDocumentos(await facturasService.adjuntarComprobante(idFactura, archivo.id));
-      toast.success(comprobante ? 'Comprobante reemplazado' : 'Comprobante adjuntado');
-      avisarCambio();
+      await cargaComprobante.subirVarios(files, 'facturas', {
+        onArchivoSubido: async (archivo) => {
+          aplicarDocumentos(await facturasService.agregarComprobantes(idFactura, [archivo.id]));
+          agregados++;
+        }
+      });
+      toast.success(agregados === 1 ? 'Archivo agregado' : `${agregados} archivos agregados`);
     } catch (err) {
-      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al subir el comprobante');
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al subir los archivos');
+    } finally {
+      if (agregados > 0) avisarCambio();
     }
   };
 
+  const reemplazarComprobante = async (file) => {
+    if (!confirm(`Se reemplazará el archivo «${comprobante?.nombre_original || 'actual'}». El anterior se eliminará. ¿Continuar?`)) return;
+    setDocOcupado('comprobante');
+    try {
+      const archivo = await cargaReemplazoComprobante.subirUno(file, 'facturas');
+      aplicarDocumentos(await facturasService.adjuntarComprobante(idFactura, archivo.id));
+      toast.success('Archivo reemplazado');
+      avisarCambio();
+    } catch (err) {
+      if (!err?.cancelado) toast.error(err.response?.data?.error || 'Error al reemplazar el archivo');
+    } finally {
+      setDocOcupado(null);
+    }
+  };
+
+  // Si hay más archivos, el siguiente pasa a ser el principal (backend).
   const quitarComprobante = async () => {
     if (!comprobante) return;
-    if (!confirm(`¿Quitar el comprobante «${comprobante.nombre_original || ''}»? El archivo se eliminará.`)) return;
+    if (!confirm(`¿Quitar el archivo «${comprobante.nombre_original || ''}» de la factura? El archivo se eliminará.`)) return;
     setDocOcupado('comprobante');
     try {
       aplicarDocumentos(await facturasService.quitarComprobante(idFactura));
-      toast.success('Comprobante quitado');
+      toast.success('Archivo quitado');
       avisarCambio();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Error al quitar el comprobante');
+      toast.error(err.response?.data?.error || 'Error al quitar el archivo');
     } finally {
       setDocOcupado(null);
     }
@@ -207,11 +252,12 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
     }
   };
 
-  const reemplazarArchivoDocumento = async (doc, file) => {
+  // `cargaUsada`: la barra de progreso de la sección donde está el documento.
+  const reemplazarArchivoDocumento = async (doc, file, cargaUsada = cargaReemplazo) => {
     if (!confirm(`Se reemplazará el archivo «${doc.archivo?.nombre_original || doc.tipo_documento}». El anterior se eliminará. ¿Continuar?`)) return;
     setDocOcupado(doc.id);
     try {
-      const archivo = await cargaReemplazo.subirUno(file, 'facturas');
+      const archivo = await cargaUsada.subirUno(file, 'facturas');
       aplicarDocumentos(await facturasService.editarDocumento(idFactura, doc.id, { id_archivo: archivo.id }));
       toast.success('Archivo reemplazado');
       avisarCambio();
@@ -223,7 +269,8 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
   };
 
   const quitarDocumento = async (doc) => {
-    if (!confirm(`¿Quitar el documento «${doc.archivo?.nombre_original || doc.tipo_documento}» de la factura?`)) return;
+    const que = esArchivoDeComprobante(doc) ? 'el archivo' : 'el documento';
+    if (!confirm(`¿Quitar ${que} «${doc.archivo?.nombre_original || doc.tipo_documento}» de la factura?`)) return;
     setDocOcupado(doc.id);
     try {
       aplicarDocumentos(await facturasService.eliminarDocumento(idFactura, doc.id));
@@ -319,6 +366,13 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
                 {!anulada && otraGeneral && <p className="text-xs text-amber-700 mt-1">Ya hay otra factura general ({otraGeneral.numero_factura}): esta no puede pasar a cubrir una cuota.</p>}
               </div>
               <div className="sm:col-span-2">
+                <CampoNumerosOperacion
+                  value={form.numeros_operacion}
+                  onChange={numeros_operacion => setCampo('numeros_operacion', numeros_operacion)}
+                  disabled={ocupado}
+                />
+              </div>
+              <div className="sm:col-span-2">
                 <label className="label">Monto *</label>
                 <input
                   type="number"
@@ -336,47 +390,67 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
             {hayCambios && <p className="text-xs text-brand-700">Hay cambios sin guardar en los datos.</p>}
           </section>
 
-          <section className="border-t border-slate-100 pt-4">
-            <h4 className="label">Comprobante</h4>
-            <div className="flex flex-wrap items-center gap-3">
-              {comprobante ? (
-                <FileLink archivo={comprobante} className="text-brand-700 hover:underline text-sm truncate max-w-full">
-                  {comprobante.nombre_original || 'Ver comprobante'}
-                </FileLink>
-              ) : (
-                <span className="text-sm text-slate-400">Sin comprobante adjunto</span>
-              )}
-              <input ref={inputComprobanteRef} type="file" className="hidden" onChange={subirComprobante} />
-              <button type="button" className="btn-secondary text-xs" onClick={() => inputComprobanteRef.current?.click()} disabled={ocupado}>
-                {cargaComprobante.subiendo ? 'Subiendo…' : comprobante ? 'Reemplazar archivo' : '+ Adjuntar comprobante'}
-              </button>
-              {comprobante && (
-                <button type="button" className="text-rose-600 text-xs hover:underline disabled:opacity-40" onClick={quitarComprobante} disabled={ocupado}>
-                  Quitar
-                </button>
-              )}
+          <section className="border-t border-slate-100 pt-4 space-y-3">
+            <div>
+              <h4 className="label">Archivos de la factura · {totalArchivosFactura}</h4>
+              <p className="text-xs text-slate-500">El comprobante: todos los archivos que necesites (PDF, XML, imagen…).</p>
             </div>
-            <BarraProgresoCarga carga={cargaComprobante} className="mt-2" />
+            {totalArchivosFactura === 0 ? (
+              <p className="text-sm text-slate-400">Sin comprobante adjunto.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200 bg-white">
+                {comprobante && (
+                  <FilaArchivoFactura
+                    archivo={comprobante}
+                    ocupado={ocupado}
+                    onReemplazar={reemplazarComprobante}
+                    onQuitar={quitarComprobante}
+                  />
+                )}
+                {extrasComprobante.map(doc => (
+                  <FilaArchivoFactura
+                    key={doc.id}
+                    archivo={doc.archivo}
+                    ocupado={ocupado}
+                    onReemplazar={file => reemplazarArchivoDocumento(doc, file, cargaReemplazoComprobante)}
+                    onQuitar={() => quitarDocumento(doc)}
+                  />
+                ))}
+              </ul>
+            )}
+            <BarraProgresoCarga carga={cargaComprobante} />
+            <BarraProgresoCarga carga={cargaReemplazoComprobante} />
+            {alTope ? (
+              <p className="text-xs text-amber-700">Límite de {max} archivos por factura alcanzado.</p>
+            ) : (
+              <div>
+                <input ref={inputComprobanteRef} type="file" multiple className="hidden" onChange={agregarArchivosFactura} />
+                <button type="button" className="btn-secondary text-xs" onClick={() => inputComprobanteRef.current?.click()} disabled={ocupado}>
+                  {cargaComprobante.subiendo ? 'Subiendo…' : '+ Adjuntar archivos'}
+                </button>
+                <span className="text-[11px] text-slate-500 ml-2">Puedes elegir varios a la vez.</span>
+              </div>
+            )}
           </section>
 
           <section className="border-t border-slate-100 pt-4 space-y-3">
             <div>
-              <h4 className="label">Documentos adicionales · {documentos.length}</h4>
+              <h4 className="label">Documentos adicionales · {adicionales.length}</h4>
               <p className="text-xs text-slate-500">
                 Constancia de detracción, de retención, de pago, XML/CDR de SUNAT, guía de remisión…
               </p>
             </div>
-            {documentos.length === 0 ? (
+            {adicionales.length === 0 ? (
               <p className="text-sm text-slate-400">Sin documentos adicionales.</p>
             ) : (
               <ul className="divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200 bg-white">
-                {documentos.map(doc => (
+                {adicionales.map(doc => (
                   <DocumentoEditable
                     key={doc.id}
                     doc={doc}
                     ocupado={ocupado}
                     onGuardar={editarDocumento}
-                    onReemplazar={reemplazarArchivoDocumento}
+                    onReemplazar={(d, file) => reemplazarArchivoDocumento(d, file)}
                     onQuitar={quitarDocumento}
                   />
                 ))}
@@ -390,6 +464,35 @@ export default function EditarFacturaModal({ open, onClose, factura, onCambio })
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * Fila de un archivo de la factura (comprobante): el archivo con sus acciones
+ * Reemplazar y Quitar.
+ */
+function FilaArchivoFactura({ archivo, ocupado, onReemplazar, onQuitar }) {
+  const inputRef = useRef(null);
+  const elegirArchivo = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) onReemplazar(file);
+  };
+  return (
+    <li className="px-3 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="min-w-0 flex-1">
+        {archivo
+          ? <FileLink archivo={archivo} className="text-brand-700 hover:underline text-xs truncate block max-w-full text-left">
+              {archivo.nombre_original || 'Ver archivo'}
+            </FileLink>
+          : <span className="text-xs text-slate-400">Archivo no disponible</span>}
+      </div>
+      <div className="flex items-center gap-3 text-xs shrink-0">
+        <button type="button" className="text-brand-700 hover:underline disabled:opacity-40" onClick={() => inputRef.current?.click()} disabled={ocupado}>Reemplazar</button>
+        <button type="button" className="text-rose-600 hover:underline disabled:opacity-40" onClick={onQuitar} disabled={ocupado}>Quitar</button>
+      </div>
+      <input ref={inputRef} type="file" className="hidden" onChange={elegirArchivo} />
+    </li>
   );
 }
 

@@ -6,6 +6,18 @@
  */
 export const TIPO_DOCUMENTO_FACTURA_OTRO = 'Otro';
 
+/**
+ * Archivo adicional del PROPIO comprobante, cuando trae más de uno: el primero
+ * es `factura.archivo` y los demás llegan como documentos con este tipo. La UI
+ * los muestra juntos como «Archivos de la factura»; por eso no figura en el
+ * selector de documentos adicionales (TIPOS_DOCUMENTO_FACTURA).
+ */
+export const TIPO_DOCUMENTO_FACTURA_COMPROBANTE = 'Comprobante';
+
+/** ¿El documento es un archivo más del comprobante? */
+export const esArchivoDeComprobante = (doc) => doc?.tipo_documento === TIPO_DOCUMENTO_FACTURA_COMPROBANTE;
+
+/** Tipos que se eligen para un documento adicional. */
 export const TIPOS_DOCUMENTO_FACTURA = [
   { codigo: 'Constancia de detracción', etiqueta: 'Constancia de detracción', corto: 'Detracción' },
   { codigo: 'Constancia de retención',  etiqueta: 'Constancia de retención',  corto: 'Retención' },
@@ -21,6 +33,7 @@ export const TIPO_DOCUMENTO_FACTURA_INICIAL = TIPOS_DOCUMENTO_FACTURA[0].codigo;
 
 /** Etiqueta legible de un documento ya registrado (tolera códigos fuera del catálogo). */
 export function etiquetaTipoDocumentoFactura(tipo) {
+  if (tipo === TIPO_DOCUMENTO_FACTURA_COMPROBANTE) return 'Comprobante';
   return TIPOS_DOCUMENTO_FACTURA.find(t => t.codigo === tipo)?.etiqueta || tipo || TIPO_DOCUMENTO_FACTURA_OTRO;
 }
 

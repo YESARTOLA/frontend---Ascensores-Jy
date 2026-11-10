@@ -10,7 +10,8 @@ import ArchivoAdjunto from '../components/common/ArchivoAdjunto.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
 import EditarFacturaModal from '../components/facturas/EditarFacturaModal.jsx';
-import { CeldaDocumentosFactura, ChipsDocumentos, DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../components/facturas/DocumentosFactura.jsx';
+import { ArchivosFacturaBorrador, CeldaDocumentosFactura, ChipsDocumentos, DocumentosAdicionalesBorrador, aPayloadDocumentos, idsArchivosFactura } from '../components/facturas/DocumentosFactura.jsx';
+import { CampoNumerosOperacion, ListaNumerosOperacion, limpiarNumerosOperacion } from '../components/facturas/NumerosOperacion.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { badgeEstado, formatFecha, formatFechaHora, formatMonto, hoyISO, addMonthsYMD, toYMDLima } from '../utils/formatters.js';
@@ -46,7 +47,7 @@ export default function CobroDetalle() {
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   // cuotas[i].id presente = blindada (pagada/facturada). Sin id = nueva editable.
   const [cuotas, setCuotas] = useState({ numero_cuotas: 1, fecha_proximo_abono: hoyISO(), cuotas: [] });
-  const [factura, setFactura] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), monto: '', id_archivo: null, documentos: [], modo: 'general', id_cuota: '' });
+  const [factura, setFactura] = useState({ numero_factura: '', tipo_comprobante: TIPOS_COMPROBANTE[0].codigo, fecha_emision: hoyISO(), monto: '', archivos: [], numeros_operacion: [''], documentos: [], modo: 'general', id_cuota: '' });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   // Factura en edición: datos, comprobante y documentos (constancias, XML/CDR…).
   const [facturaEditar, setFacturaEditar] = useState(null);
@@ -55,7 +56,7 @@ export default function CobroDetalle() {
   const cargaDocsAbono = useCargaArchivos();   // documentos adicionales del abono
   const cargaComprobanteEdit = useCargaArchivos(); // comprobante al corregir un abono
   const cargaDocsAbonoEdit = useCargaArchivos();   // documentos adicionales al corregir un abono
-  const cargaFactura = useCargaArchivos();     // archivo del comprobante emitido
+  const cargaFactura = useCargaArchivos();     // archivos del comprobante emitido
   const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   const { esSuperAdmin, esAdmin, esContabilidad } = useAuth();
   const navigate = useNavigate();
@@ -263,18 +264,6 @@ export default function CobroDetalle() {
     catch (err) { toast.error(err.response?.data?.error || 'Error'); }
   };
 
-  const subirArchivoFactura = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const r = await cargaFactura.subirUno(file, 'facturas');
-      setFactura(f => ({ ...f, id_archivo: r.id, archivo: r }));
-      toast.success('Archivo cargado');
-    } catch (err) {
-      if (!err?.cancelado) toast.error('Error subiendo archivo');
-    }
-  };
   const facturasActivas = (data.facturas || []).filter(esFacturaActiva);
   // Cobro de un PLAN de mantenimiento: cada cuota es un MES del plan y se
   // paga una sola vez, por el monto mensual pactado. Su desglose de
@@ -321,8 +310,8 @@ export default function CobroDetalle() {
       monto: modoInicial === 'general'
         ? restanteGeneral.toFixed(2)
         : Number(primeraCuotaLibre?.monto || 0).toFixed(2),
-      id_archivo: null,
-      archivo: null,
+      archivos: [],
+      numeros_operacion: [''],
       documentos: [],
       modo: modoInicial,
       id_cuota: modoInicial === 'por_cuota' ? String(primeraCuotaLibre.id) : ''
@@ -461,7 +450,8 @@ export default function CobroDetalle() {
         tipo_comprobante: factura.tipo_comprobante,
         fecha_emision: factura.fecha_emision,
         monto: factura.monto,
-        id_archivo: factura.id_archivo,
+        archivos: idsArchivosFactura(factura.archivos),
+        numeros_operacion: limpiarNumerosOperacion(factura.numeros_operacion),
         documentos: aPayloadDocumentos(factura.documentos),
         id_cuota: factura.modo === 'por_cuota' ? Number(factura.id_cuota) : null
       };
@@ -757,6 +747,7 @@ export default function CobroDetalle() {
                 <th className="table-th">Emisión</th>
                 <th className="table-th text-right">Monto</th>
                 <th className="table-th">Cobertura</th>
+                <th className="table-th whitespace-nowrap">N° de operación</th>
                 <th className="table-th">Estado</th>
                 <th className="table-th">Documentos</th>
                 <th className="table-th text-right">Acción</th>
@@ -772,6 +763,7 @@ export default function CobroDetalle() {
                         ? <span className="badge-blue">Cuota N° {f.cuota?.numero_cuota ?? '?'}</span>
                         : <span className="badge-violet">General</span>}
                     </td>
+                    <td className="table-td"><ListaNumerosOperacion numeros={f.numeros_operacion} /></td>
                     <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
                     <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaEditar(f)} /></td>
                     <td className="table-td text-right">
@@ -1062,15 +1054,15 @@ export default function CobroDetalle() {
               </p>
             )}
           </div>
-          <div>
-            <label className="label">Archivo del comprobante</label>
-            <ArchivoAdjunto
-              archivo={factura.archivo}
-              onChange={subirArchivoFactura}
-              onQuitar={() => setFactura(f => ({ ...f, id_archivo: null, archivo: null }))}
-              carga={cargaFactura}
-            />
-          </div>
+          <CampoNumerosOperacion
+            value={factura.numeros_operacion}
+            onChange={numeros_operacion => setFactura(f => ({ ...f, numeros_operacion }))}
+          />
+          <ArchivosFacturaBorrador
+            value={factura.archivos}
+            setValue={fn => setFactura(f => ({ ...f, archivos: fn(f.archivos) }))}
+            carga={cargaFactura}
+          />
           <DocumentosAdicionalesBorrador
             value={factura.documentos}
             onChange={documentos => setFactura(f => ({ ...f, documentos }))}

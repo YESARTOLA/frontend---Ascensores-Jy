@@ -8,8 +8,8 @@ import FiltroMoneda, { etiquetaDeMoneda } from '../common/FiltroMoneda.jsx';
 import Modal from '../common/Modal.jsx';
 import Pagination from '../common/Pagination.jsx';
 import { useToast } from '../common/Toast.jsx';
-import ArchivoAdjunto from '../common/ArchivoAdjunto.jsx';
-import { DocumentosAdicionalesBorrador, aPayloadDocumentos } from '../facturas/DocumentosFactura.jsx';
+import { ArchivosFacturaBorrador, DocumentosAdicionalesBorrador, aPayloadDocumentos, idsArchivosFactura } from '../facturas/DocumentosFactura.jsx';
+import { CampoNumerosOperacion, limpiarNumerosOperacion } from '../facturas/NumerosOperacion.jsx';
 import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useMonedas } from '../../hooks/useMonedas.js';
 import { formatFecha, formatFechaHora, formatMonto, hoyISO } from '../../utils/formatters.js';
@@ -106,10 +106,10 @@ export default function CuotasNoFacturadas({
   const [version, setVersion] = useState(0);
   // Facturación directa desde la fila: cuota en curso + estado del formulario.
   const [facturarCuota, setFacturarCuota] = useState(null);
-  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), id_archivo: null, archivo: null, documentos: [] });
+  const [factura, setFactura] = useState({ numero_factura: '', fecha_emision: hoyISO(), archivos: [], numeros_operacion: [''], documentos: [] });
   const [guardandoFactura, setGuardandoFactura] = useState(false);
   const toast = useToast();
-  const cargaFactura = useCargaArchivos();
+  const cargaFactura = useCargaArchivos();     // archivos de la factura (comprobante)
   const cargaDocsFactura = useCargaArchivos(); // documentos adicionales de la factura
   // Catálogo de monedas: alimenta el filtro y nombra la divisa elegida en la
   // cabecera del export.
@@ -210,24 +210,11 @@ export default function CuotasNoFacturadas({
       // Sugerencia por el documento del cliente (RUC → Factura, DNI → Boleta).
       tipo_comprobante: tipoComprobanteSugerido(f.cliente?.tipo_documento),
       fecha_emision: hoyISO(),
-      id_archivo: null,
-      archivo: null,
+      archivos: [],
+      numeros_operacion: [''],
       documentos: []
     });
     setFacturarCuota(f);
-  };
-
-  const subirArchivoFactura = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const r = await cargaFactura.subirUno(file, 'facturas');
-      setFactura(f => ({ ...f, id_archivo: r.id, archivo: r }));
-      toast.success('Archivo cargado');
-    } catch (err) {
-      if (!err?.cancelado) toast.error('Error subiendo archivo');
-    }
   };
 
   // Emite una factura POR CUOTA directamente. El monto lo fija el backend =
@@ -243,7 +230,8 @@ export default function CuotasNoFacturadas({
       fecha_emision: factura.fecha_emision,
       monto: Number(cu.monto),
       id_cuota: cu.id,
-      id_archivo: factura.id_archivo,
+      archivos: idsArchivosFactura(factura.archivos),
+      numeros_operacion: limpiarNumerosOperacion(factura.numeros_operacion),
       documentos: aPayloadDocumentos(factura.documentos)
     };
     if (cu.servicio?.id) payload.id_servicio = cu.servicio.id;
@@ -494,15 +482,15 @@ export default function CuotasNoFacturadas({
               <input className="input bg-slate-100 cursor-not-allowed" value={formatMonto(facturarCuota.monto, facturarCuota.cobro?.moneda)} readOnly />
               <p className="text-xs text-slate-500 mt-1">Fijado por el monto de la cuota.</p>
             </div>
-            <div>
-              <label className="label">Archivo de factura</label>
-              <ArchivoAdjunto
-                archivo={factura.archivo}
-                onChange={subirArchivoFactura}
-                onQuitar={() => setFactura(f => ({ ...f, id_archivo: null, archivo: null }))}
-                carga={cargaFactura}
-              />
-            </div>
+            <CampoNumerosOperacion
+              value={factura.numeros_operacion}
+              onChange={numeros_operacion => setFactura(f => ({ ...f, numeros_operacion }))}
+            />
+            <ArchivosFacturaBorrador
+              value={factura.archivos}
+              setValue={fn => setFactura(f => ({ ...f, archivos: fn(f.archivos) }))}
+              carga={cargaFactura}
+            />
             <DocumentosAdicionalesBorrador
               value={factura.documentos}
               onChange={documentos => setFactura(f => ({ ...f, documentos }))}

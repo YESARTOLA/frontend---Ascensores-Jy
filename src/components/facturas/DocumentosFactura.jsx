@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import BarraProgresoCarga from '../common/BarraProgresoCarga.jsx';
+import CampoArchivosMultiples from '../common/CampoArchivosMultiples.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import { useToast } from '../common/Toast.jsx';
 import { formatFechaHora } from '../../utils/formatters.js';
@@ -8,12 +9,20 @@ import {
   TIPO_DOCUMENTO_FACTURA_INICIAL,
   TIPO_DOCUMENTO_FACTURA_OTRO,
   etiquetaTipoDocumentoFactura,
-  rotuloCortoDocumentoFactura
+  rotuloCortoDocumentoFactura,
+  esArchivoDeComprobante
 } from '../../utils/catalogosDocumentoFactura.js';
 
 /**
- * Piezas para los DOCUMENTOS ADICIONALES de una factura: los que acompañan al
- * comprobante (constancia de detracción, de retención, de pago, XML/CDR…).
+ * Piezas para los ARCHIVOS de una factura:
+ *
+ *  - Los del COMPROBANTE, tantos como hagan falta: el primero es
+ *    `factura.archivo` y los demás llegan en `factura.documentos` con tipo
+ *    'Comprobante' (archivosComprobanteDe). ArchivosFacturaBorrador es su campo
+ *    en el formulario de emisión.
+ *  - Los DOCUMENTOS ADICIONALES, que acompañan al comprobante (constancia de
+ *    detracción, de retención, de pago, XML/CDR…), cada uno con su tipo
+ *    (documentosAdicionalesDe):
  *
  *  - AgregarDocumentoFactura: elige el tipo, sube uno o varios archivos y avisa
  *    al llamador con los registros de tbl_archivos creados.
@@ -135,6 +144,55 @@ export function ListaDocumentosFactura({ documentos, onQuitar, quitandoId = null
   );
 }
 
+/** Archivos del comprobante de una factura guardada (principal primero), sin repetir. */
+export function archivosComprobanteDe(factura) {
+  const vistos = new Set();
+  return [
+    factura?.archivo,
+    ...(factura?.documentos || []).filter(esArchivoDeComprobante).map(d => d.archivo)
+  ].filter(a => a && !vistos.has(a.id) && vistos.add(a.id));
+}
+
+/** Documentos adicionales de una factura guardada (sin los del comprobante). */
+export function documentosAdicionalesDe(factura) {
+  return (factura?.documentos || []).filter(d => !esArchivoDeComprobante(d));
+}
+
+/**
+ * Campo «Archivos de la factura» del formulario de emisión: el comprobante en
+ * tantos archivos como haga falta (PDF, XML, imágenes…), sin límite. Viajan en
+ * el payload como `archivos: [id_archivo…]` (ver `idsArchivosFactura`).
+ *
+ * Props:
+ *   value    — lista [{ id_archivo, archivo }]
+ *   setValue — setter con actualización funcional (lista anterior → nueva): los
+ *              archivos de una tanda entran de a uno mientras se suben
+ *   carga    — instancia de useCargaArchivos del padre
+ */
+export function ArchivosFacturaBorrador({ value = [], setValue, carga }) {
+  return (
+    <div>
+      <label className="label">Archivos de la factura</label>
+      <p className="text-xs text-slate-500 mb-2">
+        El comprobante (PDF, XML, imagen…). Puedes adjuntar todos los archivos que necesites.
+      </p>
+      <CampoArchivosMultiples
+        archivos={value}
+        setArchivos={setValue}
+        carga={carga}
+        carpeta="facturas"
+        singular="archivo"
+        plural="archivos"
+      />
+    </div>
+  );
+}
+
+/** Lista del campo → `archivos` del payload de `facturasService.create`. */
+export function idsArchivosFactura(lista) {
+  return (lista || []).map(a => a.id_archivo).filter(Boolean);
+}
+
 const AYUDA_BORRADOR_FACTURA = 'Opcional. Constancia de detracción, de retención, de pago, XML/CDR… También pueden agregarse después, desde la factura.';
 
 /**
@@ -182,17 +240,18 @@ export function aPayloadDocumentos(borrador) {
 const CHIP = 'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 transition whitespace-nowrap';
 
 /**
- * Todos los documentos de una factura como chips: el comprobante primero
- * ("Factura" / "Boleta") y luego cada documento adicional rotulado por su tipo.
- * Un clic abre la vista previa del archivo. Solo lectura: lo usan las tablas y
- * las fichas (Cliente 360, historial del ascensor).
+ * Todos los documentos de una factura como chips: los archivos del comprobante
+ * primero ("Factura" / "Boleta", numerados si son varios) y luego cada
+ * documento adicional rotulado por su tipo. Un clic abre la vista previa del
+ * archivo. Solo lectura: lo usan las tablas y las fichas (Cliente 360,
+ * historial del ascensor).
  */
 export function ChipsDocumentosFactura({ factura }) {
   return (
     <ChipsDocumentos
-      comprobante={factura.archivo}
+      comprobantes={archivosComprobanteDe(factura)}
       rotuloComprobante={factura.tipo_comprobante || 'Factura'}
-      documentos={factura.documentos}
+      documentos={documentosAdicionalesDe(factura)}
     />
   );
 }
@@ -201,21 +260,26 @@ export function ChipsDocumentosFactura({ factura }) {
  * Comprobante (rotulado con `rotuloComprobante`) + documentos adicionales como
  * chips de vista previa. Base de ChipsDocumentosFactura; también la usan los
  * abonos, cuyo comprobante es el voucher del pago.
+ *
+ * El comprobante llega como un archivo (`comprobante`) o como varios
+ * (`comprobantes`); con varios, cada chip lleva su número.
  */
-export function ChipsDocumentos({ comprobante, rotuloComprobante, documentos }) {
+export function ChipsDocumentos({ comprobante, comprobantes, rotuloComprobante, documentos }) {
   const adicionales = documentos || [];
-  if (!comprobante && adicionales.length === 0) return null;
+  const archivosComp = comprobantes || (comprobante ? [comprobante] : []);
+  if (archivosComp.length === 0 && adicionales.length === 0) return null;
   return (
     <>
-      {comprobante && (
+      {archivosComp.map((a, i) => (
         <FileLink
-          archivo={comprobante}
-          title={`Comprobante · ${comprobante.nombre_original || ''}`}
+          key={`comprobante-${a.id ?? i}`}
+          archivo={a}
+          title={`Comprobante · ${a.nombre_original || ''}`}
           className={`${CHIP} bg-brand-50 text-brand-700 ring-brand-200 hover:bg-brand-100`}
         >
-          {rotuloComprobante}
+          {archivosComp.length > 1 ? `${rotuloComprobante} ${i + 1}` : rotuloComprobante}
         </FileLink>
-      )}
+      ))}
       {adicionales.map(d => d.archivo && (
         <FileLink
           key={d.id}

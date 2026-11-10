@@ -10,7 +10,8 @@ import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoned
 import { FileLink, descargarArchivo } from '../components/common/FilePreview.jsx';
 import Modal from '../components/common/Modal.jsx';
 import EditarFacturaModal from '../components/facturas/EditarFacturaModal.jsx';
-import { CeldaDocumentosFactura, ListaDocumentosFactura } from '../components/facturas/DocumentosFactura.jsx';
+import { CeldaDocumentosFactura, ListaDocumentosFactura, archivosComprobanteDe, documentosAdicionalesDe } from '../components/facturas/DocumentosFactura.jsx';
+import { ListaNumerosOperacion, textoNumerosOperacion } from '../components/facturas/NumerosOperacion.jsx';
 import ClienteAutocomplete from '../components/common/ClienteAutocomplete.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { useAuth } from '../features/auth/AuthContext.jsx';
@@ -135,6 +136,7 @@ const COLUMNAS_EXPORT = [
   { header: 'Moneda', get: f => etiquetaMoneda(monedaDe(f)) },
   { header: 'Monto', align: 'right', get: f => formatMonto(f.monto, monedaDe(f)), num: f => Number(f.monto) },
   { header: 'Cobertura', get: f => (f.id_cuota ? `Cuota N° ${f.cuota?.numero_cuota ?? '?'}` : 'General') },
+  { header: 'N° de operación', get: f => textoNumerosOperacion(f.numeros_operacion) },
   { header: 'Estado', badge: true, get: f => f.estado_factura }
 ];
 
@@ -324,7 +326,7 @@ export default function Facturas() {
       <div className="card mb-4">
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <input className="input lg:col-span-2"
-            placeholder="Buscar por número, RUC/DNI, cliente, edificio o código de servicio…"
+            placeholder="Buscar por número, N° de operación, RUC/DNI, cliente, edificio o código de servicio…"
             value={filtros.q}
             onChange={e => setF('q', e.target.value)} />
           {/* Desplegable buscable de clientes registrados (filtra por nombre,
@@ -406,6 +408,8 @@ export default function Facturas() {
                   <th className="table-th whitespace-nowrap">Tipo de servicio</th>
                   <ThSort label="Monto" {...propsTh('monto', 'right')} />
                   <ThSort label="Cobertura" {...propsTh('cobertura')} />
+                  {/* Lista (un pago, un N°): no ordena. Se busca desde el buscador. */}
+                  <th className="table-th whitespace-nowrap">N° de operación</th>
                   <ThSort label="Estado" {...propsTh('estado_factura')} />
                   <th className="table-th">Documentos</th>
                   <th className="table-th text-right">Acciones</th>
@@ -447,6 +451,7 @@ export default function Facturas() {
                           ? <span className="badge-blue">Cuota N° {f.cuota?.numero_cuota ?? '?'}</span>
                           : <span className="badge-violet">General</span>}
                       </td>
+                      <td className="table-td"><ListaNumerosOperacion numeros={f.numeros_operacion} /></td>
                       <td className="table-td"><span className={badgeEstado(f.estado_factura)}>{f.estado_factura}</span></td>
                       <td className="table-td"><CeldaDocumentosFactura factura={f} onAbrir={() => setFacturaEditar(f)} /></td>
                       <td className="table-td text-right whitespace-nowrap">
@@ -532,17 +537,26 @@ export default function Facturas() {
                 ? <span className="badge-blue">Cuota N° {facturaDetalle.cuota?.numero_cuota ?? '?'}</span>
                 : <span className="badge-violet">General</span>
             } />
-            <Dato label="Comprobante" cols={2} value={
-              facturaDetalle.archivo
-                ? <FileLink archivo={facturaDetalle.archivo} className="text-brand-700 hover:underline">
-                    {facturaDetalle.archivo.nombre_original || 'Ver comprobante'}
-                  </FileLink>
+            <Dato label="N° de operación" cols={2} value={<ListaNumerosOperacion numeros={facturaDetalle.numeros_operacion} className="text-sm" />} />
+            <Dato label={`Archivos de la factura · ${archivosComprobanteDe(facturaDetalle).length}`} cols={2} value={
+              archivosComprobanteDe(facturaDetalle).length
+                ? (
+                  <ul className="space-y-0.5">
+                    {archivosComprobanteDe(facturaDetalle).map(a => (
+                      <li key={a.id}>
+                        <FileLink archivo={a} className="text-brand-700 hover:underline">
+                          {a.nombre_original || 'Ver comprobante'}
+                        </FileLink>
+                      </li>
+                    ))}
+                  </ul>
+                )
                 : <span className="text-slate-400">Sin comprobante adjunto</span>
             } />
             <div className="col-span-2">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                  Documentos adicionales · {facturaDetalle.documentos?.length || 0}
+                  Documentos adicionales · {documentosAdicionalesDe(facturaDetalle).length}
                 </div>
                 <button
                   type="button"
@@ -550,8 +564,8 @@ export default function Facturas() {
                   onClick={() => { setFacturaEditar(facturaDetalle); setFacturaDetalle(null); }}
                 >Editar factura</button>
               </div>
-              {facturaDetalle.documentos?.length
-                ? <ListaDocumentosFactura documentos={facturaDetalle.documentos} />
+              {documentosAdicionalesDe(facturaDetalle).length
+                ? <ListaDocumentosFactura documentos={documentosAdicionalesDe(facturaDetalle)} />
                 : <span className="text-sm text-slate-400">Sin documentos adicionales</span>}
             </div>
             {facturaDetalle.detalle_mensual && (

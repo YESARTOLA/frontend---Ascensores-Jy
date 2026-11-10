@@ -205,6 +205,9 @@ export const facturasService = {
   eliminarDocumento: (id, idDocumento) => api.delete(`/facturas/${id}/documentos/${idDocumento}`).then(r => r.data),
   // Adjunta el comprobante o reemplaza el que ya tiene.
   adjuntarComprobante: (id, id_archivo) => api.patch(`/facturas/${id}/comprobante`, { id_archivo }).then(r => r.data),
+  // Más archivos del comprobante (varios a la vez). Si no tenía, el primero
+  // pasa a ser el principal.
+  agregarComprobantes: (id, archivos) => api.post(`/facturas/${id}/comprobantes`, { archivos }).then(r => r.data),
   quitarComprobante: (id) => api.delete(`/facturas/${id}/comprobante`).then(r => r.data)
 };
 

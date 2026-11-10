@@ -674,6 +674,23 @@ export default function Mantenimientos() {
     ));
   };
 
+  // «Fecha servicio» de una fila del plan: la fecha en que se REALIZÓ (inicio
+  // real, el primer paso a «En curso»), la misma regla que Contabilidad
+  // (backend utils/fechaServicioContable.js). Mientras no arranca, la fecha
+  // programada. La programada de un servicio ya hecho queda en el title.
+  const fechaServicioDeInstancia = (it) => {
+    if (it.fecha_inicio_real) {
+      return {
+        texto: formatFecha(it.fecha_inicio_real),
+        title: it.fecha_programada ? `Programada para el ${formatFecha(it.fecha_programada)}` : undefined
+      };
+    }
+    return {
+      texto: formatFecha(it.fecha_programada),
+      title: it.fecha_programada ? 'Fecha programada: el servicio aún no se inicia' : undefined
+    };
+  };
+
   // --- Monto mensual: el único precio del plan -----------------------------
 
   const iniciarEdicionMonto = () => {
@@ -1630,7 +1647,7 @@ export default function Mantenimientos() {
                           <span className={badgeEstado(it.estado_ejecucion)}>{it.estado_ejecucion}</span>
                         </div>
                         <dl className="mt-2 space-y-1">
-                          <div className="dato-movil"><dt>Programada</dt><dd>{formatFecha(it.fecha_programada)}</dd></div>
+                          <div className="dato-movil"><dt>Fecha servicio</dt><dd>{fechaServicioDeInstancia(it).texto}</dd></div>
                           <div className="dato-movil"><dt>Ascensor</dt><dd>{ascensoresDeInstancia(it)}</dd></div>
                           <div className="dato-movil"><dt>Técnico</dt><dd>{tecnicoDeInstancia(it)}</dd></div>
                           {it.fecha_inicio_real && <div className="dato-movil"><dt>Inicio</dt><dd>{formatFechaHora(it.fecha_inicio_real)}</dd></div>}
@@ -1657,7 +1674,7 @@ export default function Mantenimientos() {
                     <table className="table-base">
                       <thead><tr>
                         <th className="table-th">Servicio</th>
-                        <th className="table-th">Programada</th>
+                        <th className="table-th" title="Fecha en que se realizó el servicio (inicio real); si aún no se inicia, la programada">Fecha servicio</th>
                         <th className="table-th">Ascensor</th>
                         <th className="table-th">Técnico</th>
                         <th className="table-th">Inicio</th>
@@ -1675,7 +1692,7 @@ export default function Mantenimientos() {
                               ) : <span className="text-slate-400">no creado</span>}
                               {it.es_mantenimiento_gratuito && <span className="ml-1 badge-green text-[10px]">Gratis</span>}
                             </td>
-                            <td className="table-td text-xs">{formatFecha(it.fecha_programada)}</td>
+                            <td className="table-td text-xs" title={fechaServicioDeInstancia(it).title}>{fechaServicioDeInstancia(it).texto}</td>
                             <td className="table-td text-xs">{ascensoresDeInstancia(it)}</td>
                             <td className="table-td text-xs">{tecnicoDeInstancia(it)}</td>
                             <td className="table-td text-xs">{formatFechaHora(it.fecha_inicio_real)}</td>
