@@ -24,7 +24,7 @@ import { etiquetaMoneda, FORMATO_EXCEL } from '../utils/excelNumeros.js';
 import CardMetricaDoble from '../components/common/CardMetricaDoble.jsx';
 
 // `desde`/`hasta` = rango de "Fecha comprobante" (emisión); `servicio_*` y
-// `registro_*` = "Fecha servicio" y "Fecha registro" (de la OT) de los
+// `registro_*` = "Fecha servicio" y "Fecha registro" (OT o aprobación del correctivo) de los
 // servicios que cubre la factura.
 const FILTROS_INICIALES = {
   q: '', id_cliente: '', estado_factura: '', tipo_comprobante: '', cobertura: '', tipo_categoria: '',
@@ -392,7 +392,7 @@ export default function Facturas() {
                   {/* Fechas del servicio facturado (mismo criterio que
                       Contabilidad): no son columnas de la factura, por eso no ordenan. */}
                   <th className="table-th whitespace-nowrap" title="Fecha en que se realizó el servicio facturado">Fecha servicio</th>
-                  <th className="table-th whitespace-nowrap" title="Fecha en que se registró la OT del servicio facturado">Fecha registro</th>
+                  <th className="table-th whitespace-nowrap" title="Fecha en que se registró la OT del servicio facturado. En un correctivo sin OT, la aprobación de su cotización">Fecha registro</th>
                   <ThSort label="Fecha comprobante" {...propsTh('fecha_emision')} />
                   <ThSort label="Serie y N° de factura" {...propsTh('numero_factura')} />
                   <ThSort label="Cliente" {...propsTh('cliente')} />
@@ -530,7 +530,7 @@ export default function Facturas() {
             } />
             <Dato label="Fecha de comprobante" value={formatFecha(facturaDetalle.fecha_emision)} />
             <Dato label="Fecha de servicio" value={textoRangoFechas(facturaDetalle, 'fecha_servicio') || '—'} />
-            <Dato label="Fecha de registro (OT)" value={textoRangoFechas(facturaDetalle, 'fecha_registro') || '—'} />
+            <Dato label="Fecha de registro" value={textoRangoFechas(facturaDetalle, 'fecha_registro') || '—'} />
             <Dato label="Monto" value={<span className="font-mono">{formatMonto(facturaDetalle.monto, monedaDe(facturaDetalle))}</span>} />
             <Dato label="Cobertura" value={
               facturaDetalle.id_cuota

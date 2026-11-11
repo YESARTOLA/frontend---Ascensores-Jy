@@ -215,11 +215,19 @@ const docCliente = (r) => {
 
 // "Fecha registro" y "Fecha comprobante": las calcula el backend
 // (utils/fechasContables.js), con el mismo criterio que sus filtros por rango.
-// Registro: cuándo se registró la OT del servicio. Comprobante: emisión de la
-// factura vigente más reciente del cobro o, en un mantenimiento de plan, la
-// de la factura de su mes. null = sin OT / sin comprobante.
+// Registro: cuándo se registró la OT del servicio o, en un correctivo que aún
+// no tiene OT, cuándo la coordinación aprobó su cotización (ahí queda listo
+// para facturar). Comprobante: emisión de la factura vigente más reciente del
+// cobro o, en un mantenimiento de plan, la de la factura de su mes.
+// null = sin OT / sin comprobante.
 const fechaRegistro = (r) => r.fecha_registro || null;
 const fechaComprobante = (r) => r.fecha_comprobante || null;
+const tituloFechaRegistro = (r) => {
+  if (!r.fecha_registro) return undefined;
+  return r.fecha_registro_origen === 'aprobacion'
+    ? 'Aprobación de la cotización (aún sin OT)'
+    : 'Registro de la OT';
+};
 
 // "Fecha servicio": la calcula el backend (utils/fechaServicioContable.js). Es
 // la fecha en que se realizó el servicio, igual para todo tipo: el inicio real
@@ -642,7 +650,7 @@ export default function Contabilidad() {
               <table className="table-base">
                 <thead><tr>
                   <th className="table-th">Fecha servicio</th>
-                  <th className="table-th" title="Fecha en que se registró la OT del servicio">Fecha registro</th>
+                  <th className="table-th" title="Fecha en que se registró la OT del servicio. En un correctivo sin OT, la aprobación de su cotización">Fecha registro</th>
                   <th className="table-th">Fecha comprobante</th>
                   <th className="table-th">Código</th>
                   <th className="table-th">DNI / RUC</th>
@@ -672,7 +680,7 @@ export default function Contabilidad() {
                             return f ? formatFecha(f) : <span className="text-slate-400 italic">{SIN_FECHA_SERVICIO}</span>;
                           })()}
                         </td>
-                        <td className="table-td text-xs">
+                        <td className="table-td text-xs" title={tituloFechaRegistro(r)}>
                           {(() => { const f = fechaRegistro(r); return f ? formatFecha(f) : <span className="text-slate-400 italic">— (sin OT)</span>; })()}
                         </td>
                         <td className="table-td text-xs">
