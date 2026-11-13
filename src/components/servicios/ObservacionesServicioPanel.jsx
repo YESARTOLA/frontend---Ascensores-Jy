@@ -8,7 +8,7 @@ import useCargaArchivos from '../../hooks/useCargaArchivos.js';
 import { useToast } from '../common/Toast.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import { formatFechaHora } from '../../utils/formatters.js';
-import { esServicioPostRevision } from '../../utils/estadoServicio.js';
+import { expedienteCongelado } from '../../utils/estadoServicio.js';
 import { DESTINATARIOS_ALERTA, etiquetasDestinatarios } from '../../utils/destinatariosAlerta.js';
 
 /**
@@ -28,7 +28,8 @@ import { DESTINATARIOS_ALERTA, etiquetasDestinatarios } from '../../utils/destin
  *   idServicio          — id del servicio
  *   tecnicosAsignados   — array de asignaciones [{id_tecnico, estado}] del servicio
  *   estadoServicio      — estado_servicio actual; cierra el formulario cuando
- *                         entra en revisión administrativa o más allá
+ *                         entra en revisión administrativa o más allá (salvo
+ *                         para admin/super_admin, que siguen hasta el cierre)
  */
 export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignados, estadoServicio }) {
   const { user, esSuperAdmin, esAdmin, esCoordinador, esTecnico } = useAuth();
@@ -56,10 +57,11 @@ export default function ObservacionesServicioPanel({ idServicio, tecnicosAsignad
 
   const esAdminUI = esSuperAdmin || esAdmin;
   // Coordinación revisa y corrige lo que el técnico dejó anotado, con el mismo
-  // corte que el backend: hasta la revisión administrativa.
+  // corte que el backend: hasta la revisión administrativa. Administración
+  // sigue pudiendo con el servicio ya cerrado (no si está cancelado).
   const tecnicoAsignado = esTecnico && Array.isArray(tecnicosAsignados)
     && tecnicosAsignados.some(a => a.estado === 1 && a.id_tecnico === user?.id_tecnico);
-  const bloqueadoPorEstado = esServicioPostRevision(estadoServicio);
+  const bloqueadoPorEstado = expedienteCongelado(estadoServicio, esAdminUI);
   const gestionaRegistros = (esSuperAdmin || esAdmin || esCoordinador) && !bloqueadoPorEstado;
   const puedeRegistrar = ((esSuperAdmin || esAdmin || esCoordinador) || tecnicoAsignado) && !bloqueadoPorEstado;
   const puedeAtender = esSuperAdmin || esAdmin || esCoordinador;

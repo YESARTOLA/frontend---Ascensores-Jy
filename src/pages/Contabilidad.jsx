@@ -11,6 +11,7 @@ import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoneda.jsx';
 import OtModal from '../components/common/OtModal.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
+import FechaServicioCelda, { AYUDA_FECHA_SERVICIO } from '../components/common/FechaServicioCelda.jsx';
 import { useToast } from '../components/common/Toast.jsx';
 import { ArchivosFacturaBorrador, DocumentosAdicionalesBorrador, aPayloadDocumentos, idsArchivosFactura } from '../components/facturas/DocumentosFactura.jsx';
 import { CampoNumerosOperacion, limpiarNumerosOperacion } from '../components/facturas/NumerosOperacion.jsx';
@@ -229,23 +230,15 @@ const tituloFechaRegistro = (r) => {
     : 'Registro de la OT';
 };
 
-// "Fecha servicio": la calcula el backend (utils/fechaServicioContable.js). Es
-// la fecha en que se realizó el servicio, igual para todo tipo: el inicio real
-// de su ejecución (columna "Inicio" de los módulos operativos). null = aún no
-// se inició.
-const fechaServicio = (r) => r.fecha_servicio || null;
+// "Fecha servicio": las calcula el backend (utils/fechaServicioContable.js).
+// Arriba, la fecha de PROGRAMACIÓN del servicio (la del filtro por rango);
+// debajo, la de EJECUCIÓN (inicio real), solo si ya se ejecutó. null = sin
+// programar / aún sin ejecutar.
+const fechaProgramacion = (r) => r.fecha_programacion || null;
+const fechaEjecucion = (r) => r.fecha_ejecucion || null;
 
-// Tooltip de la celda.
-const tituloFechaServicio = (r) => {
-  if (!r.fecha_servicio) return undefined;
-  const titulo = 'Fecha de ejecución (inicio del servicio)';
-  const programada = r.servicio?.fecha_programada;
-  return programada ? `${titulo} · programado para el ${formatFecha(programada)}` : titulo;
-};
-const SIN_FECHA_SERVICIO = '— (sin iniciar)';
-
-// Listado de Contabilidad: el rango de fechas se aplica sobre "Fecha servicio"
-// (rango_fecha=servicio), no sobre la fecha de realización. Y solo trae
+// Listado de Contabilidad: el rango de fechas se aplica sobre la programación
+// de "Fecha servicio" (rango_fecha=servicio), no sobre la fecha de realización. Y solo trae
 // servicios con importe (con_monto): los gratuitos y los de S/ 0.00 no tienen
 // nada que cobrar ni facturar (backend/utils/montoACobrar.js).
 const listarRealizados = (params) => serviciosService.realizadosPaginate({ ...params, rango_fecha: 'servicio', con_monto: 1 });
@@ -292,7 +285,8 @@ const importeExport = (campo) => ({
 // Los importes llevan `num`: en Excel son celdas numéricas sumables, y la
 // columna "Moneda" permite filtrar/segmentar soles y dólares por separado.
 const COLUMNAS_EXPORT = [
-  { header: 'Fecha servicio', get: r => { const f = fechaServicio(r); return f ? formatFecha(f) : ''; } },
+  { header: 'Fecha servicio', get: r => { const f = fechaProgramacion(r); return f ? formatFecha(f) : ''; } },
+  { header: 'Fecha ejecución', get: r => { const f = fechaEjecucion(r); return f ? formatFecha(f) : ''; } },
   { header: 'Fecha registro', get: r => { const f = fechaRegistro(r); return f ? formatFecha(f) : ''; } },
   { header: 'Fecha comprobante', get: r => { const f = fechaComprobante(r); return f ? formatFecha(f) : ''; } },
   { header: 'Código', get: r => r.servicio?.codigo },
@@ -649,7 +643,7 @@ export default function Contabilidad() {
             <div className="overflow-x-auto scroll-thin">
               <table className="table-base">
                 <thead><tr>
-                  <th className="table-th">Fecha servicio</th>
+                  <th className="table-th" title={AYUDA_FECHA_SERVICIO}>Fecha servicio</th>
                   <th className="table-th" title="Fecha en que se registró la OT del servicio. En un correctivo sin OT, la aprobación de su cotización">Fecha registro</th>
                   <th className="table-th">Fecha comprobante</th>
                   <th className="table-th">Código</th>
@@ -674,11 +668,8 @@ export default function Contabilidad() {
                     const tieneOt = !!(ot.numero || ot.archivo);
                     return (
                       <tr key={r.id ?? `row-${idx}`} className="table-row-hover">
-                        <td className="table-td text-xs" title={tituloFechaServicio(r)}>
-                          {(() => {
-                            const f = fechaServicio(r);
-                            return f ? formatFecha(f) : <span className="text-slate-400 italic">{SIN_FECHA_SERVICIO}</span>;
-                          })()}
+                        <td className="table-td text-xs">
+                          <FechaServicioCelda programacion={fechaProgramacion(r)} ejecucion={fechaEjecucion(r)} />
                         </td>
                         <td className="table-td text-xs" title={tituloFechaRegistro(r)}>
                           {(() => { const f = fechaRegistro(r); return f ? formatFecha(f) : <span className="text-slate-400 italic">— (sin OT)</span>; })()}

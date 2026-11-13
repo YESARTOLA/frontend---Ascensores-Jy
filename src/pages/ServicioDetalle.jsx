@@ -12,7 +12,8 @@ import { actualizarFilaAsignacion, validarConsistenciaAsignaciones, tecnicosDisp
 import {
   estaServicioFinalizado,
   esServicioEditable,
-  esServicioPostRevision,
+  expedienteCongelado,
+  puedeEditarServicioCerrado,
   ESTADO_SERVICIO_EN_CURSO,
   ESTADO_SERVICIO_FINALIZADO
 } from '../utils/estadoServicio.js';
@@ -409,7 +410,15 @@ export default function ServicioDetalle() {
       && s.asignaciones?.some(a => a.id_tecnico === user.id_tecnico && (a.responsable_documentacion || s.asignaciones.length === 1))));
   const puedeRevisar = s.estado_servicio === 'En revisión administrativa' && (esSuperAdmin || esAdmin || user.rol_codigo === 'contabilidad');
   const puedePromover = s.estado_servicio === 'Borrador' && (esSuperAdmin || esAdmin || esCoordinador);
-  const puedeGestionarEntregas = (esSuperAdmin || esAdmin) && !estaServicioFinalizado(s.estado_servicio);
+  // Administración (admin y super admin) sigue editando el expediente con el
+  // servicio ya revisado, cobrado, facturado o cerrado; coordinación y el técnico
+  // se quedan con su ventana hasta la revisión. Mismo corte que el backend
+  // (utils/registrosTecnico.js), que es quien impone el permiso.
+  const esAdministracion = esSuperAdmin || esAdmin;
+  const congelado = expedienteCongelado(s.estado_servicio, esAdministracion);
+  // Las entregas solo las registra Administración: también con el servicio
+  // cerrado, salvo si está cancelado.
+  const puedeGestionarEntregas = puedeEditarServicioCerrado(esAdministracion, s.estado_servicio);
   // Los mantenimientos generados por un PLAN no se editan desde el formulario de
   // Proyectos: ese modal solo ofrece subtipos de Proyectos y guardar reclasificaría
   // el registro (el backend deriva `tipo_registro` del subtipo). Su precio se
@@ -427,19 +436,19 @@ export default function ServicioDetalle() {
     a.id_tecnico === user.id_tecnico && (a.responsable_documentacion || s.asignaciones.length === 1));
   const tieneOt = !!(s.numero_ot || s.archivo_ot);
   // Misma regla que las guías: coordinación/admin siempre, y el técnico
-  // responsable documental del servicio. Se congela tras la revisión.
+  // responsable documental del servicio. Se congela tras la revisión (salvo
+  // para Administración).
   const puedeGestionarOt = (esSuperAdmin || esAdmin || esCoordinador || esTecnicoResponsable)
-    && !esServicioPostRevision(s.estado_servicio);
+    && !congelado;
   // Cierre sin guía: la deuda documental vive en la GUÍA, no en un estado aparte.
   const finalizadoSinGuia = s.estado_servicio === ESTADO_SERVICIO_FINALIZADO
     && (s.guias || []).every(g => g.estado_guia === ESTADO_GUIA_OBSERVADA || !g.id_archivo);
-  const guiasBloqueadasPorEstado = esServicioPostRevision(s.estado_servicio);
-  const puedeGestionarGuias = (esSuperAdmin || esAdmin || esCoordinador || esTecnicoResponsable) && !guiasBloqueadasPorEstado;
+  const puedeGestionarGuias = (esSuperAdmin || esAdmin || esCoordinador || esTecnicoResponsable) && !congelado;
   // Gestión del expediente que dejó el técnico (evidencias, guías,
   // observaciones, informe): coordinación corrige lo cargado en obra hasta la
-  // revisión administrativa. Espejo de backend/utils/registrosTecnico.js.
-  const gestionaRegistrosTecnico = (esSuperAdmin || esAdmin || esCoordinador)
-    && !esServicioPostRevision(s.estado_servicio);
+  // revisión administrativa; Administración, también después. Espejo de
+  // backend/utils/registrosTecnico.js.
+  const gestionaRegistrosTecnico = (esSuperAdmin || esAdmin || esCoordinador) && !congelado;
   const puedeEliminarGuia = gestionaRegistrosTecnico;
 
   // Servicios multidía: la grilla de días y la evidencia esperada por día.
@@ -462,8 +471,7 @@ export default function ServicioDetalle() {
   // y el Super Admin (que destraba cualquier caso). Contabilidad no. Espejo del
   // backend (evidenciasGuiasController.puedeEscribirCoordinacion); el permiso
   // real lo impone el servidor, aquí solo se decide si mostrar los botones.
-  const gestionaEvidenciaCoordinacion = (esCoordinador || esAdmin || esSuperAdmin)
-    && !esServicioPostRevision(s.estado_servicio);
+  const gestionaEvidenciaCoordinacion = (esCoordinador || esAdmin || esSuperAdmin) && !congelado;
   const evidenciasPorDia = evidenciasGenerales.reduce((acc, ev) => {
     if (ev.id_dia) acc[ev.id_dia] = (acc[ev.id_dia] || 0) + 1;
     return acc;
@@ -1738,8 +1746,9 @@ export default function ServicioDetalle() {
             ayuda: 'Registro propio de la Oficina Técnica. Solo el Coordinador y el Administrador cargan fotos y videos en esta sección.'
           },
         ].map(sec => {
-          // El técnico sube mientras ejecuta; coordinación y administración
-          // pueden además corregir después, hasta la revisión administrativa.
+          // El técnico sube mientras ejecuta; coordinación puede además
+          // corregir después, hasta la revisión administrativa, y
+          // Administración también con el servicio ya cerrado.
           // La sección de Coordinación tiene su propia regla, más estrecha.
           const puedeGestionar = sec.soloCoordinacion
             ? gestionaEvidenciaCoordinacion

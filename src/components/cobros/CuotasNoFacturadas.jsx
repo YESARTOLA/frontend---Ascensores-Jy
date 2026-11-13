@@ -28,12 +28,14 @@ const TZ = 'America/Lima';
 
 // Estado visual de la cuota respecto de hoy (pagada / vencida / próxima /
 // pendiente). Mismo criterio de colores que el calendario de cobros.
+// «Vencida» la decide el backend (cobrosController.cuotaVencida, campo
+// `vencida`): es la misma regla del filtro «Vencidas», así la etiqueta y el
+// filtro nunca discrepan.
 function estadoCuota(cu, hoyKey) {
   if (cu.estado_cuota === 'Pagada' || Number(cu.monto_pagado) >= Number(cu.monto)) {
     return { texto: 'Pagada', color: '#22c55e' };
   }
-  const venc = new Date(cu.fecha_vencimiento).toLocaleDateString('en-CA', { timeZone: TZ });
-  if (venc < hoyKey) return { texto: 'Vencida', color: '#ef4444' };
+  if (cu.vencida) return { texto: 'Vencida', color: '#ef4444' };
   const diasDif = Math.floor((new Date(cu.fecha_vencimiento) - new Date(hoyKey)) / 86400000);
   if (diasDif <= 7) return { texto: 'Próxima', color: '#f59e0b' };
   if (Number(cu.monto_pagado) > 0) return { texto: 'Parcial', color: '#3b82f6' };
@@ -55,7 +57,7 @@ const proyectoTitulo = (f) =>
 
 const FILTROS_INIT = {
   q: '', id_cliente: '', id_proyecto: '', tipo_categoria: '', moneda: '',
-  fecha_desde: '', fecha_hasta: '', orden: '', direccion: ''
+  fecha_desde: '', fecha_hasta: '', vencidas: '', orden: '', direccion: ''
 };
 
 // Columnas del export (espejo de la tabla).
@@ -173,6 +175,7 @@ export default function CuotasNoFacturadas({
     if (filtros.moneda) p.push(`Moneda: ${etiquetaDeMoneda(monedas, filtros.moneda)}`);
     if (filtros.fecha_desde) p.push(`Venc. desde: ${filtros.fecha_desde}`);
     if (filtros.fecha_hasta) p.push(`Venc. hasta: ${filtros.fecha_hasta}`);
+    if (filtros.vencidas) p.push('Solo vencidas');
     return p;
   };
 
@@ -299,6 +302,22 @@ export default function CuotasNoFacturadas({
           <FiltroMoneda monedas={monedas} value={filtros.moneda} onChange={v => setF('moneda', v)} />
           <input type="date" className="input" title="Vencimiento desde" value={filtros.fecha_desde} onChange={e => setF('fecha_desde', e.target.value)} />
           <input type="date" className="input" title="Vencimiento hasta" value={filtros.fecha_hasta} onChange={e => setF('fecha_hasta', e.target.value)} />
+          {/* Interruptor «Vencidas»: deja solo las cuotas con la etiqueta
+              «Vencida» (impagas y con el vencimiento cumplido). El contador
+              dice cuántas hay con el resto de filtros activos. */}
+          <button
+            type="button"
+            aria-pressed={!!filtros.vencidas}
+            onClick={() => setF('vencidas', filtros.vencidas ? '' : '1')}
+            title={filtros.vencidas ? 'Quitar el filtro «Vencidas»' : 'Mostrar solo las cuotas vencidas: impagas y con la fecha de vencimiento cumplida'}
+            className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${filtros.vencidas ? 'bg-rose-100 text-rose-900 ring-rose-300' : 'bg-white text-rose-700 ring-rose-200 hover:bg-rose-50'}`}
+          >
+            Vencidas
+            {resumen?.cuotas_vencidas != null && (
+              <span className="rounded-full bg-rose-500/15 px-1.5 text-xs tabular-nums">{resumen.cuotas_vencidas}</span>
+            )}
+            {filtros.vencidas && <span aria-hidden="true" className="text-xs opacity-70">✕</span>}
+          </button>
           <button onClick={limpiar} className="btn-secondary col-span-2 sm:col-span-1">Limpiar</button>
         </div>
       </div>

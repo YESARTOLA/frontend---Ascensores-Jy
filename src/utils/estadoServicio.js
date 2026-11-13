@@ -83,6 +83,22 @@ export function esServicioPostRevision(estadoServicio) {
   return ESTADOS_POST_EJECUCION.includes(estadoServicio);
 }
 
+// Administración (admin y super admin) sigue editando el expediente del servicio
+// —evidencias y sus comentarios, guías, OT, observaciones, entregas— aunque ya
+// esté revisado, cobrado, facturado o cerrado. Solo el cancelado queda fuera.
+// Espejo de backend/utils/registrosTecnico.js (puedeEditarServicioCerrado).
+export function puedeEditarServicioCerrado(esAdministracion, estadoServicio) {
+  return !!esAdministracion && estadoServicio !== 'Cancelado';
+}
+
+// ¿El estado le congela el expediente a este usuario? A partir de la revisión
+// administrativa, salvo para Administración. Para coordinación y el técnico
+// equivale a `esServicioPostRevision`. Espejo de backend (expedienteCongelado).
+export function expedienteCongelado(estadoServicio, esAdministracion) {
+  if (!esServicioPostRevision(estadoServicio)) return false;
+  return !puedeEditarServicioCerrado(esAdministracion, estadoServicio);
+}
+
 // Estados de atención de emergencias y correctivos: solo tres (En atención,
 // Atendida, Cancelada; en el correctivo, en masculino). No se editan a mano: los
 // deriva el servicio que atiende el caso. Espejo de backend/utils/estadoAtencion.js.

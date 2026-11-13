@@ -10,6 +10,7 @@ import Combobox from '../components/common/Combobox.jsx';
 import DateRangePicker from '../components/common/DateRangePicker.jsx';
 import Pagination, { usePaginatedList } from '../components/common/Pagination.jsx';
 import CardMetrica from '../components/common/CardMetrica.jsx';
+import FechaServicioCelda, { AYUDA_FECHA_SERVICIO, textoFechaEjecucion } from '../components/common/FechaServicioCelda.jsx';
 import FiltroMoneda, { etiquetaDeMoneda } from '../components/common/FiltroMoneda.jsx';
 import CuotasNoFacturadas from '../components/cobros/CuotasNoFacturadas.jsx';
 import { useToast } from '../components/common/Toast.jsx';
@@ -40,8 +41,12 @@ const docCliente = (c) => {
   return `${cl.tipo_documento || ''} ${cl.numero_documento}`.trim();
 };
 
-// Fecha del servicio: fecha de realización si existe, si no la programada.
-const fechaServicio = (c) => c.servicio?.servicio_realizado?.fecha_realizacion || c.servicio?.fecha_programada || null;
+// "Fecha de servicio": las calcula el backend con el mismo criterio que
+// Contabilidad (utils/fechaServicioContable.js). Arriba, la fecha de
+// PROGRAMACIÓN del servicio; debajo, la de EJECUCIÓN (inicio real), solo si ya
+// se ejecutó. Un cobro de plan no tiene servicio propio y no trae ninguna.
+const fechaProgramacion = (c) => c.fecha_programacion || null;
+const fechaEjecucion = (c) => c.fecha_ejecucion || null;
 
 // Nombre del edificio a partir de los ascensores del servicio o del plan.
 const nombreEdificio = (c) => {
@@ -79,7 +84,8 @@ const monedaDe = (c) => c.moneda || 'PEN';
 // Columnas del export. Los importes llevan `num` para que Excel los reciba como
 // números (sumables) y "Moneda" permite filtrar soles / dólares por separado.
 const COLUMNAS_EXPORT = [
-  { header: 'Fecha de servicio', get: c => { const f = fechaServicio(c); return f ? formatFecha(f) : ''; } },
+  { header: 'Fecha de servicio', get: c => { const f = fechaProgramacion(c); return f ? formatFecha(f) : ''; } },
+  { header: 'Fecha de ejecución', get: c => { const f = fechaEjecucion(c); return f ? formatFecha(f) : ''; } },
   { header: 'Fecha de emisión', get: c => { const f = facturaReciente(c); return f?.fecha_emision ? formatFecha(f.fecha_emision) : ''; } },
   { header: 'Serie y N° factura', get: c => { const f = facturaReciente(c); return f ? serieFactura(f) : ''; } },
   { header: 'RUC / DNI', get: c => (docCliente(c) === '—' ? '' : docCliente(c)) },
@@ -495,7 +501,7 @@ export default function Cobros() {
                       montos → cuenta del abono → estado. Las columnas de
                       seguimiento (cuotas, vencimiento, mora) cierran la tabla. */}
                   <thead><tr>
-                    <th className="table-th">Fecha de servicio</th>
+                    <th className="table-th" title={AYUDA_FECHA_SERVICIO}>Fecha de servicio</th>
                     <th className="table-th">Fecha de emisión</th>
                     <ThOrden col="factura" filtros={filtros} ordenarPor={ordenarPor}>Serie y N° factura</ThOrden>
                     <th className="table-th">RUC / DNI</th>
@@ -521,7 +527,9 @@ export default function Cobros() {
                       const tieneOt = !!(ot.numero || ot.archivo);
                       return (
                       <tr key={c.id} className={`table-row-hover ${c.vencido ? 'row-vencido' : ''}`}>
-                        <td className="table-td text-xs">{(() => { const f = fechaServicio(c); return f ? formatFecha(f) : <span className="text-slate-400">—</span>; })()}</td>
+                        <td className="table-td text-xs">
+                          <FechaServicioCelda programacion={fechaProgramacion(c)} ejecucion={fechaEjecucion(c)} vacio="—" />
+                        </td>
                         <td className="table-td text-xs">{(() => { const f = facturaReciente(c); return f?.fecha_emision ? formatFecha(f.fecha_emision) : <span className="text-slate-400">—</span>; })()}</td>
                         <td className="table-td text-xs font-mono whitespace-nowrap">{(() => { const f = facturaReciente(c); return f ? serieFactura(f) : <span className="text-slate-400">—</span>; })()}</td>
                         <td className="table-td text-xs font-mono whitespace-nowrap">{docCliente(c)}</td>
@@ -609,7 +617,8 @@ export default function Cobros() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="text-[11px] text-slate-500">
-                        {(() => { const f = fechaServicio(c); return f ? `Servicio ${formatFecha(f)}` : 'Servicio sin fecha'; })()}
+                        {(() => { const f = fechaProgramacion(c); return f ? `Servicio ${formatFecha(f)}` : 'Servicio sin fecha'; })()}
+                        {(() => { const e = fechaEjecucion(c); return e ? ` (${textoFechaEjecucion(e)})` : ''; })()}
                         {(() => { const f = facturaReciente(c); return f?.fecha_emision ? ` · Emisión ${formatFecha(f.fecha_emision)}` : ''; })()}
                       </div>
                       {(() => { const f = facturaReciente(c); return f ? (
