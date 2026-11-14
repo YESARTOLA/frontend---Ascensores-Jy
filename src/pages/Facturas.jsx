@@ -22,14 +22,18 @@ import { TIPOS_COMPROBANTE, etiquetaTipoComprobante } from '../utils/catalogosCo
 import { exportarExcelTabla, exportarPDFTabla } from '../utils/exportTabla.js';
 import { etiquetaMoneda, FORMATO_EXCEL } from '../utils/excelNumeros.js';
 import CardMetricaDoble from '../components/common/CardMetricaDoble.jsx';
+import FechaServicioCelda, { AYUDA_FECHA_SERVICIO, textoRangoFecha } from '../components/common/FechaServicioCelda.jsx';
 
-// `desde`/`hasta` = rango de "Fecha comprobante" (emisión); `servicio_*` y
-// `registro_*` = "Fecha servicio" y "Fecha registro" (OT o aprobación del correctivo) de los
-// servicios que cubre la factura.
+// Mismos parámetros de fecha que Contabilidad. `desde`/`hasta` = rango de
+// "Fecha comprobante" (emisión); `servicio_*` = "Fecha servicio" (la
+// programación) y `registro_*` = "Fecha registro" (OT o aprobación del
+// correctivo) de los servicios que cubre la factura; `aprobacion_*` = fecha de
+// aprobación de la cotización del servicio facturado.
 const FILTROS_INICIALES = {
   q: '', id_cliente: '', estado_factura: '', tipo_comprobante: '', cobertura: '', tipo_categoria: '',
   situacion: '', moneda: '', desde: '', hasta: '',
   servicio_desde: '', servicio_hasta: '', registro_desde: '', registro_hasta: '',
+  aprobacion_desde: '', aprobacion_hasta: '',
   // Orden por defecto: serie y N° de factura, ascendente. Es el orden con el que
   // administración lleva el registro; el correlativo interno (#) sigue
   // disponible como columna ordenable.
@@ -101,29 +105,31 @@ const etiquetaTipoServicio = (f) => {
   return f.servicio.tipo_servicio?.nombre || '';
 };
 
-// "Fecha servicio" y "Fecha registro" de la factura: las de los servicios que
-// cubre, calculadas en el backend (utils/fechasContables.js) con el mismo
-// criterio que Contabilidad y que sus filtros. Una factura de plan cubre los
-// mantenimientos de su mes: si caen en días distintos, se da el rango.
-// `campo` = 'fecha_servicio' | 'fecha_registro'.
-const rangoFechas = (f, campo) => {
-  if (!f[campo]) return null;
-  const desde = formatFecha(f[campo]);
-  const hasta = formatFecha(f[`${campo}_hasta`] || f[campo]);
-  return { desde, hasta: hasta !== desde ? hasta : null };
-};
-const textoRangoFechas = (f, campo) => {
-  const r = rangoFechas(f, campo);
-  if (!r) return '';
-  return r.hasta ? `${r.desde} – ${r.hasta}` : r.desde;
+// Fechas de la factura que vienen de los servicios que cubre, calculadas en el
+// backend (utils/fechasContables.js) con el mismo criterio que Contabilidad y
+// que sus filtros:
+//   - fecha_servicio   = programación (la que filtra); fecha_ejecucion = inicio real;
+//   - fecha_registro   = OT o, en un correctivo sin OT, aprobación de su cotización.
+// Una factura de plan cubre los mantenimientos de su mes: si caen en días
+// distintos, cada una es un rango (`<campo>_hasta` = la última).
+const textoRangoFechas = (f, campo) => textoRangoFecha(f[campo], f[`${campo}_hasta`]);
+
+// Tooltip de "Fecha registro": de dónde sale (igual que en Contabilidad).
+const tituloFechaRegistro = (f) => {
+  if (!f.fecha_registro) return undefined;
+  return f.fecha_registro_origen === 'aprobacion'
+    ? 'Aprobación de la cotización (aún sin OT)'
+    : f.fecha_registro_origen === 'ot' ? 'Registro de la OT' : undefined;
 };
 
-// Columnas del export (espejo de la tabla, sin la columna de archivo).
-// Columnas del export. `num` hace que Excel reciba números (sumables) en vez de
-// texto; "Moneda" permite filtrar y totalizar soles y dólares por separado.
+// Columnas del export (espejo de la tabla, sin la columna de archivo). `num`
+// hace que Excel reciba números (sumables) en vez de texto; "Moneda" permite
+// filtrar y totalizar soles y dólares por separado. La fecha de servicio va en
+// dos columnas, como en el export de Contabilidad.
 const COLUMNAS_EXPORT = [
   { header: '#', get: (_f, i) => i + 1, num: (_f, i) => i + 1, formato: FORMATO_EXCEL.entero },
   { header: 'Fecha servicio', get: f => textoRangoFechas(f, 'fecha_servicio') },
+  { header: 'Fecha ejecución', get: f => textoRangoFechas(f, 'fecha_ejecucion') },
   { header: 'Fecha registro', get: f => textoRangoFechas(f, 'fecha_registro') },
   { header: 'Fecha comprobante', get: f => formatFecha(f.fecha_emision) },
   { header: 'Serie y N° de factura', get: f => f.numero_factura },
@@ -144,12 +150,20 @@ const COLUMNAS_EXPORT = [
 // nunca lo tiene, así que se excluye del filtro para no ofrecer una opción vacía.
 const ESTADOS_FILTRO = ESTADOS_FACTURA.filter(e => e !== ESTADO_FACTURA_SIN);
 
+// Columnas de fecha: encabezado en dos líneas y menos relleno lateral, para que
+// ocupen solo lo que mide la fecha y el espacio quede para Cliente.
+const TH_FECHA = '!px-2';
+const TD_FECHA = 'table-td text-xs !px-2';
+// Encabezado en dos líneas ("Fecha" / "servicio"). Va dentro de un span para
+// que el salto funcione también dentro del flex del encabezado ordenable.
+const EtiquetaFecha = ({ children }) => <span className="block leading-tight">Fecha<br />{children}</span>;
+
 // Encabezado de columna ordenable.
-function ThSort({ label, col, sort, dir, onSort, align = 'left' }) {
+function ThSort({ label, col, sort, dir, onSort, align = 'left', className = '' }) {
   const activo = sort === col;
   return (
     <th
-      className={`table-th cursor-pointer select-none whitespace-nowrap ${align === 'right' ? 'text-right' : ''}`}
+      className={`table-th cursor-pointer select-none whitespace-nowrap ${align === 'right' ? 'text-right' : ''} ${className}`}
       onClick={() => onSort(col)}
       title="Ordenar por esta columna"
     >
@@ -237,6 +251,8 @@ export default function Facturas() {
     if (filtros.registro_hasta) p.push(`Fecha registro hasta: ${filtros.registro_hasta}`);
     if (filtros.desde) p.push(`Fecha comprobante desde: ${filtros.desde}`);
     if (filtros.hasta) p.push(`Fecha comprobante hasta: ${filtros.hasta}`);
+    if (filtros.aprobacion_desde) p.push(`Aprobación cotización desde: ${filtros.aprobacion_desde}`);
+    if (filtros.aprobacion_hasta) p.push(`Aprobación cotización hasta: ${filtros.aprobacion_hasta}`);
     return p;
   };
 
@@ -378,6 +394,16 @@ export default function Facturas() {
             onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, desde, hasta }))}
             placeholder="Fecha de comprobante (rango)"
           />
+          {/* Rango por FECHA DE APROBACIÓN de la cotización del servicio
+              facturado, como en Contabilidad. Las facturas sin cotización
+              detrás —planes de mantenimiento, servicios directos— no tienen
+              esa fecha y no aparecen mientras el rango esté puesto. */}
+          <DateRangePicker
+            desde={filtros.aprobacion_desde}
+            hasta={filtros.aprobacion_hasta}
+            onChange={({ desde, hasta }) => setFiltros(f => ({ ...f, aprobacion_desde: desde, aprobacion_hasta: hasta }))}
+            placeholder="Aprobación de cotización (rango)"
+          />
           <button onClick={() => setFiltros(FILTROS_INICIALES)} className="btn-secondary lg:col-span-6">Limpiar filtros</button>
         </div>
       </div>
@@ -391,9 +417,9 @@ export default function Facturas() {
                   <ThSort label="#" {...propsTh('correlativo')} />
                   {/* Fechas del servicio facturado (mismo criterio que
                       Contabilidad): no son columnas de la factura, por eso no ordenan. */}
-                  <th className="table-th whitespace-nowrap" title="Fecha en que se realizó el servicio facturado">Fecha servicio</th>
-                  <th className="table-th whitespace-nowrap" title="Fecha en que se registró la OT del servicio facturado. En un correctivo sin OT, la aprobación de su cotización">Fecha registro</th>
-                  <ThSort label="Fecha comprobante" {...propsTh('fecha_emision')} />
+                  <th className={`table-th ${TH_FECHA}`} title={AYUDA_FECHA_SERVICIO}><EtiquetaFecha>servicio</EtiquetaFecha></th>
+                  <th className={`table-th ${TH_FECHA}`} title="Fecha en que se registró la OT del servicio facturado. En un correctivo sin OT, la aprobación de su cotización"><EtiquetaFecha>registro</EtiquetaFecha></th>
+                  <ThSort label={<EtiquetaFecha>comprobante</EtiquetaFecha>} className={TH_FECHA} {...propsTh('fecha_emision')} />
                   <ThSort label="Serie y N° de factura" {...propsTh('numero_factura')} />
                   <ThSort label="Cliente" {...propsTh('cliente')} />
                   {/* El edificio cuelga de los ascensores del servicio o del
@@ -418,9 +444,17 @@ export default function Facturas() {
                   {data.map((f, i) => (
                     <tr key={f.id} className="table-row-hover">
                       <td className="table-td text-xs font-mono text-slate-500">{(page - 1) * pageSize + i + 1}</td>
-                      <td className="table-td text-xs whitespace-nowrap"><CeldaFechasServicio factura={f} campo="fecha_servicio" /></td>
-                      <td className="table-td text-xs whitespace-nowrap"><CeldaFechasServicio factura={f} campo="fecha_registro" /></td>
-                      <td className="table-td text-xs whitespace-nowrap">{formatFecha(f.fecha_emision)}</td>
+                      <td className={TD_FECHA}>
+                        <FechaServicioCelda
+                          programacion={f.fecha_servicio}
+                          programacionHasta={f.fecha_servicio_hasta}
+                          ejecucion={f.fecha_ejecucion}
+                          ejecucionHasta={f.fecha_ejecucion_hasta}
+                          vacio={(f.servicios_fechas || []).length ? '— (sin programar)' : '—'}
+                          title={detalleFechasServicios(f)} />
+                      </td>
+                      <td className={TD_FECHA}><CeldaFechaRegistro factura={f} /></td>
+                      <td className={`${TD_FECHA} whitespace-nowrap`}>{formatFecha(f.fecha_emision)}</td>
                       <td className="table-td">
                         {/* El número (serie y correlativo) abre el detalle de la
                             factura, desde donde se descarga el comprobante. */}
@@ -435,8 +469,12 @@ export default function Facturas() {
                         <div className="text-[11px] text-slate-500">{etiquetaTipoComprobante(f.tipo_comprobante)}</div>
                       </td>
                       <td className="table-td text-sm">
-                        {f.cliente?.nombre}
-                        {docCliente(f.cliente) && <div className="text-[11px] text-slate-500 font-mono">{docCliente(f.cliente)}</div>}
+                        {/* Ancho mínimo: la razón social se lee en dos líneas
+                            como mucho, en vez de una palabra por renglón. */}
+                        <div className="min-w-[15rem]">
+                          {f.cliente?.nombre}
+                          {docCliente(f.cliente) && <div className="text-[11px] text-slate-500 font-mono">{docCliente(f.cliente)}</div>}
+                        </div>
                       </td>
                       <td className="table-td text-xs">{nombreEdificio(f) || '—'}</td>
                       <td className="table-td">
@@ -529,8 +567,9 @@ export default function Facturas() {
                 : '—'
             } />
             <Dato label="Fecha de comprobante" value={formatFecha(facturaDetalle.fecha_emision)} />
-            <Dato label="Fecha de servicio" value={textoRangoFechas(facturaDetalle, 'fecha_servicio') || '—'} />
-            <Dato label="Fecha de registro" value={textoRangoFechas(facturaDetalle, 'fecha_registro') || '—'} />
+            <Dato label="Fecha de servicio (programación)" value={textoRangoFechas(facturaDetalle, 'fecha_servicio') || '—'} />
+            <Dato label="Fecha de ejecución" value={textoRangoFechas(facturaDetalle, 'fecha_ejecucion') || 'Sin ejecutar'} />
+            <Dato label="Fecha de registro" value={textoRangoFechas(facturaDetalle, 'fecha_registro') || '— (sin OT)'} />
             <Dato label="Monto" value={<span className="font-mono">{formatMonto(facturaDetalle.monto, monedaDe(facturaDetalle))}</span>} />
             <Dato label="Cobertura" value={
               facturaDetalle.id_cuota
@@ -655,19 +694,33 @@ export default function Facturas() {
   );
 }
 
-// Celda de "Fecha servicio" / "Fecha registro". Si la factura cubre varios
-// servicios (factura de plan), el tooltip detalla la fecha de cada uno.
-function CeldaFechasServicio({ factura, campo }) {
+// Tooltip de "Fecha servicio" cuando la factura cubre varios servicios (factura
+// de plan): la programación y la ejecución de cada uno.
+function detalleFechasServicios(factura) {
+  const lista = factura.servicios_fechas || [];
+  if (lista.length <= 1) return undefined;
+  return lista.map(s => {
+    const prog = s.fecha_servicio ? formatFecha(s.fecha_servicio) : 'sin programar';
+    return `${s.codigo}: ${prog}${s.fecha_ejecucion ? ` · ejec. ${formatFecha(s.fecha_ejecucion)}` : ''}`;
+  }).join('\n');
+}
+
+// Celda de "Fecha registro" (mismos textos que Contabilidad). Si la factura
+// cubre varios servicios, da el rango y el tooltip detalla la de cada uno.
+function CeldaFechaRegistro({ factura }) {
   const lista = factura.servicios_fechas || [];
   const title = lista.length > 1
-    ? lista.map(s => `${s.codigo}: ${s[campo] ? formatFecha(s[campo]) : '—'}`).join('\n')
-    : undefined;
-  const r = rangoFechas(factura, campo);
-  if (!r) return <span className="text-slate-400" title={title}>—</span>;
+    ? lista.map(s => `${s.codigo}: ${s.fecha_registro ? formatFecha(s.fecha_registro) : 'sin OT'}`).join('\n')
+    : tituloFechaRegistro(factura);
+  if (!factura.fecha_registro) {
+    return <span className="text-slate-400 italic whitespace-nowrap" title={title}>{lista.length ? '— (sin OT)' : '—'}</span>;
+  }
+  const desde = formatFecha(factura.fecha_registro);
+  const hasta = factura.fecha_registro_hasta ? formatFecha(factura.fecha_registro_hasta) : desde;
   return (
-    <span title={title}>
-      {r.desde}
-      {r.hasta && <span className="block text-[11px] text-slate-500">al {r.hasta}</span>}
+    <span className="block whitespace-nowrap" title={title}>
+      {desde}
+      {hasta !== desde && <span className="block text-[11px] text-slate-500">al {hasta}</span>}
     </span>
   );
 }
