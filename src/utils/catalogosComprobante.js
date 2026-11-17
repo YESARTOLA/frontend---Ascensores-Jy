@@ -6,13 +6,16 @@
  * con RUC, Boleta para consumidor final con DNI. Esa correspondencia solo
  * SUGIERE el tipo al emitir (`tipoComprobanteSugerido`); quien emite puede
  * cambiarlo, y el backend no lo valida contra el documento del cliente.
+ * Nota no depende del documento del receptor: nunca se sugiere, solo se elige.
  */
 export const TIPO_COMPROBANTE_FACTURA = 'Factura';
 export const TIPO_COMPROBANTE_BOLETA = 'Boleta';
+export const TIPO_COMPROBANTE_NOTA = 'Nota';
 
 export const TIPOS_COMPROBANTE = [
   { codigo: TIPO_COMPROBANTE_FACTURA, etiqueta: 'Factura', serie_prefijo: 'F', documento: 'RUC' },
-  { codigo: TIPO_COMPROBANTE_BOLETA,  etiqueta: 'Boleta',  serie_prefijo: 'B', documento: 'DNI' }
+  { codigo: TIPO_COMPROBANTE_BOLETA,  etiqueta: 'Boleta',  serie_prefijo: 'B', documento: 'DNI' },
+  { codigo: TIPO_COMPROBANTE_NOTA,    etiqueta: 'Nota',    serie_prefijo: 'N', documento: null }
 ];
 
 export const TIPOS_COMPROBANTE_CODIGOS = TIPOS_COMPROBANTE.map(t => t.codigo);
@@ -26,7 +29,7 @@ export function etiquetaTipoComprobante(tipo) {
   return t ? t.etiqueta : TIPO_COMPROBANTE_POR_DEFECTO;
 }
 
-/** Placeholder del número según el tipo: "F001-000123" / "B001-000123". */
+/** Placeholder del número según el tipo: "F001-000123" / "B001-000123" / "N001-000123". */
 export function ejemploNumeroComprobante(tipo) {
   const t = TIPOS_COMPROBANTE.find(x => x.codigo === tipo) || TIPOS_COMPROBANTE[0];
   return `${t.serie_prefijo}001-000XXX`;
