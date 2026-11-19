@@ -218,15 +218,55 @@ export function sanearTelefono(value) {
   return d.slice(i, i + 9);
 }
 
+// Teléfonos de contacto del cliente (peruanos y extranjeros).
+const MAX_DIGITOS_TELEFONO = 15; // máximo internacional (E.164), con código de país
+const MAX_LARGO_TELEFONO = 30;   // tamaño de la columna en BD (VarChar(30))
+
+/** Celular peruano escrito solo con dígitos (y espacios): 9 seguido de hasta 8 dígitos. */
+function esCelularPeruano(texto) {
+  return /^[\d\s]*$/.test(texto) && /^9\d{0,8}$/.test(texto.replace(/\s/g, ''));
+}
+
+/**
+ * Normaliza un teléfono de contacto de cliente, que puede ser extranjero:
+ * - Admite dígitos, «+» (solo como primer carácter), paréntesis, espacios y guiones.
+ *   Ej.: "+1 (305) 555-1234", "+34 612 345 678", "(01) 456-7890".
+ * - Máximo 15 dígitos y 30 caracteres; lo que exceda se descarta.
+ * - Un celular peruano escrito solo con dígitos se guarda sin espacios, igual
+ *   que sanearTelefono, y formatTelefono lo agrupa "987 654 321". Cualquier otro
+ *   formato se guarda tal como se escribió.
+ */
+export function sanearTelefonoContacto(value) {
+  const limpio = String(value ?? '')
+    .replace(/[^\d+()\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^\s+/, '')
+    .replace(/(?!^)\+/g, '');
+  let digitos = 0;
+  let salida = '';
+  for (const ch of limpio) {
+    if (ch >= '0' && ch <= '9') {
+      if (digitos >= MAX_DIGITOS_TELEFONO) continue;
+      digitos++;
+    }
+    salida += ch;
+  }
+  salida = salida.slice(0, MAX_LARGO_TELEFONO);
+  return esCelularPeruano(salida) ? salida.replace(/\s/g, '') : salida;
+}
+
 /**
  * Formatea para mostrar: agrupa de a 3 dígitos separados por espacio.
  * "987654321" → "987 654 321". Acepta valores parciales/legacy y solo agrupa
- * los dígitos que tenga.
+ * los dígitos que tenga. Un número extranjero u otro formato (con «+»,
+ * paréntesis, guiones, fijo o más de 9 dígitos) se muestra tal como se registró.
  */
 export function formatTelefono(value) {
   if (value === null || value === undefined) return '';
-  const d = String(value).replace(/\D/g, '');
-  if (!d) return '';
+  const texto = String(value);
+  const d = texto.replace(/\D/g, '');
+  if (!d) return texto.trim() ? texto : '';
+  if (!esCelularPeruano(texto)) return texto;
   if (d.length <= 3) return d;
   if (d.length <= 6) return `${d.slice(0, 3)} ${d.slice(3)}`;
   return `${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6, 9)}`;

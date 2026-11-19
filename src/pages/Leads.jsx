@@ -12,7 +12,7 @@ import BarraProgresoCarga from '../components/common/BarraProgresoCarga.jsx';
 import useCargaArchivos from '../hooks/useCargaArchivos.js';
 import { useAuth } from '../features/auth/AuthContext.jsx';
 import { FileLink } from '../components/common/FilePreview.jsx';
-import { badgeEstado, hoyISO, formatFechaHora, sanearTelefono, formatTelefono, nombreEdificio, nombreCliente } from '../utils/formatters.js';
+import { badgeEstado, hoyISO, formatFechaHora, sanearTelefonoContacto, formatTelefono, nombreEdificio, nombreCliente } from '../utils/formatters.js';
 import { ESTADOS_LEAD, ESTADO_LEAD_COTIZADO, ESTADO_LEAD_INGRESADO, ESTADO_LEAD_DESCARTADO } from '../utils/estadoLead.js';
 import { ESTADOS_BUEN_PAGADOR, badgeBuenPagador } from '../utils/datosLead.js';
 import ClienteForm, { clienteFormInicial } from '../components/clientes/ClienteForm.jsx';
@@ -186,7 +186,7 @@ export default function Leads() {
       numero_documento: l.ruc || '',
       contacto_principal_nombre: l.nombre_contacto || '',
       contacto_principal_correo: l.correo || '',
-      contacto_principal_telefono: sanearTelefono(l.telefono || '')
+      contacto_principal_telefono: sanearTelefonoContacto(l.telefono || '')
     });
     // Pre-carga del edificio con la ubicación del lead (proyecto + distrito).
     setEdConvForm({

@@ -7,7 +7,7 @@ import { useClasificaciones } from '../../hooks/useClasificaciones.js';
 import { useAuth } from '../../features/auth/AuthContext.jsx';
 import { FileLink } from '../common/FilePreview.jsx';
 import ClasificacionesPanel from './ClasificacionesPanel.jsx';
-import { sanearTelefono, formatTelefono } from '../../utils/formatters.js';
+import { sanearTelefonoContacto, formatTelefono } from '../../utils/formatters.js';
 import { aplicaAAreas } from '../../utils/clasificacionesCliente.js';
 import { AREAS_CLIENTE, ETIQUETA_AREA, otraArea } from '../../utils/areasCliente.js';
 
@@ -79,13 +79,13 @@ export function clienteToForm(c, archivos = []) {
     nombre: c.nombre,
     contacto_principal_nombre: c.contacto_principal_nombre || '',
     contacto_principal_correo: c.contacto_principal_correo || '',
-    contacto_principal_telefono: sanearTelefono(c.contacto_principal_telefono || ''),
+    contacto_principal_telefono: sanearTelefonoContacto(c.contacto_principal_telefono || ''),
     contacto_cobranzas_nombre: c.contacto_cobranzas_nombre || '',
     contacto_cobranzas_correo: c.contacto_cobranzas_correo || '',
-    contacto_cobranzas_telefono: sanearTelefono(c.contacto_cobranzas_telefono || ''),
+    contacto_cobranzas_telefono: sanearTelefonoContacto(c.contacto_cobranzas_telefono || ''),
     contacto_admin_nombre: c.contacto_admin_nombre || '',
     contacto_admin_correo: c.contacto_admin_correo || '',
-    contacto_admin_telefono: sanearTelefono(c.contacto_admin_telefono || ''),
+    contacto_admin_telefono: sanearTelefonoContacto(c.contacto_admin_telefono || ''),
     observaciones: c.observaciones || '',
     clasificacion: c.clasificacion || '',
     contrato_servicio_inicio: c.contrato_servicio_inicio ? c.contrato_servicio_inicio.substring(0, 10) : '',
@@ -448,9 +448,10 @@ export default function ClienteForm({ formId, value, onChange, onSubmit }) {
                   onChange={e => onChange(f => ({ ...f, [kNombre]: e.target.value }))} />
                 <input className="input" type="email" placeholder="Correo" value={value[kCorreo]}
                   onChange={e => onChange(f => ({ ...f, [kCorreo]: e.target.value }))} />
-                <input className="input" type="tel" inputMode="numeric" placeholder="Teléfono"
+                <input className="input" type="tel" inputMode="tel" placeholder="Teléfono"
+                  title="Celular peruano o número extranjero: admite +, paréntesis, espacios y guiones (máx. 15 dígitos)"
                   value={formatTelefono(value[kTel])}
-                  onChange={e => onChange(f => ({ ...f, [kTel]: sanearTelefono(e.target.value) }))} />
+                  onChange={e => onChange(f => ({ ...f, [kTel]: sanearTelefonoContacto(e.target.value) }))} />
               </div>
             </div>
           );

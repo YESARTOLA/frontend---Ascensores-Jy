@@ -1463,8 +1463,12 @@ export default function Mantenimientos() {
               {puedeVerPrecio && (
                 <SeccionColapsable titulo="Facturación mensual" variante="plano">
                     <div className="text-right mb-3">
-                      <span className="text-[11px] text-slate-500 block">Un solo cobro y una sola factura por mes, con el detalle de todos los mantenimientos de ese mes.</span>
-                      <span className="text-[11px] text-slate-500 block">Al aprobar un mes, queda habilitado en Contabilidad → «Cuotas por facturar».</span>
+                      {!periodos?.factura_por_servicio && (
+                        <>
+                          <span className="text-[11px] text-slate-500 block">Un solo cobro y una sola factura por mes, con el detalle de todos los mantenimientos de ese mes.</span>
+                          <span className="text-[11px] text-slate-500 block">Al aprobar un mes, queda habilitado en Contabilidad → «Cuotas por facturar».</span>
+                        </>
+                      )}
                       {periodos?.id_cobro && (
                         <Link to={`/cobros/${periodos.id_cobro}`} className="text-[11px] text-brand-700 hover:underline">
                           Ver cobro del plan (abonos y facturas) →
@@ -1474,7 +1478,67 @@ export default function Mantenimientos() {
                   {cargandoPeriodos ? <Loader /> : !periodos || (periodos.meses || []).length === 0 ? (
                     <p className="text-xs text-slate-500">Sin meses aún.</p>
                   ) : !periodos.id_cobro ? (
-                    <p className="text-xs text-amber-600">Este plan no tiene un cobro asociado; no admite facturación mensual.</p>
+                    // Plan legacy (anterior a la facturación mensual): no tiene cobro
+                    // único; cada mantenimiento tiene su propio cobro y se factura por
+                    // servicio en Contabilidad (utils/cobroServicioPlanLegacy del backend).
+                    <div className="space-y-2">
+                      <p className="text-xs text-slate-600">
+                        Plan anterior a la facturación mensual: cada mantenimiento tiene su propio cobro
+                        y se factura por servicio en Contabilidad.
+                      </p>
+                      {(periodos.cobros_por_servicio || []).length === 0 ? (
+                        <p className="text-xs text-slate-500">Aún no hay mantenimientos realizados.</p>
+                      ) : (
+                        <div className="overflow-x-auto scroll-thin">
+                          <table className="table-base">
+                            <thead><tr>
+                              <th className="table-th">Servicio</th>
+                              <th className="table-th">Fecha</th>
+                              <th className="table-th text-right">Monto</th>
+                              <th className="table-th text-right">Saldo</th>
+                              <th className="table-th">Cobro</th>
+                              <th className="table-th">Factura</th>
+                              <th className="table-th text-right">Acciones</th>
+                            </tr></thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {periodos.cobros_por_servicio.map(c => (
+                                <tr key={c.id_servicio} className="table-row-hover">
+                                  <td className="table-td font-mono text-xs">{c.codigo}</td>
+                                  <td className="table-td text-xs">{formatFecha(c.fecha_programada)}</td>
+                                  <td className="table-td text-right font-mono">
+                                    {c.gratuito
+                                      ? <span className="badge-green font-sans">Gratuito</span>
+                                      : c.cobro ? formatMonto(c.cobro.monto_total, c.cobro.moneda) : '—'}
+                                  </td>
+                                  <td className="table-td text-right font-mono">
+                                    {c.cobro ? formatMonto(c.cobro.saldo_pendiente, c.cobro.moneda) : '—'}
+                                  </td>
+                                  <td className="table-td">
+                                    {c.cobro
+                                      ? <span className={badgeEstado(c.cobro.estado_cobro)}>{c.cobro.estado_cobro}</span>
+                                      : <span className="badge-gray">Sin cobro</span>}
+                                  </td>
+                                  <td className="table-td text-xs">
+                                    {c.facturas.length > 0
+                                      ? c.facturas.map(f => f.numero_factura).join(', ')
+                                      : c.cobro && c.cobro.monto_total > 0
+                                        ? <span className="text-amber-700">Por facturar</span>
+                                        : '—'}
+                                  </td>
+                                  <td className="table-td text-right whitespace-nowrap">
+                                    {c.cobro && (
+                                      <Link to={`/cobros/${c.cobro.id}`} className="text-[11px] text-brand-700 hover:underline">
+                                        Ver cobro →
+                                      </Link>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <div className="overflow-x-auto scroll-thin">
                       <table className="table-base">
